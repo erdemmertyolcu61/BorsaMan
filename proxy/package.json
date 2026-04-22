@@ -1,0 +1,28 @@
+{
+  "name": "bist-proxy-server",
+  "version": "1.0.0",
+  "description": "BIST AI Trading Terminal - Backend Proxy Server",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "ws": "node ws-server.js",
+    "dev:all": "concurrently \"npm run dev\" \"npm run ws\""
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "node-cache": "^5.1.2",
+    "rate-limiter-flexible": "^7.1.0",
+    "ws": "^8.18.0",
+    "axios": "^1.7.9"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

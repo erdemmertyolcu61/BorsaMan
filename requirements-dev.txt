@@ -1,0 +1,8 @@
+# Python dev dependencies for bist_bridge + TradingAgents integration tests.
+# borsapy is optional in CI — tests mock the MCP session, so the bridge
+# can run offline. Install borsapy locally for live integration testing.
+pytest>=8.0
+pytest-asyncio>=0.23
+pandas>=2.0
+mcp>=1.0
+# borsapy  # optional, pin locally

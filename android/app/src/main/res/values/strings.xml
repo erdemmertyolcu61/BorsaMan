@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">bist-terminal</string>
+    <string name="title_activity_main">bist-terminal</string>
+    <string name="package_name">com.erdem.bist</string>
+    <string name="custom_url_scheme">com.erdem.bist</string>
+</resources>

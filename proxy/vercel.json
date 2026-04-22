@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    { "src": "/api/proxy" },
+    { "src": "/api/yahoo/(?<symbol>.*)" },
+    { "src": "/api/isyatirim/(?<symbol>.*)" },
+    { "src": "/api/quote/(?<symbol>.*)" },
+    { "src": "/api/bist/list" },
+    { "src": "/api/batch" },
+    { "src": "/api/claude" }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, x-api-key" },
+        { "key": "Cache-Control", "value": "public, max-age=300" }
+      ]
+    }
+  ],
+  "functions": {
+    "api/proxy.js": {
+      "maxDuration": 15,
+      "memory": 256
+    },
+    "api/index.js": {
+      "maxDuration": 15,
+      "memory": 256
+    }
+  },
+  "regions": ["fra1", "ams1"]
+}
