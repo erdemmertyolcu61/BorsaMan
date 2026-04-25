@@ -481,11 +481,13 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
 export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, onAnalyze }) {
   const {
     topPicks = [],
+    scanResults = [],
     marketSentiment = null,
     scanning = false,
+    lastUpdate = null,
   } = advisor;
 
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true); // start expanded so user always sees it
   const [dismissed, setDismissed] = useState(false);
 
   // ── Cached picks: use live if available, fall back to localStorage ──
@@ -510,12 +512,31 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     return null;
   });
 
-  // Update display picks when live scan completes
+  // Update display picks when live scan completes (top picks mode)
   useEffect(() => {
     if (topPicks.length > 0) {
       setDisplayPicks([...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)));
     }
   }, [topPicks]);
+
+  // ULTIMATE FALLBACK: if both topPicks AND cache are empty, but a raw scan
+  // exists, derive top-5 buy candidates from scanResults sorted by score.
+  // This guarantees the panel is never blank after a scan completes.
+  useEffect(() => {
+    if (topPicks.length === 0 && displayPicks.length === 0 && scanResults.length > 0) {
+      const fallback = scanResults
+        .filter(r => r.cls === 'buy' || (r.score || 0) >= 50)
+        .sort((a, b) => (b.score || 0) - (a.score || 0))
+        .slice(0, 8)
+        .map(r => ({
+          symbol: r.symbol, sector: r.sector, price: r.price, change: r.change,
+          signal: r.signal, cls: r.cls, score: r.score, rr: r.rr,
+          stop: r.stop, target: r.target, stopPct: r.stopPct, targetPct: r.targetPct,
+          holdText: r.holdText, _fallback: true,
+        }));
+      if (fallback.length > 0) setDisplayPicks(fallback);
+    }
+  }, [scanResults, topPicks.length, displayPicks.length]);
 
   // Load fresh meta from localStorage when scan updates it
   useEffect(() => {
@@ -532,12 +553,14 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     return () => window.removeEventListener('advisor-scan-complete', handler);
   }, []);
 
-  const isFromCache = topPicks.length === 0;
+  const isFromCache = topPicks.length === 0 && displayPicks.length > 0;
   const meta = cachedMeta;
   const picks = displayPicks.slice(0, 10);
+  const hasPicks = picks.length > 0;
 
-  // Don't render if dismissed or nothing to show
-  if (dismissed || picks.length === 0) return null;
+  // Render even when empty — show placeholder/empty state so user sees the panel.
+  // Only hide if explicitly dismissed by clicking the X.
+  if (dismissed) return null;
 
   // Format age string for the cache badge
   const cacheAge = meta?.ts ? (() => {
@@ -571,7 +594,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flex: 1 }}
         >
           <span style={{ fontWeight: 800, color: 'var(--cyan)', fontSize: 11, letterSpacing: 0.5 }}>
-            SON BAŞARILI AI ANALİZİ ({picks.length})
+            ★ AI EN İYİ FIRSATLAR{hasPicks ? ` (${picks.length})` : ''}
           </span>
           {isFromCache && (
             <span style={{
@@ -625,7 +648,45 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         height: 160, alignItems: 'stretch', padding: '8px 12px', boxSizing: 'border-box',
         scrollbarWidth: 'thin',
       }}>
-        {picks.map((p, idx) => {
+        {/* Empty / loading state */}
+        {!hasPicks && (
+          <div style={{
+            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: 'var(--t3)', fontSize: 12, gap: 12, flexDirection: 'column',
+          }}>
+            {scanning ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--orange)', boxShadow: '0 0 8px var(--orange)' }} />
+                <span>Sistem taranıyor — ilk sonuçlar birazdan görünecek...</span>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 18 }}>📊</span>
+                  <span>Henüz tarama tamamlanmadı.</span>
+                  {advisor.manualScan && (
+                    <button
+                      onClick={() => advisor.manualScan()}
+                      style={{
+                        background: 'linear-gradient(135deg, var(--cyan), var(--blue))',
+                        color: '#fff', border: 'none', borderRadius: 4,
+                        padding: '4px 12px', fontSize: 11, cursor: 'pointer',
+                        fontFamily: 'inherit', fontWeight: 700, letterSpacing: 0.5,
+                      }}
+                    >
+                      ŞİMDİ TARA
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: 9, color: 'var(--t3)' }}>
+                  Tarama tamamlandığında en yüksek skorlu 5+ hisse otomatik olarak burada görünecek.
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {hasPicks && picks.map((p, idx) => {
           const isSell = p.cls === 'sell';
           const accent = isSell ? 'var(--red)' : 'var(--green)';
           const accentDim = isSell ? '#ff444418' : '#00e68618';
@@ -653,11 +714,21 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 position: 'relative',
               }}
             >
-              {/* Row 1: symbol + sector + signal */}
+              {/* Row 1: symbol + sector + signal + grade */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                   <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--t1)' }}>{p.symbol}</span>
-                  <span style={{ fontSize: 8, color: 'var(--t3)', marginLeft: 5 }}>{p.sector}</span>
+                  {/* Grade badge — A/B/C/D */}
+                  {p.grade && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2,
+                      background: p.grade === 'A' ? 'var(--green)' : p.grade === 'B' ? 'var(--cyan)' : p.grade === 'C' ? 'var(--yellow)' : 'var(--orange)',
+                      color: '#000',
+                    }} title={`Güven skoru: ${p.confidence}/100`}>
+                      {p.grade}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 8, color: 'var(--t3)', marginLeft: 2 }}>{p.sector}</span>
                 </div>
                 <span style={{
                   fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
@@ -713,7 +784,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         })}
 
         {/* Trailing info card */}
-        {meta && (
+        {hasPicks && meta && (
           <div style={{
             flexShrink: 0, width: 140,
             background: 'var(--bg2)', borderLeft: '1px solid var(--border)',

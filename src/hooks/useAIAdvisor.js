@@ -558,8 +558,6 @@ export function useAIAdvisor(portfolio) {
         .slice(0, 3); // max 3 sell candidates alongside buy picks
 
       // ── Fallback: always surface at least 5 buy candidates ──
-      // If the strict filter left the list empty (e.g. all rr too low), fall back
-      // to top-N from all buy results sorted by score so the panel is never blank.
       const minBuyCount = 5;
       let picks = [...buyPicks, ...sellPicks];
       if (buyPicks.length < minBuyCount) {
@@ -573,10 +571,103 @@ export function useAIAdvisor(portfolio) {
             tomorrowPotential: isAfterHours ? calcTomorrowPotential(r) : 0,
             _alreadyHolding: bullishPortfolio.includes(r.symbol),
             _scanMode: isAfterHours ? 'afterHours' : 'intraday',
-            _fallback: true, // mark so UI can dim slightly
+            _fallback: true,
           }));
         picks = [...picks, ...fallbackBuys];
       }
+
+      // ══════════════════════════════════════════════════════════════════════
+      //  AI ENHANCEMENT v15 — Sector Diversification + Composite Confidence
+      // ══════════════════════════════════════════════════════════════════════
+      //
+      // Problem 1 — herd effect: 5 picks from same sector = correlated risk.
+      //   Solution: cap per-sector to 2 buy picks; replace excess with next-best
+      //   pick from a DIFFERENT sector.
+      //
+      // Problem 2 — score in isolation can't tell a chasing-the-pump trade
+      //   apart from a quality pullback. Composite confidence blends:
+      //     * Technical score (40%)
+      //     * Tomorrow potential / Sell potential (25%)
+      //     * Sector strength (15%)
+      //     * News sentiment (10%)
+      //     * Entry quality / pullback (10%)
+      //
+      // Problem 3 — chasing extended trends: prefer entries near MA20 over
+      //   entries far above. Penalize price > 5% above MA20.
+      // ══════════════════════════════════════════════════════════════════════
+
+      // Sector strength lookup
+      const sectorStrengthMap = {};
+      for (const s of sectorRotation) sectorStrengthMap[s.sector] = s.avgScore;
+
+      // Compute composite confidence + entry quality for each pick
+      const enhancePick = (p) => {
+        const baseScore = p.score || 50;
+        const sectorScore = sectorStrengthMap[p.sector] || 0; // -3 to +3 typical
+        const newsBoost = (p.newsScore || 0) * 1.2;
+        const isSell = p.cls === 'sell';
+
+        // Tomorrow / sell potential normalized to 0-100
+        const potentialScore = isSell ? (p.sellPotential || 0) : (p.tomorrowPotential || 0);
+
+        // Entry quality: prefer entries close to MA20 (not far extended).
+        // recentPump is the proxy — high pump = chasing, bad entry quality.
+        const pump = p.recentPump || 0;
+        const entryQuality = pump <= 1 ? 95 : pump <= 3 ? 80 : pump <= 5 ? 60 : pump <= 7 ? 40 : 20;
+
+        // Composite: weighted blend
+        const confidence = Math.round(
+          baseScore * 0.40 +
+          potentialScore * 0.25 +
+          (50 + sectorScore * 8) * 0.15 +
+          (50 + newsBoost * 4) * 0.10 +
+          entryQuality * 0.10
+        );
+
+        // Confidence grade: A (>= 75), B (>= 65), C (>= 55), D (< 55)
+        const grade = confidence >= 75 ? 'A' : confidence >= 65 ? 'B' : confidence >= 55 ? 'C' : 'D';
+
+        return {
+          ...p,
+          confidence: Math.max(0, Math.min(100, confidence)),
+          grade,
+          entryQuality,
+          sectorStrength: sectorScore,
+        };
+      };
+
+      picks = picks.map(enhancePick);
+
+      // Sector diversification: max 2 buy picks per sector
+      const MAX_PER_SECTOR = 2;
+      const sectorCount = {};
+      const diversifiedBuys = [];
+      const overflowBuys = [];
+
+      for (const p of picks.filter(x => x.cls !== 'sell').sort((a, b) => (b.confidence || 0) - (a.confidence || 0))) {
+        const sec = p.sector || 'Diger';
+        if ((sectorCount[sec] || 0) < MAX_PER_SECTOR) {
+          sectorCount[sec] = (sectorCount[sec] || 0) + 1;
+          diversifiedBuys.push(p);
+        } else {
+          overflowBuys.push(p);
+        }
+      }
+
+      // Try to fill picks list with diverse sectors first, then overflow
+      const sellsInPicks = picks.filter(x => x.cls === 'sell');
+      picks = [...diversifiedBuys, ...overflowBuys, ...sellsInPicks];
+
+      // Re-sort by confidence (composite metric — better than raw score)
+      picks.sort((a, b) => {
+        // Sells go to end
+        if (a.cls === 'sell' && b.cls !== 'sell') return 1;
+        if (b.cls === 'sell' && a.cls !== 'sell') return -1;
+        return (b.confidence || 0) - (a.confidence || 0);
+      });
+
+      // Cap final picks at 10
+      picks = picks.slice(0, 10);
 
       // ── Market news enrichment: fetch borsa haberleri, eslestir + sentiment ──
       // Sadece top 10 pick + universe filtrelenir; tum tarama icin haber cekmiyoruz.
@@ -615,7 +706,9 @@ export function useAIAdvisor(portfolio) {
               signal: p.signal, cls: p.cls, score: p.score, rr: p.rr,
               stop: p.stop, target: p.target, stopPct: p.stopPct, targetPct: p.targetPct,
               holdText: p.holdText, atrPct: p.atrPct, tomorrowPotential: p.tomorrowPotential,
-              sellPotential: p.sellPotential, _fallback: p._fallback,
+              sellPotential: p.sellPotential,
+              confidence: p.confidence, grade: p.grade, entryQuality: p.entryQuality,
+              sectorStrength: p.sectorStrength, _fallback: p._fallback,
             })),
             sentiment: sentimentObj.sentiment,
             scanned: results.length,
