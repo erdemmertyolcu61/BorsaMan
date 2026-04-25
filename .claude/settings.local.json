@@ -66,7 +66,27 @@
       "Bash(npm test *)",
       "Bash(python -c \"import sys;print\\(sys.version\\)\")",
       "Bash(where py *)",
-      "Bash(\"C:\\\\Users\\\\Erdem Mert Yolcu\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python.exe\" -c \"import sys;print\\(sys.version\\)\")"
+      "Bash(\"C:\\\\Users\\\\Erdem Mert Yolcu\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python.exe\" -c \"import sys;print\\(sys.version\\)\")",
+      "Bash(npx vitest *)",
+      "Bash(npm view *)",
+      "Bash(gh repo *)",
+      "Bash(uv --version)",
+      "Bash(pipx --version)",
+      "PowerShell(winget install --id=astral-sh.uv -e --accept-package-agreements --accept-source-agreements)",
+      "PowerShell($env:PATH = \"$env:LOCALAPPDATA\\\\Microsoft\\\\WinGet\\\\Packages\\\\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\\\\;$env:USERPROFILE\\\\.local\\\\bin;$env:USERPROFILE\\\\.cargo\\\\bin;$env:PATH\"; uv tool install graphifyy 2>&1)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; graphify --help 2>&1)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\Erdem Mert Yolcu\\\\Desktop\\\\bist-terminal-project\"; graphify claude install 2>&1)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\Erdem Mert Yolcu\\\\Desktop\\\\bist-terminal-project\"; graphify . 2>&1)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\Erdem Mert Yolcu\\\\Desktop\\\\bist-terminal-project\"; graphify watch . --help 2>&1; graphify update . 2>&1 | Select-Object -First 5)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\Erdem Mert Yolcu\\\\Desktop\\\\bist-terminal-project\"; graphify query \"fetchEngine circuit breaker and Istanbul timezone helpers\" 2>&1 | Select-Object -First 30)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\Erdem Mert Yolcu\\\\Desktop\\\\bist-terminal-project\"; graphify update . 2>&1 | Select-Object -Last 5)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\Erdem Mert Yolcu\\\\Desktop\\\\bist-terminal-project\"; graphify query \"fetchEngine circuit breaker and Istanbul timezone helpers\" 2>&1 | Select-Object -First 20)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\Erdem Mert Yolcu\\\\Desktop\\\\bist-terminal-project\"; Remove-Item -Recurse -Force graphify-out -ErrorAction SilentlyContinue; graphify update . 2>&1 | Select-Object -Last 5)",
+      "PowerShell($env:PATH = \"$env:USERPROFILE\\\\.local\\\\bin;$env:PATH\"; Set-Location \"C:\\\\Users\\\\Erdem Mert Yolcu\\\\Desktop\\\\bist-terminal-project\"; graphify query \"fetchEngine circuit breaker Istanbul timezone\" 2>&1 | Select-Object -First 15)",
+      "Bash(graphify update *)",
+      "Bash(npx graphify *)",
+      "Bash(where graphify *)",
+      "Bash(node -e \"require\\('graphify'\\)\")"
     ]
   }
 }
