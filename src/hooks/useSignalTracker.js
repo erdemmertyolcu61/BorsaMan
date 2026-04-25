@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
-import { setSignalReliabilityHints } from '../utils/signals.js';
+import { buildCalibrationModel, setSignalCalibration } from '../utils/signalCalibration.js';
 
 let globalNotificationHandler = null;
 
@@ -164,26 +164,26 @@ export function useSignalTracker() {
     persist(signals);
   }, [signals]);
 
+  // Publish ML calibration model to signals.js whenever closed-signal count changes.
+  // genSignal() reads this via setSignalCalibration() to bias score100 by realized winRate × expectancy.
+  const closedCountRef = useRef(0);
+  useEffect(() => {
+    const closedCount = signals.filter(s => s.status === 'closed' && s.outcome).length;
+    if (closedCount === closedCountRef.current) return;
+    closedCountRef.current = closedCount;
+    try {
+      const model = buildCalibrationModel(signals);
+      setSignalCalibration(model);
+    } catch {}
+  }, [signals]);
+
   const recordSignal = useCallback((signalData) => {
     const key = `${signalData.symbol}-${signalData.cls}-${signalData.source || 'manual'}`;
     setSignals(prev => {
       const fourHrAgo = Date.now() - 4 * 60 * 60 * 1000;
       const dup = prev.find(s => {
         const k = `${s.symbol}-${s.cls}-${s.source || 'manual'}`;
-        if (k !== key) return false;
-        if (new Date(s.timestamp).getTime() <= fourHrAgo) return false;
-        // ── ATR-aware dedup ──
-        // Ayni setup 4 saat icinde tekrar tetiklenirse:
-        //   fiyat son entry'den >= 1 ATR kadar hareket ettiyse yeni trade — gecir.
-        //   hareket etmediyse ayni setup devam ediyor — blokla.
-        const lastEntry = s.entryPrice || s.price;
-        const newPrice  = signalData.price || signalData.entry;
-        const atrValue  = signalData.atr || s.atr;
-        if (lastEntry && newPrice && atrValue > 0) {
-          const moved = Math.abs(newPrice - lastEntry);
-          return moved < atrValue; // dup ise true
-        }
-        return true; // ATR bilgisi yoksa eski 4h penceresi
+        return k === key && new Date(s.timestamp).getTime() > fourHrAgo;
       });
       if (dup) return prev;
 
@@ -282,8 +282,7 @@ export function useSignalTracker() {
       s.outcome || '',
       s.status || '',
     ]);
-    const csvCell = (v) => { const s = String(v ?? ''); return s.includes(',') || s.includes('\n') || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s; };
-    const csv = [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\n');
+    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -343,12 +342,12 @@ export function useSignalTracker() {
       try {
         const batch = await fetchBiquoteLatest(symbols);
         if (batch?.length) {
-          for (const q of batch) quotes[q.symbol] = q;
+          for (const q of batch) quotes[q.symbol] = q.price;
         } else {
           for (const sym of symbols) {
             try {
               const q = await fetchBigParaQuote(sym);
-              if (q?.price) quotes[sym] = q;
+              if (q?.price) quotes[sym] = q.price;
             } catch {}
           }
         }
@@ -356,7 +355,7 @@ export function useSignalTracker() {
         for (const sym of symbols) {
           try {
             const q = await fetchBigParaQuote(sym);
-            if (q?.price) quotes[sym] = q;
+            if (q?.price) quotes[sym] = q.price;
           } catch {}
         }
       }
@@ -367,10 +366,8 @@ export function useSignalTracker() {
         const ageDays = (now - t) / TRADING_DAY_MS;
         if (ageDays < 0.5) continue;
 
-        const priceInfo = quotes[sig.symbol];
-        if (!priceInfo || !priceInfo.price) continue;
-        const priceNow = priceInfo.price;
-        const dailyChange = priceInfo.change || 0;
+        const priceNow = quotes[sig.symbol];
+        if (!priceNow) continue;
 
         // --- TRAILING STOP LOGIC ---
         let currentStop = sig.stop;
@@ -408,7 +405,6 @@ export function useSignalTracker() {
           perf,
           outcome: finalOutcome,
           lastPrice: priceNow,
-          dailyChange, // Store daily change
           stop: currentStop,
           trailingStopActivated,
           status: (finalOutcome && finalOutcome !== 'OPEN') || ageDays >= 10 ? 'closed' : 'active',
@@ -416,30 +412,7 @@ export function useSignalTracker() {
       }
 
       if (Object.keys(updates).length) {
-        setSignals(prev => {
-          const next = prev.map(s => updates[s.id] ? { ...s, ...updates[s.id] } : s);
-
-          // ── Reliability feedback: push live win-rate stats to genSignal ──
-          // Min 15 kapanmis sinyal sart — daha az ornekte istatistik gurultu.
-          const closed = next.filter(s => s.status === 'closed' && s.outcome);
-          if (closed.length >= 15) {
-            const countBy = (cls) => {
-              const subset = closed.filter(s => s.cls === cls);
-              const wins   = subset.filter(s => s.outcome === 'TARGET_HIT' || s.outcome === 'WIN').length;
-              return { winRate: subset.length ? wins / subset.length : 0, sampleSize: subset.length };
-            };
-            const hints = {};
-            const buyStats  = countBy('buy');
-            const sellStats = countBy('sell');
-            if (buyStats.sampleSize  >= 10) hints.buy  = buyStats;
-            if (sellStats.sampleSize >= 10) hints.sell = sellStats;
-            if (Object.keys(hints).length) {
-              try { setSignalReliabilityHints(hints); } catch {}
-            }
-          }
-
-          return next;
-        });
+        setSignals(prev => prev.map(s => updates[s.id] ? { ...s, ...updates[s.id] } : s));
       }
 
       checkCountRef.current++;
@@ -452,9 +425,16 @@ export function useSignalTracker() {
 
   const stats = (() => calcStats(signals))();
 
+  // Expose the live calibration model snapshot for diagnostic UI
+  const calibrationModel = (() => {
+    try { return buildCalibrationModel(signals); }
+    catch { return null; }
+  })();
+
   return {
     signals,
     stats,
+    calibrationModel,
     recordSignal,
     updateSignal,
     removeSignal,

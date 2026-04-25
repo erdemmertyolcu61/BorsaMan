@@ -13,17 +13,6 @@ import { fetchAsenaxList, fetchWithFallback, fetchBorsajsQuote } from './borsajs
 const _cache = {};
 const _inflight = {}; // Request deduplication: prevent parallel fetches for same symbol
 
-// Module-scoped Intl formatters — constructing these is non-trivial and they
-// get called per-symbol per-fetch on the scan hot path.
-const _istanbulDayFmt = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Europe/Istanbul',
-  year: 'numeric', month: '2-digit', day: '2-digit',
-});
-const _istanbulTimeFmt = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Europe/Istanbul',
-  hour: '2-digit', minute: '2-digit', hour12: false,
-});
-
 // ═══ SOURCE HEALTH TRACKING ═══
 const _sourceHealth = {
   'bigpara': { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'online' },
@@ -176,7 +165,17 @@ export function istanbulDayKey(d) {
   if (!d) return '';
   const date = d instanceof Date ? d : new Date(d);
   if (isNaN(date.getTime())) return '';
-  return _istanbulDayFmt.format(date); // en-CA → YYYY-MM-DD
+  try {
+    // en-CA locale gives YYYY-MM-DD
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Istanbul',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(date);
+  } catch {
+    // Fallback — Europe/Istanbul is UTC+3 year-round (TR dropped DST in 2016)
+    const shifted = new Date(date.getTime() + 3 * 3600 * 1000);
+    return shifted.toISOString().slice(0, 10);
+  }
 }
 
 export function isBistWeekend(d) {
@@ -188,89 +187,6 @@ export function isBistWeekend(d) {
   const utc = new Date(Date.UTC(y, m - 1, day));
   const dow = utc.getUTCDay();
   return dow === 0 || dow === 6;
-}
-
-// ── BIST HOLIDAY CALENDAR ──
-// Official BIST holidays (MM-DD format). Updated annually.
-// Half-days are NOT included since their candles are valid.
-const BIST_HOLIDAYS_2025 = [
-  '01-01', // Yılbaşı
-  '03-30', '03-31', // Ramazan Bayramı (2025)
-  '04-23', // 23 Nisan Ulusal Egemenlik ve Çocuk Bayramı
-  '05-01', // 1 Mayıs Emek ve Dayanışma Günü
-  '05-19', // 19 Mayıs Atatürk'ü Anma
-  '06-06', '06-07', '06-08', '06-09', // Kurban Bayramı (2025)
-  '07-15', // 15 Temmuz Demokrasi ve Milli Birlik Günü
-  '08-30', // 30 Ağustos Zafer Bayramı
-  '10-29', // 29 Ekim Cumhuriyet Bayramı
-];
-const BIST_HOLIDAYS_2026 = [
-  '01-01', // Yılbaşı
-  '03-20', '03-21', // Ramazan Bayramı (2026)
-  '04-23', // 23 Nisan Ulusal Egemenlik ve Çocuk Bayramı
-  '05-01', // 1 Mayıs Emek ve Dayanışma Günü
-  '05-19', // 19 Mayıs Atatürk'ü Anma
-  '05-27', '05-28', '05-29', '05-30', // Kurban Bayramı (2026)
-  '07-15', // 15 Temmuz Demokrasi ve Milli Birlik Günü
-  '08-30', // 30 Ağustos Zafer Bayramı
-  '10-29', // 29 Ekim Cumhuriyet Bayramı
-];
-const BIST_HOLIDAYS_2027 = [
-  '01-01', '03-10', '03-11', '04-23', '05-01', '05-16', '05-17', '05-18', '05-19',
-  '07-15', '08-30', '10-29',
-];
-
-const _bistHolidaySet = new Set();
-for (const d of BIST_HOLIDAYS_2025) _bistHolidaySet.add('2025-' + d);
-for (const d of BIST_HOLIDAYS_2026) _bistHolidaySet.add('2026-' + d);
-for (const d of BIST_HOLIDAYS_2027) _bistHolidaySet.add('2027-' + d);
-
-/**
- * Returns true if the given date is a BIST holiday (not a weekend — use isBistClosedDay for both).
- */
-export function isBistHoliday(d) {
-  const key = istanbulDayKey(d);
-  if (!key) return false;
-  return _bistHolidaySet.has(key);
-}
-
-/**
- * Returns true if BIST is closed on the given date (weekend OR holiday).
- */
-export function isBistClosedDay(d) {
-  return isBistWeekend(d) || isBistHoliday(d);
-}
-
-/**
- * Returns true only if BIST has actually started trading today.
- * False if: weekend, holiday, or before 09:30 Istanbul time.
- */
-export function isBistSessionStarted() {
-  const now = new Date();
-  if (isBistClosedDay(now)) return false;
-  const parts = _istanbulTimeFmt.formatToParts(now);
-  const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-  const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
-  return (h * 60 + m) >= 570; // 09:30 Istanbul
-}
-
-/**
- * Strips the last price bar if it belongs to today and BIST hasn't actually traded yet.
- * This prevents phantom candles on holidays, weekends, and pre-market hours.
- */
-export function stripUntradedToday(prices) {
-  if (!prices || prices.length < 2) return prices;
-  if (isBistSessionStarted()) return prices; // Market has traded, keep all bars
-
-  const todayKey = istanbulDayKey(new Date());
-  const lastBar = prices[prices.length - 1];
-  const lastKey = istanbulDayKey(lastBar.date);
-
-  if (lastKey === todayKey) {
-    // Today's bar exists but market hasn't traded → remove it
-    return prices.slice(0, -1);
-  }
-  return prices;
 }
 
 function parseTurkishDate(str) {
@@ -318,10 +234,11 @@ function _recordFailure(label) {
   const s = _circuitState[label];
   s.failures = (s.failures || 0) + 1;
   if (s.failures >= CIRCUIT_FAILURE_THRESHOLD) {
-    // Exponential backoff on consecutive failure bursts
+    // Exponential backoff — keep accumulating failures so each additional failure
+    // doubles the window: 3→60s, 4→120s, 5→240s, ...
     const backoff = CIRCUIT_BASE_BACKOFF_MS * Math.pow(2, Math.max(0, s.failures - CIRCUIT_FAILURE_THRESHOLD));
     s.openedUntil = Date.now() + backoff;
-    s.failures = 0;
+    // Do NOT reset s.failures here — let them accumulate for exponential growth
   }
 }
 
@@ -335,41 +252,12 @@ function _recordSuccess(label) {
 // Test exports for circuit-breaker
 export { _isCircuitOpen, _recordFailure, _recordSuccess, _circuitState, CIRCUIT_FAILURE_THRESHOLD, CIRCUIT_BASE_BACKOFF_MS };
 
-// Wraps a promise with an `ms` timeout — single-shot `done` flag keeps the
-// resolver idempotent so both paths (Electron + browser fetch) stay dry.
-function _withTimeout(ms, work) {
+export function quickFetch(url, ms = 10000) {
   return new Promise((res, rej) => {
     let done = false;
     const t = setTimeout(() => { if (!done) { done = true; rej(new Error('Timeout')); } }, ms);
-    work(
-      v => { if (!done) { done = true; clearTimeout(t); res(v); } },
-      e => { if (!done) { done = true; clearTimeout(t); rej(e); } },
-    );
-  });
-}
-
-export function quickFetch(url, ms = 10000) {
-  // Relative URLs target the Vite dev proxy — Electron's remoteFetch can't handle those.
-  const useElectron = typeof window !== 'undefined'
-    && window.electronAPI?.remoteFetch
-    && !url.startsWith('/');
-
-  if (useElectron) {
-    return _withTimeout(ms, (resolve, reject) => {
-      window.electronAPI.remoteFetch(url, { method: 'GET' })
-        .then(response => resolve({
-          ok: response.success,
-          status: response.status,
-          text: () => Promise.resolve(response.text || ''),
-          json: () => Promise.resolve(JSON.parse(response.text || '{}')),
-          headers: new Headers(),
-        }))
-        .catch(reject);
-    });
-  }
-
-  return _withTimeout(ms, (resolve, reject) => {
-    fetch(url).then(resolve).catch(reject);
+    fetch(url).then(r => { if (!done) { done = true; clearTimeout(t); res(r); } })
+      .catch(e => { if (!done) { done = true; clearTimeout(t); rej(e); } });
   });
 }
 
@@ -625,14 +513,13 @@ export async function fetchBigParaList() {
   // Try each URL with race pattern
   if (!text) {
     for (const url of altUrls) {
-      const t0 = Date.now();
       try {
-        const r = await quickFetch(url + '?_t=' + t0, 8000);
+        const r = await quickFetch(url + '?_t=' + Date.now(), 8000);
         if (r.ok) {
           text = await r.text();
           if (text && text.length > 100) {
             successSource = 'direct';
-            recordSourceSuccess('bigpara', Date.now() - t0);
+            recordSourceSuccess('bigpara', Date.now() - Date.now());
             break;
           }
         }
@@ -1003,7 +890,92 @@ export function parseForeks(text) {
 // MAIN FETCH PIPELINE
 // ==========================================
 
-// Primary fetch: tries Vite proxy → public CORS proxies for Yahoo
+// ─── Yahoo crumb/cookie cache ───────────────────────────────────────────────
+// Yahoo Finance now requires a crumb token (fetched after accepting cookies).
+// We cache the crumb for 55 minutes (Yahoo rotates ~1h) to avoid hammering fc.yahoo.com.
+const _yahooCrumb = { value: null, ts: 0, cookie: '' };
+const CRUMB_TTL_MS = 55 * 60 * 1000;
+
+async function ensureYahooCrumb() {
+  if (_yahooCrumb.value && Date.now() - _yahooCrumb.ts < CRUMB_TTL_MS) return _yahooCrumb;
+  try {
+    // Step 1: Touch fc.yahoo.com to get the consent cookie
+    const consentResp = await fetch('https://fc.yahoo.com', {
+      credentials: 'include', redirect: 'follow',
+      signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined,
+    });
+    const setCookie = consentResp.headers.get('set-cookie') || '';
+    const cookie = (setCookie.match(/\bA3=[^;]+/) || setCookie.match(/\bGUC=[^;]+/) || [])[0] || '';
+
+    // Step 2: Fetch the crumb
+    const crumbResp = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+      credentials: 'include',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        ...(cookie ? { 'Cookie': cookie } : {}),
+      },
+      signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined,
+    });
+    if (crumbResp.ok) {
+      const crumb = (await crumbResp.text()).trim();
+      if (crumb && crumb.length > 4 && !crumb.includes('<')) {
+        _yahooCrumb.value = crumb;
+        _yahooCrumb.cookie = cookie;
+        _yahooCrumb.ts = Date.now();
+        return _yahooCrumb;
+      }
+    }
+  } catch { /* crumb fetch is best-effort */ }
+  return _yahooCrumb; // return whatever we have (may be empty)
+}
+
+// Build Yahoo chart URL with optional crumb
+function yahooChartUrl(symbol, range, interval, crumb = '', version = 'v8') {
+  const base = `https://query1.finance.yahoo.com/${version}/finance/chart/${symbol}.IS`;
+  const params = new URLSearchParams({
+    range, interval, includePrePost: 'false',
+    events: 'div,splits', useYfid: 'true',
+  });
+  if (crumb) params.set('crumb', crumb);
+  return base + '?' + params.toString();
+}
+
+// Yahoo-aware fetch: tries crumb-auth direct, then CORS proxies
+async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
+  const crumbCtx = await ensureYahooCrumb();
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+    ...(crumbCtx.cookie ? { 'Cookie': crumbCtx.cookie } : {}),
+  };
+
+  // Try v8 with crumb first, then v8 without, then v7
+  const urls = [
+    crumbCtx.value ? yahooChartUrl(symbol, range, interval, crumbCtx.value, 'v8') : null,
+    yahooChartUrl(symbol, range, interval, '', 'v8'),
+    `https://query2.finance.yahoo.com/v7/finance/chart/${symbol}.IS?range=${range}&interval=${interval}`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&includePrePost=false&_t=${Date.now()}`,
+  ].filter(Boolean);
+
+  for (const url of urls) {
+    try {
+      const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined;
+      const r = await fetch(url, { headers, credentials: 'include', ...(signal ? { signal } : {}) });
+      if (r.status === 401 || r.status === 403) {
+        // Invalidate crumb so next call re-fetches
+        _yahooCrumb.value = null;
+        continue;
+      }
+      if (!r.ok) continue;
+      const text = await r.text();
+      if (text && text.length > 100 && !text.startsWith('<')) return text;
+    } catch { continue; }
+  }
+  return null;
+}
+
+// Primary fetch: tries Vite proxy → Yahoo direct (crumb) → public CORS proxies
 async function getData(targetUrl, ms = 10000) {
   const directResult = await tryDirect(targetUrl, ms);
   if (directResult) return directResult;
@@ -1040,32 +1012,12 @@ export async function fetchSingle(symbol, range, interval, scanMode = false) {
   // Smart cache TTL: scan mode uses shorter (60s), full analysis uses longer (5min for historical)
   const cacheTTL = scanMode ? 60000 : (range === 'max' || range === '5y' || range === '2y' ? 300000 : 120000);
   if (c && (Date.now() - c._ts < cacheTTL)) {
-    // ── Stale-day guard ──────────────────────────────────────────────────────
-    // If BIST session has started today but the last cached bar belongs to a
-    // previous calendar day, the cache is stale (common after public holidays,
-    // e.g. 23 Nis tatil → 24 Nis açılışta cache hâlâ 23 Nis barını tutuyor).
-    // Busting the cache here guarantees today's candle is always visible.
-    if (interval === '1d' || interval === '1wk') {
-      const lastBarDate = c.prices?.[c.prices.length - 1]?.date;
-      const lastKey = lastBarDate ? istanbulDayKey(new Date(lastBarDate)) : '';
-      if (lastKey && lastKey < istanbulDayKey(new Date()) && isBistSessionStarted()) {
-        delete _cache[ck]; // force fresh fetch — today's candle is missing
-      }
+    // Daily/weekly cache hits: refresh today's candle via BigPara overlay
+    // so pre-open / mid-day re-opens always merge the latest live bar.
+    if (!scanMode && (interval === '1d' || interval === '1wk')) {
+      try { await applyLiveOverlay(c, symbol); } catch { /* non-fatal */ }
     }
-    // On daily/weekly cache hits (not busted above), refresh today's candle via
-    // BigPara — gated with OVERLAY_TTL so re-renders don't hammer the live feed.
-    if (_cache[ck]) {
-      if (!scanMode && (interval === '1d' || interval === '1wk')) {
-        const OVERLAY_TTL = 30_000;
-        if (!c._overlayTs || Date.now() - c._overlayTs > OVERLAY_TTL) {
-          try {
-            await applyLiveOverlay(c, symbol);
-            c._overlayTs = Date.now();
-          } catch { /* non-fatal */ }
-        }
-      }
-      return c;
-    }
+    return c;
   }
   if (!scanMode) delete _cache[ck];
 
@@ -1103,41 +1055,42 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
     if (p) source = 'IsYatirim';
   }
 
-  // ---- SOURCE 2: Yahoo Finance v8 ----
+  // ---- SOURCE 2: Yahoo Finance (crumb-auth direct → CORS proxy fallback) ----
   if (!p) {
-    const url8 = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + '.IS?range=' + range + '&interval=' + interval + '&includePrePost=false';
-    let text = scanMode ? await getData(url8, ms) : await getDataFresh(url8, ms);
+    // Try crumb-authenticated direct fetch first (bypasses CORS proxy rate limits)
+    let text = await fetchYahooDirect(symbol, range, interval, ms);
+    if (!text) {
+      // Fallback: CORS proxy chain with v8 URL
+      const url8 = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&includePrePost=false`;
+      text = scanMode ? await getData(url8, ms) : await getDataFresh(url8, ms);
+    }
     p = text ? parseYahoo(text) : null;
     if (p) source = 'Yahoo';
   }
 
-  // ---- SOURCE 3: Yahoo v7 fallback ----
+  // ---- SOURCE 3: Yahoo v7 fallback (different endpoint, sometimes works when v8 fails) ----
   if (!p) {
-    const url7 = 'https://query2.finance.yahoo.com/v7/finance/chart/' + symbol + '.IS?range=' + range + '&interval=' + interval;
-    const text = await getData(url7, ms);
+    const url7 = `https://query2.finance.yahoo.com/v7/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&events=div%2Csplits`;
+    const text = await getDataViaProxies(url7, ms);
     p = text ? parseYahoo(text) : null;
     if (p) source = 'Yahoo-v7';
   }
 
-  // ---- SOURCE 4: Midas Historical Data ----
+  // ---- SOURCE 4: Foreks/ParaGaranti ----
   if (!p) {
-    p = await fetchMidasHistorical(symbol, range);
-    if (p) source = 'Midas';
+    p = await fetchForeksHistorical(symbol, range, interval);
+    if (p) source = 'Foreks';
   }
 
   if (p) {
-    // Upstream sources sometimes emit a today-dated bar during holidays / pre-market
-    // even though BIST hasn't opened — drop it so indicators don't see a phantom candle.
-    p = stripUntradedToday(p);
-    if (!p || p.length < 10) return null;
-
     trackSource(source);
     const r = { symbol, prices: p, source, _ts: Date.now(), dataConfidence: 'high', divergencePct: 0 };
     _cache[ck] = r;
 
-    if (isBistSessionStarted()) {
-      await applyLiveOverlay(r, symbol, { sessionStarted: true });
-      r._overlayTs = Date.now();
+    // BIGPARA LIVE OVERLAY — only meaningful for daily/weekly; skip for intraday intervals
+    // (15m/5m bars already contain the live bar, and a day-level overlay would corrupt them)
+    if (interval === '1d' || interval === '1wk') {
+      await applyLiveOverlay(r, symbol);
     }
     return r;
   }
@@ -1154,11 +1107,8 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
  *
  * Silent on failure — overlay is best-effort enrichment, never blocking.
  */
-export async function applyLiveOverlay(r, symbol, opts = {}) {
+export async function applyLiveOverlay(r, symbol) {
   if (!r || !r.prices || r.prices.length === 0) return r;
-  // Caller can pass { sessionStarted: true } when it has already checked, to
-  // avoid the redundant Intl.formatToParts call on the fetch hot path.
-  const sessionStarted = opts.sessionStarted ?? isBistSessionStarted();
   try {
     const live = await fetchBigParaQuote(symbol);
     if (!live || !(live.price > 0)) return r;
@@ -1182,8 +1132,8 @@ export async function applyLiveOverlay(r, symbol, opts = {}) {
       if (live.volume && live.volume > 0) lastBar.volume = live.volume;
       r.lastPriceSource = 'BigPara';
     } else if (liveKey > lastKey) {
-      // Newer Istanbul day — append a fresh bar unless BIST is closed (weekend/holiday/pre-market)
-      if (!isBistClosedDay(live.date) && sessionStarted) {
+      // Newer Istanbul day — append a fresh bar unless it's a weekend
+      if (!isBistWeekend(live.date)) {
         const [y, m, day] = liveKey.split('-').map(n => parseInt(n, 10));
         r.prices.push({
           date: new Date(Date.UTC(y, m - 1, day)),
@@ -1302,66 +1252,4 @@ export async function fetchFundamentals(symbol) {
 
   // Return both, letting the engine choose
   return { yahoo: yahooData, kap: kapData };
-}
-
-/**
- * fetchMidasHistorical — get historical BIST data from Midas
- */
-async function fetchMidasHistorical(symbol, range) {
-  try {
-    const url = 'https://www.getmidas.com/wp-json/midas-api/v1/midas_stock_time';
-    const formData = new URLSearchParams({ code: symbol, time: range === '1y' ? '1Y' : range === '6mo' ? '6A' : range === '3mo' ? '3A' : range === '1mo' ? '1A' : '1Y' });
-    
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData.toString(),
-      signal: AbortSignal.timeout(10000),
-    });
-    
-    if (!resp.ok) return null;
-    
-    const text = await resp.text();
-    if (!text || text.length < 20) return null;
-    
-    let data;
-    try {
-      const parsed = JSON.parse(text);
-      data = Array.isArray(parsed) ? parsed : parsed.data || parsed.stocks || [];
-    } catch {
-      return null;
-    }
-    
-    if (!Array.isArray(data) || data.length < 10) return null;
-    
-    const prices = data
-      .map(item => {
-        const date = item.tarih || item.date || item.Date;
-        const close = parseFloat(item.kapanis || item.close || item.Close || item.last);
-        if (!date || !isFinite(close) || close <= 0) return null;
-
-        const open = parseFloat(item.acilis || item.open || item.Open || item.first);
-        const high = parseFloat(item.yukselis || item.high || item.High || item.max);
-        const low = parseFloat(item.dusus || item.low || item.Low || item.min);
-        const volume = parseInt(item.hacim || item.volume || item.Volume || 0);
-
-        // Fall back to close if a field is missing rather than fabricating
-        // ±0.5–1% OHL — downstream indicators would treat synthesized spread as real volatility.
-        return {
-          date: typeof date === 'string' ? date : istanbulDayKey(new Date(date)),
-          open: isFinite(open) && open > 0 ? open : close,
-          high: isFinite(high) && high > 0 ? high : close,
-          low:  isFinite(low)  && low  > 0 ? low  : close,
-          close,
-          volume: isFinite(volume) ? volume : 0,
-        };
-      })
-      .filter(Boolean)
-      .reverse();
-
-    return prices.length >= 10 ? prices : null;
-  } catch (e) {
-    logError('fetch', 'Midas historical fetch failed', e, { severity: 'warn', silent: true, symbol });
-    return null;
-  }
 }
