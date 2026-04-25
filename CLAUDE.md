@@ -71,12 +71,81 @@ gradelemesi ile calisir.
 - **Risk alerts**: Portfoy uzerinde stop yakinligi, oversized lot, konsantrasyon
 - **Event**: Tarama bittiginde `advisor-scan-complete` CustomEvent dispatch edilir
 
-## Live Guard (`useLivePrices`)
-- **Polling**: BigPara her 30 saniyede, sadece BIST acikken (10:00-18:00 Pzt-Cum)
+## Live Guard (`useLivePrices` — v11 tiered adaptive)
+- **3 polling tier** (BIST'in public WS'i yok — adaptif polling ile WS'e en yakin tazelik):
+  - **FAST 5s**: stop/hedefe %1.5'tan yakin pozisyonlar (burst mode)
+  - **NORMAL 15s**: acik pozisyonlar
+  - **SLOW 45s**: watchlist + non-positioned semboller
+- **Page Visibility API**: tab gizliyken tum tier'lar duraklar; gorunur olunca FAST tier hemen tetiklenir
+- **Batch quote**: `fetchBiquoteLatest` ilk denenir; eksikleri `fetchBigParaQuote` ile per-symbol fallback
 - **Trailing**: TRAIL_BREAKEVEN_PCT=3, TRAIL_ACTIVE_PCT=5, TRAIL_LOCK_FRACTION=0.5
 - **Otomatik emir**: Pozisyon stop/hedef'e ulastiginda `updatePortfolio` cagirir
 - **Alarm dedup**: `firedAlarmsRef` Set ile ayni alarm tekrar atilmaz
 - **Kaynak tag**: Uyarilar `source: 'live_guard' | 'watchlist'` olarak alertLog'a dispatch edilir
+- **tierStats**: hook `{ fast, normal, slow }` semboll sayilarini state olarak return eder
+
+## ML Sinyal Kalibrasyon (`signalCalibration.js` — v11)
+- **Amac**: Son 500 kapali sinyalin gercek `winRate × expectancy` performansini kullanarak yeni sinyal skorunu kalibre etmek
+- **Bucket'lar**: cls (buy/sell) × scoreBucket (q1-q4) en spesifik; cls, source, grade, overall fallback
+- **Min sample**: bir bucket >= 8 kapali sinyal sahibiyse hesaba katilir; yoksa pas
+- **Multiplier**: skor 50 etrafinda merkezlenir, multiplier ile olceklenir, [0.55, 1.30] araligina clamplanir
+- **Skor formul**: `score = (winRate - 0.5) + tanh(expectancy/7) × 0.7` -> agirlikli avgDelta
+- **Wiring**: `useSignalTracker` her closed signal degisiminde `buildCalibrationModel(signals)` cagirir, `setSignalCalibration(model)` ile signals.js modulu seviyesinde yayinlar
+- **genSignal**: score100 hesaplanir hesaplanmaz `applyCalibrationToScore` cagrilir, |delta| >= 1 ise reasons'a `ML KALIBRASYON` notu eklenir
+- **Output**: baseSig.calibration = `{ multiplier, avgDelta, breakdown[] }` UI'da gosterilebilir
+
+## Borsa Haber Motoru (`marketNewsEngine.js` — v13)
+- **Amac**: KAP haricinde borsaningundemi.com / bigpara / mynet / bloomberght / dunya / sabah RSS akislarini cekip sembol+kategori bazli sentiment cikar
+- **Default kaynaklar**: `DEFAULT_NEWS_SOURCES` listesi (eklenip cikarilabilir, her kaynak `weight` carpani tasir)
+- **Kategori siniflandirma** (Turkce regex):
+  - `fund_inflow`: yabanci alimi, kurumsal alim, para girisi, fon akisi (+5)
+  - `fundamental_rank`: en karli, cari oran, F/K, ROE siralamasi (+3)
+  - `buyback`: pay/hisse geri alim programi (+6)
+  - `insider_buy`: yonetici/iceriden alim, hakim ortak alimi (+7)
+  - `dividend`: temettu, kar payi (+4)
+  - `upgrade` / `downgrade`: hedef fiyat yukselt/dusur, AL/SAT tavsiyesi (+5/-5)
+  - `contract`: sozlesme imzala, ihale kazandi, yeni siparis (+4)
+  - `risk`: sorusturma, ceza, dava, haciz, iflas, konkordato, temerrut (-7)
+  - `sector_bull`: sektor pozitif/rekor/yukselis (+2)
+- **Sentiment**: kategoriler topla, recency carpani (1G ×1.5 / 3G ×1.2 / 7G ×1.0 / older ×0.5), [-10, +10] clamp
+- **`extractSymbols(text, universe)`**: 4-6 buyuk harf ticker yakalar; universe yoksa BIST/KAP/TUFE/EURO blacklist'i uygular
+- **`indexBySymbol(news)`**: sembol bazli aggregate (score, count, kategoriler, topItem, highImpact sayisi)
+- **5 dk LRU cache** (200 max), tum cagrilar best-effort — RSS down ise atlar
+- **Wiring**: `useAIAdvisor` scan tamamlandiktan sonra top 10 pick'in symbol universe'unde haber cekip her pick'e `newsScore`, `newsCount`, `newsCategories`, `newsHeadline`, `newsHighImpact` enjekte eder
+- **Claude prompt**: `buildDailyPicksPrompt` her satira `HABER[kategori]=skor(count) "baslik"` ekler; system prompt kategori semantigini ve A/B/C notuna katkisini aciklar
+- **Event**: `advisor-scan-complete` artik `newsIndex` da tasiyor (AlertLog/ChatPanel reaktif kullanabilir)
+- **Test**: 17/17 — symbol extraction, kategori siniflandirma, sentiment clamping, recency, indexBySymbol aggregate
+
+## Walk-Forward Backtest (`walkForward.js` — v12)
+- **Amac**: Tek-period backtest yerine rolling IS/OOS pencereleri ile overfit tespiti
+- **Pencere yapisi**: Default 4 pencere; her pencerede %70 in-sample / %30 out-of-sample ardisik
+- **Per-window metrics**: isWinRate, oosWinRate, efficiency (OOS/IS return), degradation (|ΔwinRate|)
+- **Summary**: medianOOSReturn, medianEfficiency, pctProfitableOOS, avgDegradation
+- **Verdict**:
+  - `stable`: medianEfficiency >= 0.5 AND >= %60 OOS-positive AND avgDegradation < 20pp
+  - `overfit`: medianEfficiency < 0.2 OR < %40 OOS-positive OR avgDegradation > 35pp
+  - `borderline`: arasi
+- **Strateji karsilastirma**: `compareStrategiesWalkForward(prices, [signal,rsi,macd,ma])` —
+  composite score = medianOOSReturn × pctProfitableOOS/100, en saglam stratejiyi `winner` doner
+- **Test**: 9/9 — synthetic LCG fiyatlari ile pure noise/trend ayrimi dogrulanmis
+
+## Markowitz Portfoy Optimizasyonu (`portfolioOptimizer.js` — v12)
+- **Girdi**: `seriesByAsset` = { SYMBOL: number[] (close fiyatlari) }
+- **Metodoloji**:
+  1. Log-getiri matrisi (252 bar annualize)
+  2. Annualized expected return vector + covariance matrix
+  3. Dirichlet(α=1) random search 6000 portfoy ornegi
+  4. maxWeight cap iterative water-filling ile (clip → uncapped'lere overflow dagit)
+  5. RF=%25 (TCMB benchmark) → Sharpe = (μ-rf)/σ
+- **Cikti**:
+  - `maxSharpe` portfoy: en yuksek risk-adjusted return
+  - `minVariance` portfoy: en dusuk volatilite
+  - `targetReturn` portfoy: opsiyonel hedef getiriye en yakin
+  - `frontier`: 60 sample efficient frontier visualization icin
+- **Diversification**: effectiveN (1/Herfindahl), maxWeight, evenness
+- **`weightsToAllocations(w, syms, capital)`**: TL bazli pozisyon onerisi
+- **`correlationMatrix(series)`**: UI heatmap icin korelasyon matrisi
+- **Test**: 13/13 — single-asset trivial, weight cap, minVar < maxSharpe variance, target nearest
 
 ## AlertLog (Floating panel)
 - Sag-alt sabit konum, collapsible
@@ -144,6 +213,11 @@ gradelemesi ile calisir.
 - [x] Vercel proxy /api/claude + 10 domain whitelist (KAP dahil)
 - [x] Electron `:dev` gercekten dev moda donusturuldu (Vite dev server + localhost:5173 + devtools)
 - [x] Electron safety net — 4s timeout ile zorla pencere gosterme, renderer hata loglama
+- [x] Yahoo Finance crumb auth (fc.yahoo.com → getcrumb, 55dk cache) + fetchYahooDirect fallback zinciri
+- [x] Stop/target hassasiyeti: recentLow/swingLow structure stop, maxRisk rejim-aware, T1 weighted cap@1.30, Fib T3
+- [x] Pump-continuation assessment: hard zero yok, 6 continuation signal kontrol, -5/-18/-30 ceza
+- [x] fetchEngine circuit-breaker: kumulatif failure sayaci ile gercek exponansiyel backoff (3→60s, 4→120s, 5→240s)
+- [x] fetchEngine.test.js: circuit-breaker + istanbulDayKey + isBistWeekend + applyLiveOverlay — 13 yeni test
 
 ## Production Hardening (2026-04 — v9)
 
@@ -257,3 +331,70 @@ gradelemesi ile calisir.
 - SMC %54 — OrderBlock + LiquiditySweep helpers icin targeted test yok
 - Python CI'da borsapy best-effort; gercek integration `uvx saidsurucu-borsa-mcp` runner gerektirir
 - `npm run lint` hook'unda ESLint dependency eklenmeli (su an `|| true` ile pass-through)
+- Yahoo crumb auth browser ortaminda CORS kisitiyla dogrudan calismiyor; Electron/Vite dev proxy'si uzerinden fetchYahooDirect tetiklenir
+
+## Intraday Engine — v2 (2026-04)
+
+### IntradayEngine.js — Yeni Yetenekler
+- **`computeORB(bars, orbMinutes=30)`**: BIST acilis 09:30'dan itibaren ORB high/low hesaplar. `breakoutUp`, `nearBreakoutUp`, `rangePct` doner
+- **`computeRS(stockBars, marketBars)`**: Bugunun hisse % degisimi / BIST100 % degisimi → `leading`, `lagging`, `strongLeader`, `outperformance`
+- **`intradayMomentumScore(bars15m, vwap)`**: 15dk RSI + MACD + VWAP pozisyonu + trend + hacim ivmesi → 0-100 kompozit skor
+- **`volumeRate(bars15m, avgDailyVol)`**: Bugunun hacim birikimi / beklenen hacim pace → `rate`, `onPace`, `surge`
+- **`calcIntradayStructureLevels(bars15m, vwap, orb)`**: 15dk structure low/high + VWAP bantlari + ORB seviyelerinden stop/target/rr
+- **`classifyIntradayPlay(intradayData, dailyData)`**: `momentum | orb_breakout | vwap_reclaim | dip_bounce | squeeze | none`
+- **`PLAY_TYPE_META`**: Her play tipi icin renk, ikon, aciklama
+
+### TradesTab.jsx — Profesyonel Yeniden Yazim
+- **5 fazli tarama**: Market context → Daily scan → Pre-score top 16 → 15m fetch (paralel) → Full scoring
+- **Intraday veri**: Her aday icin `fetchSingle(sym, '5d', '15m')` — VWAP, ORB, RS, hacim hizi hesaplamasi
+- **15dk momentum**: VWAP bandi pozisyonu + 15dk MACD ivmesi + intraday trend yonu
+- **Relative Strength**: BIST100 15m barlar cekilir, her hisse RS vs market hesaplanir
+- **Play tipi filtreleme**: Tum | Momentum | ORB | VWAP | Squeeze sekmeleri
+- **Session-aware stratejiler**: Acilis/Sabah/Ogle/Ogleden sonra/Kapanis icin farkli strateji notlari ve uyarilar
+- **Kart tasarimi**: VWAP seviyeleri, ORB durumu, 15dk momentum pill, RS lideri rozet, hacim hizi
+- **applyLiveOverlay fix**: Artik sadece 1d/1wk intervalda tetiklenir — 15m barlari bozmaz
+
+## Veri Cekme Motoru — v14 (2026-04)
+
+### Yahoo Crumb Authentication
+- `ensureYahooCrumb()`: `fc.yahoo.com` → A3 cookie alir; `/v1/test/getcrumb` → crumb token; 55 dk cache
+- `yahooChartUrl(symbol, range, interval, crumb, version)`: crumb parametreli URL olusturur
+- `fetchYahooDirect(symbol, range, interval, ms)`: crumb+auth → v8-nocrumb → v7 → proxy zinciri
+- `_doFetchSingle` SOURCE 2: `fetchYahooDirect` ilk; basarisiz olursa CORS proxy race devreye girer
+- `_doFetchSingle` SOURCE 3: Yahoo v7 artik `getDataViaProxies` kullanir (getData → CORS hatalari giderdi)
+
+### Circuit Breaker — Gercek Exponansiyel Backoff
+- Duzeltme: `_recordFailure` artik `s.failures` sifirlamiyor — kumulatif birikim ile ustel artis
+- 3 hata → 60s backoff, 4 hata → 120s, 5 hata → 240s, ...
+- `_recordSuccess` hala failures = 0 yapar (recovery sonrasi taze baslangi)
+
+## Stop / Target Hassasiyeti (signals.js — v14)
+
+### Stop-Loss Zinciri
+1. `chandelierStop` = highest_high(22) - 3*ATR (varsa en guvenilir)
+2. `structureStop` = min(son 3 bar low) * 0.997 (recent structure)
+3. `swingStop` = min(son 10 bar low) * 0.993 (swing low)
+4. `srStop` = support * 0.993 (destek seviyesi)
+5. `atrStop` = entry - 1.8*ATR (son fallback)
+- `maxRisk` rejim-aware: trend → 0.94, volatile (atr/p > 3%) → 0.90, normal → 0.92
+- Tavan kurali: `stop > entry * 0.985` → zorla `entry * 0.985`
+
+### T1 Hedef Agirlikli Secim
+- Adaylar: direnc (w=4), ATR×2.8/2.0 (w=2), Fib0.618/1.0/1.272 (w=2/3/1), pivot (w=2/1), minRR floor (w=1)
+- Filtreler: entry * 1.30 tavan, min %2, max %15
+- T2: Fib 1.618 tercihli; T3: Fib 2.0 tercihli; gap: 1.05x carpani
+
+## Pump-Continuation Assessment (useAIAdvisor — v14)
+
+### Continuation Signal Sayaci
+- `recentPump > 7%` hisseler tamamen cikarilmiyor — 6 devam sinyali kontrol edilir:
+  1. `obvTrend === 'accumulation'`
+  2. `cmf > 0.1`
+  3. `mfi < 65`
+  4. `wyckoffSpring === true`
+  5. `ttmSqueeze.squeezeRelease === true`
+  6. news: fund_inflow / buyback / insider_buy
+- 3+ sinyal → -5 puan ceza (guclu devam sinyali)
+- 1-2 sinyal → -18 puan ceza (zayif devam sinyali)
+- 0 sinyal → -30 puan ceza (pur pump, devam yok)
+- ATR < %1.5 (gunluk hareket yetersiz) → -20 puan ek ceza

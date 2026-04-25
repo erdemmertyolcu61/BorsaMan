@@ -234,10 +234,11 @@ function _recordFailure(label) {
   const s = _circuitState[label];
   s.failures = (s.failures || 0) + 1;
   if (s.failures >= CIRCUIT_FAILURE_THRESHOLD) {
-    // Exponential backoff on consecutive failure bursts
+    // Exponential backoff — keep accumulating failures so each additional failure
+    // doubles the window: 3→60s, 4→120s, 5→240s, ...
     const backoff = CIRCUIT_BASE_BACKOFF_MS * Math.pow(2, Math.max(0, s.failures - CIRCUIT_FAILURE_THRESHOLD));
     s.openedUntil = Date.now() + backoff;
-    s.failures = 0;
+    // Do NOT reset s.failures here — let them accumulate for exponential growth
   }
 }
 
@@ -889,7 +890,92 @@ export function parseForeks(text) {
 // MAIN FETCH PIPELINE
 // ==========================================
 
-// Primary fetch: tries Vite proxy → public CORS proxies for Yahoo
+// ─── Yahoo crumb/cookie cache ───────────────────────────────────────────────
+// Yahoo Finance now requires a crumb token (fetched after accepting cookies).
+// We cache the crumb for 55 minutes (Yahoo rotates ~1h) to avoid hammering fc.yahoo.com.
+const _yahooCrumb = { value: null, ts: 0, cookie: '' };
+const CRUMB_TTL_MS = 55 * 60 * 1000;
+
+async function ensureYahooCrumb() {
+  if (_yahooCrumb.value && Date.now() - _yahooCrumb.ts < CRUMB_TTL_MS) return _yahooCrumb;
+  try {
+    // Step 1: Touch fc.yahoo.com to get the consent cookie
+    const consentResp = await fetch('https://fc.yahoo.com', {
+      credentials: 'include', redirect: 'follow',
+      signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined,
+    });
+    const setCookie = consentResp.headers.get('set-cookie') || '';
+    const cookie = (setCookie.match(/\bA3=[^;]+/) || setCookie.match(/\bGUC=[^;]+/) || [])[0] || '';
+
+    // Step 2: Fetch the crumb
+    const crumbResp = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+      credentials: 'include',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        ...(cookie ? { 'Cookie': cookie } : {}),
+      },
+      signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined,
+    });
+    if (crumbResp.ok) {
+      const crumb = (await crumbResp.text()).trim();
+      if (crumb && crumb.length > 4 && !crumb.includes('<')) {
+        _yahooCrumb.value = crumb;
+        _yahooCrumb.cookie = cookie;
+        _yahooCrumb.ts = Date.now();
+        return _yahooCrumb;
+      }
+    }
+  } catch { /* crumb fetch is best-effort */ }
+  return _yahooCrumb; // return whatever we have (may be empty)
+}
+
+// Build Yahoo chart URL with optional crumb
+function yahooChartUrl(symbol, range, interval, crumb = '', version = 'v8') {
+  const base = `https://query1.finance.yahoo.com/${version}/finance/chart/${symbol}.IS`;
+  const params = new URLSearchParams({
+    range, interval, includePrePost: 'false',
+    events: 'div,splits', useYfid: 'true',
+  });
+  if (crumb) params.set('crumb', crumb);
+  return base + '?' + params.toString();
+}
+
+// Yahoo-aware fetch: tries crumb-auth direct, then CORS proxies
+async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
+  const crumbCtx = await ensureYahooCrumb();
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+    ...(crumbCtx.cookie ? { 'Cookie': crumbCtx.cookie } : {}),
+  };
+
+  // Try v8 with crumb first, then v8 without, then v7
+  const urls = [
+    crumbCtx.value ? yahooChartUrl(symbol, range, interval, crumbCtx.value, 'v8') : null,
+    yahooChartUrl(symbol, range, interval, '', 'v8'),
+    `https://query2.finance.yahoo.com/v7/finance/chart/${symbol}.IS?range=${range}&interval=${interval}`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&includePrePost=false&_t=${Date.now()}`,
+  ].filter(Boolean);
+
+  for (const url of urls) {
+    try {
+      const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined;
+      const r = await fetch(url, { headers, credentials: 'include', ...(signal ? { signal } : {}) });
+      if (r.status === 401 || r.status === 403) {
+        // Invalidate crumb so next call re-fetches
+        _yahooCrumb.value = null;
+        continue;
+      }
+      if (!r.ok) continue;
+      const text = await r.text();
+      if (text && text.length > 100 && !text.startsWith('<')) return text;
+    } catch { continue; }
+  }
+  return null;
+}
+
+// Primary fetch: tries Vite proxy → Yahoo direct (crumb) → public CORS proxies
 async function getData(targetUrl, ms = 10000) {
   const directResult = await tryDirect(targetUrl, ms);
   if (directResult) return directResult;
@@ -969,18 +1055,23 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
     if (p) source = 'IsYatirim';
   }
 
-  // ---- SOURCE 2: Yahoo Finance v8 ----
+  // ---- SOURCE 2: Yahoo Finance (crumb-auth direct → CORS proxy fallback) ----
   if (!p) {
-    const url8 = 'https://query1.finance.yahoo.com/v8/finance/chart/' + symbol + '.IS?range=' + range + '&interval=' + interval + '&includePrePost=false';
-    let text = scanMode ? await getData(url8, ms) : await getDataFresh(url8, ms);
+    // Try crumb-authenticated direct fetch first (bypasses CORS proxy rate limits)
+    let text = await fetchYahooDirect(symbol, range, interval, ms);
+    if (!text) {
+      // Fallback: CORS proxy chain with v8 URL
+      const url8 = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&includePrePost=false`;
+      text = scanMode ? await getData(url8, ms) : await getDataFresh(url8, ms);
+    }
     p = text ? parseYahoo(text) : null;
     if (p) source = 'Yahoo';
   }
 
-  // ---- SOURCE 3: Yahoo v7 fallback ----
+  // ---- SOURCE 3: Yahoo v7 fallback (different endpoint, sometimes works when v8 fails) ----
   if (!p) {
-    const url7 = 'https://query2.finance.yahoo.com/v7/finance/chart/' + symbol + '.IS?range=' + range + '&interval=' + interval;
-    const text = await getData(url7, ms);
+    const url7 = `https://query2.finance.yahoo.com/v7/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&events=div%2Csplits`;
+    const text = await getDataViaProxies(url7, ms);
     p = text ? parseYahoo(text) : null;
     if (p) source = 'Yahoo-v7';
   }
@@ -996,8 +1087,11 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
     const r = { symbol, prices: p, source, _ts: Date.now(), dataConfidence: 'high', divergencePct: 0 };
     _cache[ck] = r;
 
-    // BIGPARA LIVE OVERLAY — merge today's live bar (TZ-stable helper)
-    await applyLiveOverlay(r, symbol);
+    // BIGPARA LIVE OVERLAY — only meaningful for daily/weekly; skip for intraday intervals
+    // (15m/5m bars already contain the live bar, and a day-level overlay would corrupt them)
+    if (interval === '1d' || interval === '1wk') {
+      await applyLiveOverlay(r, symbol);
+    }
     return r;
   }
 

@@ -2,6 +2,7 @@ import { calcATR, calcFibonacci, calcPivots, calcOBV, calcOBVTrend, calcAll } fr
 import { analyzeDetailedFinancials, getFundamentalGrade } from './fundamentalEngine.js';
 import { runWallStreetAnalysis } from './wallStreet.js';
 import { detectMarketRegime, getAdaptiveThresholds, getRegimeIndicatorWeights, detectHiddenDivergence, MarketRegime } from './adaptiveThresholds.js';
+import { applyCalibrationToScore } from './signalCalibration.js';
 
 // ============================================================
 // ADVANCED PATTERN DETECTION ENGINE (UNIFIED)
@@ -925,7 +926,29 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   // Normalize: 50 = neutral, 100 = max bullish, 0 = max bearish
   const MAX_PRACTICAL = 35;
   const rawScore = score;
-  const score100 = Math.max(0, Math.min(100, 50 + (rawScore / MAX_PRACTICAL) * 50));
+  let score100 = Math.max(0, Math.min(100, 50 + (rawScore / MAX_PRACTICAL) * 50));
+
+  // ── ML CALIBRATION: adjust score based on historical winRate × expectancy ──
+  // The active model is published from useSignalTracker via setSignalCalibration().
+  // When fewer than MIN_SAMPLES closed signals exist the multiplier is 1.0 (no-op).
+  let calibrationInfo = null;
+  try {
+    const provisionalCls = score100 >= 60 ? 'buy' : score100 <= 40 ? 'sell' : 'hold';
+    const cal = applyCalibrationToScore(score100, { cls: provisionalCls });
+    if (cal.calibration?.applied) {
+      const before = score100;
+      score100 = cal.score100;
+      calibrationInfo = cal.calibration;
+      const delta = score100 - before;
+      if (Math.abs(delta) >= 1) {
+        const arrow = delta > 0 ? 'yukseltildi' : 'dusuruldu';
+        reasons.push({
+          t: `ML KALIBRASYON: Skor ${arrow} ${before.toFixed(0)} -> ${score100.toFixed(0)} (gecmis ${calibrationInfo.breakdown[0]?.samples || '?'} sinyal, x${calibrationInfo.multiplier})`,
+          c: delta > 0 ? 'bullish' : 'bearish',
+        });
+      }
+    }
+  } catch (err) { /* calibration is best-effort — never block signal */ }
 
   // Signal classification using normalized 0-100 score
   // GUCLU AL: >=75 AND volume AND smart money AND 4+ indicator types
@@ -979,80 +1002,118 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   if (resistances.length > 0) res = resistances[0];
   if (resistances.length > 1) res2 = resistances[1];
 
-  // --- STOP LOSS: layered approach with regime-aware sizing ---
-  const atrMul = regimeIsTrend ? 1.8 : 2.2; // Tighter in trends (less noise), wider in ranges
+  // ═══ STOP LOSS: kesin teknik seviyelere dayalı hassas hesaplama ═══
+  // Öncelik: Chandelier > Destek > ATR-bazlı
+  // Pump hisselerde (son bar yüksek) stop son barin low'unun altı
+  // Sıkışma setup'larında sıkışma alt bandı
+  const recentLow = prices && prices.length >= 3
+    ? Math.min(prices[prices.length - 1].low, prices[prices.length - 2].low, prices[prices.length - 3].low)
+    : null;
+  const swingLow = prices && prices.length >= 10
+    ? Math.min(...prices.slice(-10).map(b => b.low))
+    : null;
+
+  const atrMul = regimeIsTrend ? 1.6 : 2.0; // Trend: daha sıkı, range: biraz boşluk
   const atrStop = atr ? p - atrMul * atr : null;
-  const srStop = sup ? sup.price * 0.995 : null;
+  const srStop = sup ? sup.price * 0.993 : null; // %0.7 destek altı buffer
   const chandelierStop = ind.chandelier ? ind.chandelier.longStop : null;
-  // Dynamic floor: trending markets allow tighter stops, range markets need room
-  const stopFloor = regimeIsTrend ? 0.93 : regimeIsRange ? 0.90 : 0.91;
+  // Recent structure low — en yakın teknik stop
+  const structureStop = recentLow && recentLow < p ? recentLow * 0.997 : null;
+  const swingStop = swingLow && swingLow < p * 0.94 ? null : (swingLow ? swingLow * 0.993 : null);
+
+  // Floor: maksimum risk (trend: %6, range: %8, volatil: %10)
+  const maxRisk = regimeIsTrend ? 0.94 : (atr && atr / p > 0.03 ? 0.90 : 0.92);
   let stop;
-  const stopCandidates = [atrStop, srStop, chandelierStop].filter(s => s != null && s < p && s > p * stopFloor);
+  const stopCandidates = [chandelierStop, srStop, structureStop, swingStop, atrStop]
+    .filter(s => s != null && s < p && s > p * maxRisk);
+
   if (stopCandidates.length > 0) {
-    // In trends: pick HIGHEST (tightest) stop to preserve capital
-    // In ranges: pick support-based stop if available for better reliability
     if (regimeIsTrend) {
+      // Trend: tightest (highest) — kapitali koru
       stop = Math.max(...stopCandidates);
     } else {
-      // Prefer support-based stop in ranges
-      stop = srStop && srStop > p * stopFloor ? srStop : Math.max(...stopCandidates);
+      // Range: destek bazlı stop öncelikli
+      stop = srStop && srStop > p * maxRisk ? srStop
+           : structureStop && structureStop > p * maxRisk ? structureStop
+           : Math.max(...stopCandidates);
     }
   } else {
-    // Breakout adjustment: if in a strong breakout, use a tighter technical stop
-    const defaultStop = ind.volRatio > 2 ? 0.96 : 0.95; 
+    // Fallback: hacim kırılımında sıkı, normal'de standart
+    const defaultStop = ind.volRatio > 2 ? 0.965 : 0.95;
     stop = sup ? Math.max(sup.price * 0.99, p * defaultStop) : p * defaultStop;
   }
-  // Absolute floor: never risk more than 7% from entry (tightened from 8%)
-  if (stop < p * 0.93) stop = p * 0.93;
+  // Hard floor
+  if (stop < p * maxRisk) stop = p * maxRisk;
+  // Hard ceiling: stop hiçbir zaman entry'nin %1.5'inden yakın olmamalı (bant slipajı)
+  if (stop > p * 0.985) stop = p * 0.985;
 
   // --- ENTRY ---
   let entry = p;
   if (cls === 'hold' && ind.lastMA20 && ind.lastMA20 < p) entry = ind.lastMA20;
   else if (cls === 'hold' && sup) entry = sup.price * 1.005;
 
-  // --- TARGETS: multi-source with confidence weighting ---
-  // Collect target candidates from different methods
+  // ═══ TARGETS: çok katmanlı, ağırlıklı — en güvenilir seviyeyi öne çeker ═══
   const t1Candidates = [];
-  // 1. Nearest resistance
-  if (res && res.price > entry * 1.01) t1Candidates.push({ price: res.price, source: 'resistance', weight: 3 });
-  // 2. ATR-based (2x ATR for T1, 3x for T2)
+
+  // 1. En yakın direnç — en güvenilir (ağırlık 4)
+  if (res && res.price > entry * 1.008) t1Candidates.push({ price: res.price, source: 'resistance', weight: 4 });
+
+  // 2. ATR-bazlı (trend'de agresif, range'de muhafazakâr)
   if (atr) {
-    const atrMult = isTrending ? 2.5 : 2; // More aggressive in trends
-    t1Candidates.push({ price: p + atrMult * atr, source: 'atr', weight: 2 });
+    const atrMult = regimeIsTrend ? 2.8 : 2.0;
+    t1Candidates.push({ price: entry + atrMult * atr, source: 'atr', weight: 2 });
   }
-  // 3. Fibonacci extensions
+
+  // 3. Fibonacci extension (sadece net trend'de güvenilir)
   if (fibs && fibs.trend === 'up') {
-    if (fibs['0.618'] && fibs['0.618'] > entry * 1.01) t1Candidates.push({ price: fibs['0.618'], source: 'fib618', weight: 1 });
-    if (fibs['1.0'] && fibs['1.0'] > entry * 1.01) t1Candidates.push({ price: fibs['1.0'], source: 'fib100', weight: 2 });
+    if (fibs['0.618'] && fibs['0.618'] > entry * 1.01) t1Candidates.push({ price: fibs['0.618'], source: 'fib618', weight: 2 });
+    if (fibs['1.0']   && fibs['1.0']   > entry * 1.01) t1Candidates.push({ price: fibs['1.0'],   source: 'fib100', weight: 3 });
+    if (fibs['1.272'] && fibs['1.272'] > entry * 1.02) t1Candidates.push({ price: fibs['1.272'], source: 'fib127', weight: 1 });
   }
-  // 4. Pivot resistance
-  if (pivots && pivots.r1 > entry * 1.01) t1Candidates.push({ price: pivots.r1, source: 'pivot_r1', weight: 1 });
 
-  // Weighted average of T1 candidates
+  // 4. Pivot dirençleri
+  if (pivots) {
+    if (pivots.r1 && pivots.r1 > entry * 1.005) t1Candidates.push({ price: pivots.r1, source: 'pivot_r1', weight: 2 });
+    if (pivots.r2 && pivots.r2 > entry * 1.02)  t1Candidates.push({ price: pivots.r2, source: 'pivot_r2', weight: 1 });
+  }
+
+  // 5. R/R-based floor: en az 1.5:1 R/R sağlayacak minimum hedef
+  const minRRTarget = entry + (entry - stop) * 1.5;
+  t1Candidates.push({ price: minRRTarget, source: 'minRR', weight: 1 });
+
+  // Ağırlıklı ortalama — aşırı uzak adayları çıkar (entry * 1.25'ten uzak)
+  const filtered = t1Candidates.filter(c => c.price <= entry * 1.30 && c.price > entry * 1.005);
   let t1;
-  if (t1Candidates.length > 0) {
-    const totalWeight = t1Candidates.reduce((s, c) => s + c.weight, 0);
-    t1 = t1Candidates.reduce((s, c) => s + c.price * c.weight, 0) / totalWeight;
+  if (filtered.length > 0) {
+    const totalWeight = filtered.reduce((s, c) => s + c.weight, 0);
+    t1 = filtered.reduce((s, c) => s + c.price * c.weight, 0) / totalWeight;
+  } else if (t1Candidates.length > 0) {
+    // Fallback: minimum hedefi kullan
+    t1 = Math.min(...t1Candidates.map(c => c.price).filter(v => v > entry));
   } else {
-    t1 = entry * 1.05; // Default 5%
+    t1 = entry * 1.05;
   }
-  if (t1 <= entry * 1.015) t1 = entry * 1.03; // Minimum 3% target
+  // Minimum %2 target (çok sıkı olmasın), Maximum %20 (gerçekçi olmayan hedef koyma)
+  if (t1 < entry * 1.02) t1 = entry * 1.02;
+  if (t1 > entry * 1.20) t1 = entry * 1.15;
 
-  // T2 & T3: further targets
-  let t2, t3;
+  // T2: ikinci direnç veya Fib 1.618
+  let t2;
   if (res2 && res2.price > t1 * 1.01) t2 = res2.price;
-  else if (fibs && fibs['1.272'] && fibs['1.272'] > t1 * 1.01) t2 = fibs['1.272'];
+  else if (fibs && fibs['1.618'] && fibs['1.618'] > t1 * 1.01) t2 = fibs['1.618'];
   else if (pivots && pivots.r2 && pivots.r2 > t1 * 1.01) t2 = pivots.r2;
   else if (atr) t2 = entry + 3.5 * atr;
-  else t2 = t1 * 1.04;
+  else t2 = t1 * 1.05;
 
-  if (fibs && fibs['1.618'] && fibs['1.618'] > t2 * 1.01) t3 = fibs['1.618'];
+  // T3: uzak hedef
+  let t3;
+  if (fibs && fibs['2.0'] && fibs['2.0'] > t2 * 1.01) t3 = fibs['2.0'];
   else if (pivots && pivots.r3 && pivots.r3 > t2 * 1.01) t3 = pivots.r3;
-  else if (atr) t3 = entry + 5 * atr;
-  else t3 = t2 * 1.04;
+  else if (atr) t3 = entry + 5.5 * atr;
+  else t3 = t2 * 1.06;
 
-  if (t2 <= t1) t2 = t1 * 1.04;
-  if (t3 <= t2) t3 = t2 * 1.04;
+  if (t2 <= t1) t2 = t1 * 1.05;
+  if (t3 <= t2) t3 = t2 * 1.05;
 
   // --- RISK/REWARD ---
   const risk = entry - stop, reward = t1 - entry;
@@ -1157,6 +1218,7 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     signal, cls, score: score100, rawScore, conf: conf.toFixed(0), reasons,
     stop, t1, t2, t3, rr, rr2, rrQuality, entry, atr, fibs, pivots,
     holdBars, holdText, longTermView, dailyRange, intradayTarget, intradayStop, intradayRR,
+    calibration: calibrationInfo,
     ma20pct: ind.lastMA20 ? (p - ind.lastMA20) / ind.lastMA20 * 100 : null,
     ma50pct: ind.lastMA50 ? (p - ind.lastMA50) / ind.lastMA50 * 100 : null,
     bollPct: ind.lastBU && ind.lastBL ? (p - ind.lastBL) / (ind.lastBU - ind.lastBL) * 100 : null,

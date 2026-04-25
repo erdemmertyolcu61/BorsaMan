@@ -18,6 +18,12 @@ import {
   istanbulDayKey,
   isBistWeekend,
   applyLiveOverlay,
+  _isCircuitOpen,
+  _recordFailure,
+  _recordSuccess,
+  _circuitState,
+  CIRCUIT_FAILURE_THRESHOLD,
+  CIRCUIT_BASE_BACKOFF_MS,
 } from '../fetchEngine.js';
 
 describe('istanbulDayKey', () => {
@@ -78,15 +84,6 @@ describe('applyLiveOverlay', () => {
 });
 
 describe('circuit-breaker', () => {
-  import {
-    _isCircuitOpen,
-    _recordFailure,
-    _recordSuccess,
-    _circuitState,
-    CIRCUIT_FAILURE_THRESHOLD,
-    CIRCUIT_BASE_BACKOFF_MS,
-  } from '../fetchEngine.js';
-
   beforeEach(() => {
     // Reset circuit state before each test
     Object.keys(_circuitState).forEach(k => delete _circuitState[k]);

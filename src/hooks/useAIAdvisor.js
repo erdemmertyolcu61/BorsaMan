@@ -4,6 +4,7 @@ import { getUnifiedAnalysis, genSignal } from '../utils/signals.js';
 import { calcAll } from '../utils/indicators.js';
 import { getStockList, SECTORS } from '../utils/constants.js';
 import { calcSectorMetrics, rankSectors } from '../utils/sectorEngine.js';
+import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 
 /**
  * isMarketOpen - Check if BIST market is currently open
@@ -28,55 +29,133 @@ const SCAN_UNIVERSE = 'bistall';                // full universe ~648 symbols
 
 // ── Tomorrow Potential Score: rank stocks by next-day opportunity ──
 // Pure function — no React state dependency, safe to define at module level
+// ══════════════════════════════════════════════════════════════════════
+// calcTomorrowPotential — kapanis sonrasi "yarin +5%" olasiligini olcer.
+// 3 ana setup tipi:
+//   A) DIP BOUNCE: oversold (RSI<35, BB alt, Williams<-80) + hacim artisi
+//   B) COIL BREAK: TTM Squeeze + daralan ATR + kirilim oncesi birikim
+//   C) CATALYST: fund_inflow/buyback/insider_buy haberi + teknik destek
+// Anti-pump: son 2 gunde >+7% yapmis hisseler agir ceza alir.
+// Gunluk aralik kucukse (<2.5%) skor kucuktulur — %5 cikamaz zaten.
+// ══════════════════════════════════════════════════════════════════════
 function calcTomorrowPotential(result) {
   if (!result) return 0;
   let tpScore = 0;
-  
-  // 1. Closing position within Bollinger Bands (lower = more upside)
+
+  // ── PUMP DEĞERLENDİRMESİ: Artış devam eder mi, yoksa tükenme mi? ──
+  // Hard sıfır YOK — tavan bile yapsa devam sinyalleri varsa göster.
+  // Ama momentum tükenme işaretleri varsa ağır ceza.
+  const recentPump = result.recentPump || 0;
+
+  if (recentPump > 7) {
+    // Yüksek pump: devam sinyalleri yoksa skor düşür
+    const continuationSignals = [
+      result.obvTrend === 'accumulation',        // kurumsal alım devam ediyor
+      (result.cmf || 0) > 0.1,                   // para akışı pozitif
+      (result.mfi || 50) < 65,                   // MFI henüz aşırı alım değil
+      result.wyckoffSpring === true,              // Wyckoff markup fazında
+      result.ttmSqueeze?.squeezeRelease === true, // squeeze breakout devam
+      result.newsCategories?.some(c =>
+        ['fund_inflow','buyback','insider_buy'].includes(c)), // kataliz var
+    ].filter(Boolean).length;
+
+    if (continuationSignals >= 3) {
+      // Güçlü devam sinyalleri → hafif negatif bias yeterli
+      tpScore -= 5;
+    } else if (continuationSignals >= 1) {
+      // Zayıf devam sinyali → orta ceza
+      tpScore -= 18;
+    } else {
+      // Hiç devam sinyali yok → artış yorgun, büyük ceza ama sıfır değil
+      tpScore -= 30;
+    }
+  } else if (recentPump > 5) {
+    tpScore -= 8;   // Orta pump — hafif ceza
+  } else if (recentPump > 3) {
+    tpScore -= 2;   // Hafif yukarı — neredeyse nötr
+  }
+
+  // ── GUNLUK ARALIK GATI: ATR/price < %2 ise hisse yeterince hareket etmez ──
+  const atrPct = result.atrPct || 0;           // ATR / price * 100
+  if (atrPct < 1.5) tpScore -= 20;            // cok dar bant
+  else if (atrPct < 2.5) tpScore -= 5;
+  else if (atrPct >= 3) tpScore += 8;         // genis aralik — 5% mumkun
+  else if (atrPct >= 5) tpScore += 15;
+
+  // ── SETUP A — DIP BOUNCE (ortalamayi geri donusu) ──
   if (result.bollPct != null) {
-    if (result.bollPct < 20) tpScore += 15;
-    else if (result.bollPct < 40) tpScore += 8;
-    else if (result.bollPct > 80) tpScore -= 10;
+    if (result.bollPct < 15) tpScore += 20;   // alt bant altinda — en guclu dip
+    else if (result.bollPct < 25) tpScore += 14;
+    else if (result.bollPct < 35) tpScore += 7;
+    else if (result.bollPct > 85) tpScore -= 12; // ust bantta — yukari yer az
   }
-  
-  // 2. Volume trend (rising volume = institutional interest)
-  if (result.volRatio) {
-    if (result.volRatio > 2) tpScore += 12;
-    else if (result.volRatio > 1.5) tpScore += 8;
-    else if (result.volRatio > 1.2) tpScore += 4;
+  if (result.rsi != null) {
+    if (result.rsi < 25) tpScore += 18;       // asiri satim extremum
+    else if (result.rsi < 32) tpScore += 12;
+    else if (result.rsi < 40) tpScore += 5;
+    else if (result.rsi > 70) tpScore -= 10;
+    else if (result.rsi > 80) tpScore -= 18;
   }
-  
-  // 3. Support proximity (close to support = limited downside)
-  if (result.stopPct != null) {
-    const riskPct = Math.abs(result.stopPct);
-    if (riskPct < 3) tpScore += 10;
-    else if (riskPct < 5) tpScore += 5;
+  if (result.williamsR != null && result.williamsR < -80) tpScore += 8;
+  if (result.mfi != null) {
+    if (result.mfi < 25) tpScore += 10;       // oversold + MFI = para girisi bekle
+    else if (result.mfi < 35) tpScore += 5;
+    else if (result.mfi > 75) tpScore -= 8;
   }
-  
-  // 4. Momentum direction (positive momentum = continuation likely)
-  if (result.momentumScore) {
-    tpScore += Math.min(15, result.momentumScore * 0.2);
+
+  // ── SETUP B — COIL/SQUEEZE BREAK (kirilim oncesi birikim) ──
+  if (result.ttmSqueeze?.squeezeOn) tpScore += 15; // aktif sikisma
+  if (result.ttmSqueeze?.squeezeRelease) tpScore += 20; // sikismadan yeni cikis
+  if (result.obvTrend === 'accumulation') tpScore += 12;
+  if (result.cmf != null) {
+    if (result.cmf > 0.15) tpScore += 10;
+    else if (result.cmf > 0.05) tpScore += 5;
+    else if (result.cmf < -0.1) tpScore -= 8;
   }
-  
-  // 5. Ichimoku/Supertrend alignment
-  if (result.ichimoku?.cloudPosition === 'above') tpScore += 5;
-  if (result.supertrend?.trend === 'UP') tpScore += 5;
-  if (result.ichimoku?.tkCross === 'bullish') tpScore += 8;
-  if (result.supertrend?.flip === 'bullish') tpScore += 8;
-  
-  // 6. R/R quality
-  if (result.rr >= 2.5) tpScore += 10;
-  else if (result.rr >= 2) tpScore += 6;
-  else if (result.rr >= 1.5) tpScore += 3;
-  
-  // 7. Smart money accumulation
-  if (result.obvTrend === 'accumulation') tpScore += 8;
-  if (result.cmf > 0.1) tpScore += 5;
-  
-  // 8. Score itself
-  tpScore += Math.min(15, (result.score || 0) * 0.2);
-  
-  return Math.max(0, Math.min(100, tpScore));
+  if (result.volRatio != null) {
+    if (result.volRatio > 2.5) tpScore += 10;  // hacim patlamasi
+    else if (result.volRatio > 1.8) tpScore += 6;
+    else if (result.volRatio > 1.3) tpScore += 3;
+    else if (result.volRatio < 0.6) tpScore -= 5; // hacim kuruyor
+  }
+
+  // ── SETUP C — CATALYST BOOST (haber destekli) ──
+  // Haber enricment'tan gelen veri (useAIAdvisor'da ekleniyor)
+  if (result.newsScore != null) {
+    const HIGH_VALUE_CATS = ['fund_inflow', 'buyback', 'insider_buy', 'contract'];
+    const hasCatalyst = result.newsCategories?.some(c => HIGH_VALUE_CATS.includes(c));
+    if (hasCatalyst && result.newsScore > 3) tpScore += 20; // guclu kataliz
+    else if (hasCatalyst) tpScore += 10;
+    else if (result.newsScore > 2) tpScore += 5;            // genel pozitif haber
+    else if (result.newsScore < -3) tpScore -= 15;          // negatif haber
+    if (result.newsCategories?.includes('risk')) tpScore -= 20;
+    if (result.newsHighImpact > 0) tpScore += 8;
+  }
+  // KAP sentiment da hesaba kat
+  if (result.kapSentiment != null) {
+    if (result.kapSentiment > 5) tpScore += 10;
+    else if (result.kapSentiment > 2) tpScore += 5;
+    else if (result.kapSentiment < -3) tpScore -= 10;
+  }
+
+  // ── TEKNIK TEYITLER ──
+  if (result.ichimoku?.tkCross === 'bullish') tpScore += 10;
+  if (result.ichimoku?.kumoBreakout === 'bullish') tpScore += 12;
+  if (result.ichimoku?.cloudPosition === 'above') tpScore += 4;
+  if (result.supertrend?.flip === 'bullish') tpScore += 12;
+  if (result.supertrend?.trend === 'UP') tpScore += 4;
+  if (result.wyckoffSpring) tpScore += 15;  // Wyckoff spring = en guclu dip sinyali
+
+  // ── R/R KALITESI ──
+  if (result.rr >= 3) tpScore += 12;
+  else if (result.rr >= 2.5) tpScore += 8;
+  else if (result.rr >= 2) tpScore += 5;
+  else if (result.rr < 1.2) tpScore -= 10;
+
+  // ── GENEL SKOR KATKISI (daha kucuk agirlik — kataliz ve dip daha onemli) ──
+  tpScore += Math.min(10, ((result.score || 50) - 50) * 0.2);
+
+  return Math.max(0, Math.min(100, Math.round(tpScore)));
 }
 
 /**
@@ -162,6 +241,18 @@ export function useAIAdvisor(portfolio) {
               const prev = data.prices[data.prices.length - 2] || last;
               const change = prev.close ? ((last.close - prev.close) / prev.close) * 100 : 0;
 
+              // Anti-pump: max daily change over the last 3 bars
+              const recentBars = data.prices.slice(-4);
+              let recentPump = 0;
+              for (let bi = 1; bi < recentBars.length; bi++) {
+                const pc = recentBars[bi - 1].close;
+                if (pc > 0) recentPump = Math.max(recentPump, ((recentBars[bi].close - pc) / pc) * 100);
+              }
+
+              // ATR as % of price — for daily-range gate
+              const atr = ind.atr ? ind.atr : null;
+              const atrPct = atr && ind.lastClose > 0 ? (atr / ind.lastClose) * 100 : 0;
+
               // Use genSignal's normalized score100 directly (no re-mixing)
               const finalScore = Number(sig.score) || 50;
 
@@ -221,6 +312,10 @@ export function useAIAdvisor(portfolio) {
                 roc10: ind.lastROC10,
                 bollPct: ind.lastBU && ind.lastBL ? (ind.lastClose - ind.lastBL) / (ind.lastBU - ind.lastBL) * 100 : null,
                 volumeProfilePOC: ind.volumeProfile?.poc || null,
+                recentPump,
+                atrPct,
+                ttmSqueeze: ind.ttmSqueeze || null,
+                wyckoffSpring: ind.wyckoffSpring || false,
               };
             }
           } catch (e) {
@@ -263,17 +358,27 @@ export function useAIAdvisor(portfolio) {
       
       const picks = results
         .filter(r => {
+          // ── GLOBAL GATES (her iki mod icin) ──
+          // Gunluk aralik gati: ATR < %1.5 → hareket etmez
+          if ((r.atrPct || 0) < 1.5) return false;
+
           if (isAfterHours) {
-            // After hours: strict filter — only high-conviction setups
+            // After hours: dip/coil/catalyst setup'larini tercih et
             const isBuy = r.cls === 'buy';
-            const hasSetup = isBuy && r.score >= 60 && r.rr >= 1.5;
+            const hasSetup = isBuy && r.score >= 58 && r.rr >= 1.5;
             const hasTrend = (r.ichimoku?.cloudPosition === 'above') || (r.supertrend?.trend === 'UP');
+            // Catalyst bonus — fund_inflow/buyback/insider_buy varsa eşigi dusur
+            const hasCatalyst = r.newsCategories?.some(c =>
+              ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c)
+            );
+            if (hasCatalyst && isBuy && r.score >= 52 && r.rr >= 1.2) return true;
             return hasSetup || (hasTrend && isBuy && r.score >= 55 && r.rr >= 1.2);
           } else {
             // Market open: strict filter (score100 scale: 0-100)
             const isBuy = r.cls === 'buy';
             const hasTraditionalSignal = isBuy && r.score >= 60 && r.rr >= 1.5;
-            const hasMomentumBoost = r.momentumScore >= 50 && (r.change || 0) > 0 && r.score >= 55;
+            const hasMomentumBoost = r.momentumScore >= 50 && (r.change || 0) > 0 && r.score >= 55
+              && (r.recentPump || 0) < 5; // intraday momentum ancak son 3 gun pump yoksa
             return hasTraditionalSignal || hasMomentumBoost;
           }
         })
@@ -285,16 +390,40 @@ export function useAIAdvisor(portfolio) {
         }))
         .sort((a, b) => {
           if (isAfterHours) {
-            // After hours: sort by tomorrow potential
+            // After hours: sort by tomorrowPotential (already encodes catalyst + anti-pump)
             return (b.tomorrowPotential || 0) - (a.tomorrowPotential || 0);
           } else {
-            // Market open: momentum + score
-            const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2);
-            const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2);
+            // Market open: score + momentum, anti-pump docked
+            const pumpPenaltyA = Math.min(20, (a.recentPump || 0) * 2);
+            const pumpPenaltyB = Math.min(20, (b.recentPump || 0) * 2);
+            const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) - pumpPenaltyA;
+            const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) - pumpPenaltyB;
             return scoreB - scoreA;
           }
         })
         .slice(0, 10);
+
+      // ── Market news enrichment: fetch borsa haberleri, eslestir + sentiment ──
+      // Sadece top 10 pick + universe filtrelenir; tum tarama icin haber cekmiyoruz.
+      let newsIndex = {};
+      try {
+        const universe = picks.map(p => p.symbol);
+        if (universe.length) {
+          const news = await fetchMarketNews({ universe, maxPerSource: 25 });
+          newsIndex = indexBySymbol(news);
+          // Inject per-pick news entry (score, count, top headline)
+          for (const r of picks) {
+            const e = newsIndex[r.symbol];
+            if (e?.count) {
+              r.newsScore = e.score;
+              r.newsCount = e.count;
+              r.newsCategories = e.categories;
+              r.newsHeadline = e.topItem?.title || '';
+              r.newsHighImpact = e.highImpact;
+            }
+          }
+        }
+      } catch { /* news enrichment is best-effort */ }
 
       setScanResults(results);
       setTopPicks(picks);
@@ -313,6 +442,7 @@ export function useAIAdvisor(portfolio) {
           marketContext: sentimentObj,
           sectorRotation,
           riskAlerts,
+          newsIndex,
           timestamp: Date.now(),
           scanMode: isAfterHours ? 'afterHours' : 'intraday',
         },

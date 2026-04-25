@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
+import { buildCalibrationModel, setSignalCalibration } from '../utils/signalCalibration.js';
 
 let globalNotificationHandler = null;
 
@@ -161,6 +162,19 @@ export function useSignalTracker() {
 
   useEffect(() => {
     persist(signals);
+  }, [signals]);
+
+  // Publish ML calibration model to signals.js whenever closed-signal count changes.
+  // genSignal() reads this via setSignalCalibration() to bias score100 by realized winRate × expectancy.
+  const closedCountRef = useRef(0);
+  useEffect(() => {
+    const closedCount = signals.filter(s => s.status === 'closed' && s.outcome).length;
+    if (closedCount === closedCountRef.current) return;
+    closedCountRef.current = closedCount;
+    try {
+      const model = buildCalibrationModel(signals);
+      setSignalCalibration(model);
+    } catch {}
   }, [signals]);
 
   const recordSignal = useCallback((signalData) => {
@@ -411,9 +425,16 @@ export function useSignalTracker() {
 
   const stats = (() => calcStats(signals))();
 
+  // Expose the live calibration model snapshot for diagnostic UI
+  const calibrationModel = (() => {
+    try { return buildCalibrationModel(signals); }
+    catch { return null; }
+  })();
+
   return {
     signals,
     stats,
+    calibrationModel,
     recordSignal,
     updateSignal,
     removeSignal,

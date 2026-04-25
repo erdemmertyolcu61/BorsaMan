@@ -146,7 +146,22 @@ export function buildDailyPicksPrompt(picks = [], market = {}) {
 
   const rows = picks.slice(0, 8).map(p => {
     const grade = gradeSetup(p);
-    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} R/R=1:${p.rr?.toFixed(2)} RSI=${p.rsi?.toFixed(0)}`;
+    // KAP haberleri (varsa)
+    let kapStr = '';
+    if (p.kapSentiment != null && p.kapCount > 0) {
+      const sign = p.kapSentiment >= 0 ? '+' : '';
+      const head = p.kapHeadline ? ` "${p.kapHeadline.slice(0, 40)}"` : '';
+      kapStr = ` KAP=${sign}${p.kapSentiment.toFixed(1)}(${p.kapCount})${head}`;
+    }
+    // Borsa haberleri (yabanci alimi, fundamental sira, geri alim, vb.)
+    let newsStr = '';
+    if (p.newsCount > 0) {
+      const sign = p.newsScore >= 0 ? '+' : '';
+      const cats = p.newsCategories?.length ? `[${p.newsCategories.slice(0, 3).join(',')}]` : '';
+      const head = p.newsHeadline ? ` "${p.newsHeadline.slice(0, 40)}"` : '';
+      newsStr = ` HABER${cats}=${sign}${p.newsScore?.toFixed?.(1) ?? p.newsScore}(${p.newsCount})${head}`;
+    }
+    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} R/R=1:${p.rr?.toFixed(2)} RSI=${p.rsi?.toFixed(0)}${kapStr}${newsStr}`;
   }).join('\n');
 
   return `Sen BIST gunluk strateji uzmanisin. Bugun icin en iyi firsatlari sirala.
@@ -155,6 +170,14 @@ ${header}
 
 ADAY LISTESI:
 ${rows}
+
+NOT: KAP=sirket bildirimleri (-10..+10).
+HABER[kategori]=borsa haberleri sentiment'i. Kategoriler:
+  fund_inflow=yabanci/kurumsal alim, fundamental_rank=cari oran/F-K/karlilik siralamasi,
+  buyback=geri alim, insider_buy=iceriden alim, dividend=temettu, upgrade=tavsiye yukselt,
+  downgrade=tavsiye dusur, contract=sozlesme/ihale, risk=dava/sorusturma/ceza.
+Kategoriler kurulum kalitesini tartmada AGIR rol oynamali — fund_inflow + fundamental_rank
+birlesince A notu icin onemli teyittir; risk kategorisi C notuna dusurur.
 
 Her hisseyi A/B/C notuyla derecelendir:
 - A = guclu kurulum (skor>=7, R/R>=2, teknik+temel uyumlu, hacim destekli)
