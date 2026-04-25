@@ -283,16 +283,21 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
 
       {/* Top Pick Quick View */}
       {topPicks.length > 0 && !scanning && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
           <span style={{ color: 'var(--t3)', fontSize: 11 }}>En İyi:</span>
-          {[...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 3).map(p => (
-            <button key={p.symbol} onClick={() => onAnalyze && onAnalyze(p.symbol)} style={{
-              background: 'var(--green2)', color: 'var(--green)', border: '1px solid var(--green)',
-              borderRadius: 4, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600
-            }}>
-              {p.symbol} ({p.score.toFixed(1)})
-            </button>
-          ))}
+          {[...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 4).map(p => {
+            const isSell = p.cls === 'sell';
+            return (
+              <button key={p.symbol} onClick={() => onAnalyze && onAnalyze(p.symbol)} style={{
+                background: isSell ? 'var(--red2)' : 'var(--green2)',
+                color: isSell ? 'var(--red)' : 'var(--green)',
+                border: `1px solid ${isSell ? 'var(--red)' : 'var(--green)'}`,
+                borderRadius: 4, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600
+              }}>
+                {isSell ? '↓' : ''}{p.symbol} ({(p.score || 0).toFixed(1)})
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -503,56 +508,132 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       {/* Toggle header */}
       <div onClick={() => setOpen(o => !o)} style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '10px 16px', cursor: 'pointer', userSelect: 'none',
-        background: 'var(--bg2)', borderBottom: '1px solid var(--border)',
+        padding: '6px 16px', cursor: 'pointer', userSelect: 'none',
+        background: 'var(--bg2)', borderBottom: '1px solid var(--border)', height: 32, boxSizing: 'border-box',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 10 }}>
-          <span style={{ fontWeight: 800, color: 'var(--blue)', fontSize: 11, letterSpacing: 0.5 }}>AI ANALIZ VE FIRSATLAR ({topPicks.length})</span>
-          {marketSentiment && <span style={{ color: marketSentiment.color, fontWeight: 700, background: marketSentiment.color + '11', padding: '2px 8px', borderRadius: 4 }}>{marketSentiment.sentiment}</span>}
-          {!open && topPicks.slice(0, 4).map(p => (
-            <span key={p.symbol} style={{ color: 'var(--green)', fontWeight: 700, fontSize: 10, background: 'var(--bg3)', padding: '2px 6px', borderRadius: 3, border: '1px solid var(--border)' }}>
-              {p.symbol} {p._intradayConfirmed && <span style={{ color: 'var(--orange)' }}>⚡</span>}
-            </span>
-          ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 10 }}>
+          <span style={{ fontWeight: 800, color: 'var(--blue)', fontSize: 11, letterSpacing: 0.5 }}>
+            ★ EN İYİ 5 FIRSAT
+          </span>
+          {/* AL / SAT breakdown */}
+          {(() => {
+            const buyCount = topPicks.filter(p => p.cls !== 'sell').length;
+            const sellCount = topPicks.filter(p => p.cls === 'sell').length;
+            return (
+              <span style={{ fontSize: 10, color: 'var(--t3)' }}>
+                <span style={{ color: 'var(--green)', fontWeight: 700 }}>{buyCount} AL</span>
+                {sellCount > 0 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {sellCount} SAT</span>}
+              </span>
+            );
+          })()}
+          {marketSentiment && <span style={{ color: marketSentiment.color, fontWeight: 700, background: marketSentiment.color + '18', padding: '2px 8px', borderRadius: 4, fontSize: 9 }}>{marketSentiment.sentiment}</span>}
+          {!open && [...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 5).map(p => {
+            const isSell = p.cls === 'sell';
+            return (
+              <span key={p.symbol} style={{
+                color: isSell ? 'var(--red)' : 'var(--green)', fontWeight: 700, fontSize: 10,
+                background: 'var(--bg3)', padding: '1px 6px', borderRadius: 3,
+                border: `1px solid ${isSell ? 'var(--red)' : 'var(--border)'}`,
+              }}>
+                {p.symbol} {isSell ? '↓' : ''}
+              </span>
+            );
+          })}
         </div>
         <span style={{ color: 'var(--t2)', fontSize: 12, transition: 'transform 0.3s', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>▲</span>
       </div>
       {/* Content */}
       <div style={{ padding: '0 16px 10px', display: 'flex', gap: 16, fontSize: 10, overflowY: 'auto', maxHeight: 380, flexWrap: 'wrap' }}>
-      {/* Top Picks */}
+      {/* Top 5 Picks — sorted by score, AL=green SAT=red */}
       {topPicks.length > 0 && (
-        <div style={{ flex: 2, minWidth: 300 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
-            AI En İyi Fırsatlar ({topPicks.length})
+        <div style={{ flex: 2, minWidth: 320 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+            ★ En İyi 5 Fırsat
+            <span style={{ fontSize: 9, color: 'var(--t3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
+              ({topPicks.filter(p => p.cls !== 'sell').length} AL · {topPicks.filter(p => p.cls === 'sell').length} SAT)
+            </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
-            {topPicks.slice(0, 6).map(p => (
-              <div key={p.symbol} 
-                onClick={() => onAnalyze && onAnalyze(p.symbol)}
-                style={{
-                  background: 'var(--bg3)', borderLeft: '3px solid var(--green)', borderRadius: 4, padding: '6px 10px',
-                  cursor: 'pointer'
-                }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <span style={{ fontWeight: 700, fontSize: 12, color: 'var(--t1)' }}>{p.symbol}</span>
-                    <span style={{ fontSize: 8, color: 'var(--t3)', marginLeft: 4 }}>{p.sector}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 }}>
+            {[...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 5).map((p, idx) => {
+              const isSell = p.cls === 'sell';
+              const accentColor = isSell ? 'var(--red)' : 'var(--green)';
+              const accentBg = isSell ? 'var(--red2)' : 'var(--green2)';
+              const stopPctAbs = Math.abs(p.stopPct || 0);
+              const targetPctAbs = Math.abs(p.targetPct || 0);
+              return (
+                <div key={p.symbol}
+                  onClick={() => onAnalyze && onAnalyze(p.symbol)}
+                  style={{
+                    background: 'var(--bg3)',
+                    borderLeft: `3px solid ${accentColor}`,
+                    borderRadius: 4, padding: '7px 10px', cursor: 'pointer',
+                    position: 'relative', overflow: 'hidden',
+                  }}>
+                  {/* Rank badge */}
+                  <div style={{
+                    position: 'absolute', top: 4, right: 6,
+                    fontSize: 8, color: 'var(--t3)', fontWeight: 700,
+                  }}>#{idx + 1}</div>
+
+                  {/* Symbol + signal badge */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--t1)' }}>{p.symbol}</span>
+                      <span style={{
+                        fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                        background: accentBg, color: accentColor, border: `1px solid ${accentColor}`,
+                      }}>
+                        {isSell ? 'SAT' : 'AL'}
+                      </span>
+                      {p._alreadyHolding && <span style={{ fontSize: 8, color: 'var(--orange)' }}>●portfoy</span>}
+                    </div>
+                    <span style={{ fontWeight: 700, color: 'var(--cyan)', fontSize: 11 }}>{(p.score || 0).toFixed(1)}</span>
                   </div>
-                  <span style={{ fontWeight: 700, color: 'var(--green)', fontSize: 11 }}>{p.signal}</span>
+
+                  {/* Price + change + sector */}
+                  <div style={{ display: 'flex', gap: 6, marginTop: 4, fontSize: 10, color: 'var(--t2)', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--t1)' }}>{(p.price || 0).toFixed(2)} TL</span>
+                    <span style={{ color: (p.change || 0) >= 0 ? 'var(--green)' : 'var(--red)', fontSize: 9 }}>
+                      {(p.change || 0) >= 0 ? '+' : ''}{(p.change || 0).toFixed(1)}%
+                    </span>
+                    <span style={{ color: 'var(--t3)', fontSize: 8 }}>{p.sector}</span>
+                  </div>
+
+                  {/* Stop / Target with percentage */}
+                  <div style={{ display: 'flex', gap: 10, marginTop: 4, fontSize: 9 }}>
+                    <span>
+                      <span style={{ color: 'var(--t3)' }}>Stop </span>
+                      <span style={{ color: 'var(--red)', fontWeight: 600 }}>
+                        {p.stop ? p.stop.toFixed(2) : '-'}
+                        {stopPctAbs > 0 && <span style={{ color: 'var(--t3)', fontWeight: 400 }}> ({stopPctAbs.toFixed(1)}%)</span>}
+                      </span>
+                    </span>
+                    <span>
+                      <span style={{ color: 'var(--t3)' }}>Hedef </span>
+                      <span style={{ color: accentColor, fontWeight: 600 }}>
+                        {p.target ? p.target.toFixed(2) : '-'}
+                        {targetPctAbs > 0 && <span style={{ color: 'var(--t3)', fontWeight: 400 }}> ({isSell ? '-' : '+'}{targetPctAbs.toFixed(1)}%)</span>}
+                      </span>
+                    </span>
+                    <span style={{ color: 'var(--t3)' }}>R/R 1:{(p.rr || 0).toFixed(1)}</span>
+                  </div>
+
+                  {/* Sell-side: sell potential / buy-side: tomorrow potential */}
+                  {isSell && p.sellPotential != null && (
+                    <div style={{ marginTop: 3, fontSize: 8, color: 'var(--red)' }}>
+                      Aşağı potansiyel: <span style={{ fontWeight: 700 }}>{p.sellPotential}</span>/100
+                      {(p.rsi || 0) > 65 && <span style={{ color: 'var(--orange)', marginLeft: 4 }}>RSI {(p.rsi || 0).toFixed(0)} ↑aşırı</span>}
+                    </div>
+                  )}
+                  {!isSell && p.tomorrowPotential != null && p.tomorrowPotential > 0 && (
+                    <div style={{ marginTop: 3, fontSize: 8, color: 'var(--green)' }}>
+                      Potansiyel: <span style={{ fontWeight: 700 }}>{p.tomorrowPotential}</span>/100
+                      {p.newsHeadline && <span style={{ color: 'var(--t3)', marginLeft: 4 }} title={p.newsHeadline}>📰</span>}
+                    </div>
+                  )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 4, color: 'var(--t2)' }}>
-                  <span>{p.price.toFixed(2)} TL</span>
-                  <span style={{ color: p.change >= 0 ? 'var(--green)' : 'var(--red)' }}>{p.change >= 0 ? '+' : ''}{p.change.toFixed(1)}%</span>
-                  <span>R/O 1:{p.rr.toFixed(1)}</span>
-                  <span style={{ color: 'var(--cyan)' }}>Skor: {p.score.toFixed(1)}</span>
-                </div>
-                <div style={{ display: 'flex', gap: 8, marginTop: 2, fontSize: 9, color: 'var(--t3)' }}>
-                  <span style={{ color: 'var(--red)' }}>Stop: {p.stop ? p.stop.toFixed(2) : '-'}</span>
-                  <span style={{ color: 'var(--green)' }}>Hedef: {p.target ? p.target.toFixed(2) : '-'}</span>
-                  {p.holdText && <span>{p.holdText}</span>}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

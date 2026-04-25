@@ -22,6 +22,18 @@ export function isMarketOpen() {
   return isWeekday && (isMorningSession || isAfternoonSession);
 }
 
+/**
+ * isMarketClosedForDay — returns true after 17:30 on a weekday,
+ * meaning the session has ended and end-of-day data is final.
+ */
+export function isMarketClosedForDay() {
+  const now = new Date();
+  const day = now.getDay();
+  if (day === 0 || day === 6) return true; // weekend
+  const timeMinutes = now.getHours() * 60 + now.getMinutes();
+  return timeMinutes >= 1050; // past 17:30
+}
+
 const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market open
 const SCAN_CONCURRENCY = 10;                    // parallel workers per chunk
 const CHUNK_DELAY_MS = 200;                     // delay between chunks
@@ -156,6 +168,88 @@ function calcTomorrowPotential(result) {
   tpScore += Math.min(10, ((result.score || 50) - 50) * 0.2);
 
   return Math.max(0, Math.min(100, Math.round(tpScore)));
+}
+
+// ── Sell Potential Score: rank stocks by next-day downside opportunity ──
+// Mirrors calcTomorrowPotential but for bearish/short setups.
+// High score = strong sell candidate (overbought + distribution + bearish tech).
+function calcSellPotential(result) {
+  if (!result) return 0;
+  let spScore = 0;
+
+  // ── PUMP EXHAUSTION: recent surge without fundamentals = sell setup ──
+  const recentPump = result.recentPump || 0;
+  if (recentPump > 7) spScore += 22;
+  else if (recentPump > 5) spScore += 14;
+  else if (recentPump > 3) spScore += 6;
+
+  // ── ATR gate: need enough daily range to profit on short side ──
+  const atrPct = result.atrPct || 0;
+  if (atrPct < 1.5) spScore -= 20;
+  else if (atrPct < 2.5) spScore -= 5;
+  else if (atrPct >= 3) spScore += 8;
+  else if (atrPct >= 5) spScore += 14;
+
+  // ── OVERBOUGHT indicators ──
+  if (result.rsi != null) {
+    if (result.rsi > 82) spScore += 24;
+    else if (result.rsi > 77) spScore += 18;
+    else if (result.rsi > 72) spScore += 12;
+    else if (result.rsi > 65) spScore += 6;
+    else if (result.rsi < 50) spScore -= 18;
+  }
+  if (result.bollPct != null) {
+    if (result.bollPct > 90) spScore += 20;
+    else if (result.bollPct > 80) spScore += 12;
+    else if (result.bollPct > 70) spScore += 5;
+    else if (result.bollPct < 40) spScore -= 14;
+  }
+  if (result.mfi != null) {
+    if (result.mfi > 80) spScore += 14;
+    else if (result.mfi > 72) spScore += 8;
+    else if (result.mfi < 40) spScore -= 10;
+  }
+  if (result.williamsR != null && result.williamsR > -15) spScore += 8; // overbought
+
+  // ── DISTRIBUTION signals ──
+  if (result.obvTrend === 'distribution') spScore += 16;
+  else if (result.obvTrend === 'accumulation') spScore -= 16;
+  if (result.cmf != null) {
+    if (result.cmf < -0.12) spScore += 12;
+    else if (result.cmf < -0.05) spScore += 6;
+    else if (result.cmf > 0.1) spScore -= 10;
+  }
+  if (result.volRatio != null) {
+    if (result.volRatio > 2.5) spScore += 6;  // high volume on down day
+    else if (result.volRatio < 0.5) spScore -= 6;
+  }
+
+  // ── BEARISH technicals ──
+  if (result.supertrend?.flip === 'bearish') spScore += 16;
+  if (result.supertrend?.trend === 'DOWN') spScore += 10;
+  if (result.ichimoku?.cloudPosition === 'below') spScore += 10;
+  if (result.ichimoku?.tkCross === 'bearish') spScore += 10;
+  if (result.ichimoku?.kumoBreakout === 'bearish') spScore += 12;
+
+  // ── NEGATIVE NEWS / CATALYST ──
+  if (result.newsScore != null) {
+    if (result.newsCategories?.includes('risk')) spScore += 20;
+    if (result.newsCategories?.includes('downgrade')) spScore += 12;
+    if (result.newsScore < -3) spScore += 14;
+    else if (result.newsScore < -1) spScore += 6;
+    else if (result.newsScore > 3) spScore -= 14;
+  }
+
+  // ── R/R quality ──
+  if (result.rr >= 3) spScore += 12;
+  else if (result.rr >= 2.5) spScore += 8;
+  else if (result.rr >= 2) spScore += 4;
+  else if (result.rr < 1.2) spScore -= 12;
+
+  // ── General bearish score contribution ──
+  spScore += Math.min(10, ((50 - (result.score || 50)) * 0.2));
+
+  return Math.max(0, Math.min(100, Math.round(spScore)));
 }
 
 /**
@@ -355,34 +449,71 @@ export function useAIAdvisor(portfolio) {
       // ── Top picks — dual mode ──
       const bullishPortfolio = portfolio?.positions?.map(p => p.symbol) || [];
       const isAfterHours = opts.afterHours || !isMarketOpen();
-      
-      const picks = results
+
+      // Clamp stop/target to realistic daily-range levels (1.8× ATR max)
+      // This prevents showing stops 10% away for a next-day trade recommendation.
+      const normalizeStopTarget = (r) => {
+        const entry = r.entry || r.price || 0;
+        if (!entry) return r;
+        const atr = entry * (r.atrPct || 2) / 100;
+        const MAX_STOP_MULT = 1.8; // max 1.8× ATR stop distance
+
+        let { stop, target } = r;
+
+        if (r.cls !== 'sell') {
+          // Buy: stop below entry
+          if (stop && stop < entry) {
+            const origDist = entry - stop;
+            const maxDist = atr * MAX_STOP_MULT;
+            if (origDist > maxDist) {
+              stop = entry - maxDist;
+              const rrUse = Math.max(1.5, r.rr || 1.5);
+              target = entry + maxDist * rrUse;
+            }
+          }
+        } else {
+          // Sell: stop above entry
+          if (stop && stop > entry) {
+            const origDist = stop - entry;
+            const maxDist = atr * MAX_STOP_MULT;
+            if (origDist > maxDist) {
+              stop = entry + maxDist;
+              const rrUse = Math.max(1.5, r.rr || 1.5);
+              target = entry - maxDist * rrUse;
+            }
+          }
+        }
+
+        const stopPct = stop && entry ? ((stop - entry) / entry) * 100 : r.stopPct;
+        const targetPct = target && entry ? ((target - entry) / entry) * 100 : r.targetPct;
+        const stopDist = Math.abs(entry - (stop || entry));
+        const targetDist = Math.abs((target || entry) - entry);
+        const computedRR = stopDist > 0 ? +(targetDist / stopDist).toFixed(2) : r.rr;
+
+        return { ...r, stop, target, stopPct, targetPct, rr: computedRR };
+      };
+
+      // ── BUY PICKS ──
+      const buyPicks = results
         .filter(r => {
-          // ── GLOBAL GATES (her iki mod icin) ──
-          // Gunluk aralik gati: ATR < %1.5 → hareket etmez
           if ((r.atrPct || 0) < 1.5) return false;
+          if (r.cls !== 'buy') return false;
 
           if (isAfterHours) {
-            // After hours: dip/coil/catalyst setup'larini tercih et
-            const isBuy = r.cls === 'buy';
-            const hasSetup = isBuy && r.score >= 58 && r.rr >= 1.5;
+            const hasSetup = r.score >= 58 && r.rr >= 1.5;
             const hasTrend = (r.ichimoku?.cloudPosition === 'above') || (r.supertrend?.trend === 'UP');
-            // Catalyst bonus — fund_inflow/buyback/insider_buy varsa eşigi dusur
             const hasCatalyst = r.newsCategories?.some(c =>
-              ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c)
-            );
-            if (hasCatalyst && isBuy && r.score >= 52 && r.rr >= 1.2) return true;
-            return hasSetup || (hasTrend && isBuy && r.score >= 55 && r.rr >= 1.2);
+              ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c));
+            if (hasCatalyst && r.score >= 52 && r.rr >= 1.2) return true;
+            return hasSetup || (hasTrend && r.score >= 55 && r.rr >= 1.2);
           } else {
-            // Market open: strict filter (score100 scale: 0-100)
-            const isBuy = r.cls === 'buy';
-            const hasTraditionalSignal = isBuy && r.score >= 60 && r.rr >= 1.5;
+            const hasTraditionalSignal = r.score >= 60 && r.rr >= 1.5;
             const hasMomentumBoost = r.momentumScore >= 50 && (r.change || 0) > 0 && r.score >= 55
-              && (r.recentPump || 0) < 5; // intraday momentum ancak son 3 gun pump yoksa
+              && (r.recentPump || 0) < 5;
             return hasTraditionalSignal || hasMomentumBoost;
           }
         })
-        .map(r => ({
+        .map(r => normalizeStopTarget({
           ...r,
           tomorrowPotential: isAfterHours ? calcTomorrowPotential(r) : 0,
           _alreadyHolding: bullishPortfolio.includes(r.symbol),
@@ -390,18 +521,41 @@ export function useAIAdvisor(portfolio) {
         }))
         .sort((a, b) => {
           if (isAfterHours) {
-            // After hours: sort by tomorrowPotential (already encodes catalyst + anti-pump)
             return (b.tomorrowPotential || 0) - (a.tomorrowPotential || 0);
-          } else {
-            // Market open: score + momentum, anti-pump docked
-            const pumpPenaltyA = Math.min(20, (a.recentPump || 0) * 2);
-            const pumpPenaltyB = Math.min(20, (b.recentPump || 0) * 2);
-            const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) - pumpPenaltyA;
-            const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) - pumpPenaltyB;
-            return scoreB - scoreA;
           }
+          const pumpPenaltyA = Math.min(20, (a.recentPump || 0) * 2);
+          const pumpPenaltyB = Math.min(20, (b.recentPump || 0) * 2);
+          const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) - pumpPenaltyA;
+          const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) - pumpPenaltyB;
+          return scoreB - scoreA;
         })
-        .slice(0, 10);
+        .slice(0, 8);
+
+      // ── SELL PICKS — short / bearish candidates ──
+      // Stocks that are overbought, distributing, or have bearish technicals.
+      const sellPicks = results
+        .filter(r => {
+          if ((r.atrPct || 0) < 1.5) return false;
+          if (r.cls !== 'sell') return false;
+          // Must have bearish score + at least one confirming bearish signal
+          if (r.score > 44) return false;
+          if ((r.rr || 0) < 1.2) return false;
+          const isOverbought = (r.rsi || 50) > 62;
+          const hasDistribution = r.obvTrend === 'distribution' || (r.cmf || 0) < -0.05;
+          const hasBearishTech = r.supertrend?.trend === 'DOWN' || r.ichimoku?.cloudPosition === 'below';
+          const hasNegativeNews = r.newsCategories?.some(c => ['risk', 'downgrade'].includes(c));
+          return isOverbought || hasDistribution || hasBearishTech || hasNegativeNews;
+        })
+        .map(r => normalizeStopTarget({
+          ...r,
+          sellPotential: calcSellPotential(r),
+          _alreadyHolding: bullishPortfolio.includes(r.symbol),
+          _scanMode: isAfterHours ? 'afterHours' : 'intraday',
+        }))
+        .sort((a, b) => (b.sellPotential || 0) - (a.sellPotential || 0))
+        .slice(0, 3); // max 3 sell candidates alongside buy picks
+
+      const picks = [...buyPicks, ...sellPicks];
 
       // ── Market news enrichment: fetch borsa haberleri, eslestir + sentiment ──
       // Sadece top 10 pick + universe filtrelenir; tum tarama icin haber cekmiyoruz.
@@ -432,7 +586,7 @@ export function useAIAdvisor(portfolio) {
       setLastUpdate(new Date());
       
       const modeLabel = isAfterHours ? 'Kapanis Sonrasi (Yarin Icin)' : 'Canli';
-      pushLog({ type: 'ok', msg: `${modeLabel} tarama: ${results.length} hisse, ${picks.length} firsat` });
+      pushLog({ type: 'ok', msg: `${modeLabel} tarama: ${results.length} hisse, ${buyPicks.length} AL / ${sellPicks.length} SAT firsat` });
 
       // Dispatch event for other systems (AlertLog, ChatPanel, notifications)
       window.dispatchEvent(new CustomEvent('advisor-scan-complete', {
