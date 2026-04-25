@@ -222,14 +222,14 @@ function getFallbackPredictions() {
       let score = 0;
       const matchedRules = [];
 
-      if (ind[0] && ind[0] <= 35) { score += 30; matchedRules.push('rsi_oversold'); }
+      if (ind[0] && ind[0] <= 35) { score += 20; matchedRules.push('rsi_oversold'); }
       if (ind[1] && ind[2] && ind[1] > ind[2]) { score += 20; matchedRules.push('macd_bullish'); }
       if (ind[2] && ind[2] > 0) { score += 15; matchedRules.push('macd_histogram_positive'); }
-      if (ind[3] && ind[3] <= 5) { score += 15; matchedRules.push('bb_squeeze'); }
-      if (ind[4] && ind[4] >= 2) { score += 15; matchedRules.push('volume_spike'); }
+      if (ind[3] && ind[3] <= 5) { score += 35; matchedRules.push('bb_squeeze_patlama_riski'); } // Riskier: BB Squeeze breakout potential
+      if (ind[4] && ind[4] >= 2) { score += 30; matchedRules.push('volume_spike_ani_hacim'); } // Riskier: High volume explosion
       if (ind[5] && ind[5] >= 25) { score += 15; matchedRules.push('strong_trend'); }
-      if (ind[6] && ind[6] <= 30) { score += 20; matchedRules.push('mfi_oversold'); }
-      if (ind[7] && ind[7] >= 3) { score += 15; matchedRules.push('momentum_strong'); }
+      if (ind[6] && ind[6] <= 30) { score += 15; matchedRules.push('mfi_oversold'); }
+      if (ind[7] && ind[7] >= 3) { score += 25; matchedRules.push('momentum_strong_ralli'); } // Riskier: Strong momentum
       if (ind[8] && ind[8] >= 1.2) { score += 15; matchedRules.push('volume_accumulation'); }
 
       if (matchedRules.length >= 2) {

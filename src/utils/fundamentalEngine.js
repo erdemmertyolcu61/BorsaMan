@@ -33,9 +33,9 @@ export function analyzeDetailedFinancials(raw = {}) {
   const currentLiab = num(raw.currentLiabilities ?? raw.kisaVadeliYukum);
 
   // Margins
-  const grossMargin = (revenue && grossProfit != null) ? (grossProfit / revenue) * 100 : null;
-  const opMargin    = (revenue && operatingIncome != null) ? (operatingIncome / revenue) * 100 : null;
-  const netMargin   = (revenue && netIncome != null) ? (netIncome / revenue) * 100 : null;
+  const grossMargin = (revenue != null && revenue > 0 && grossProfit != null) ? (grossProfit / revenue) * 100 : null;
+  const opMargin    = (revenue != null && revenue > 0 && operatingIncome != null) ? (operatingIncome / revenue) * 100 : null;
+  const netMargin   = (revenue != null && revenue > 0 && netIncome != null) ? (netIncome / revenue) * 100 : null;
 
   // Returns
   const roe = (equity && netIncome != null && equity > 0) ? (netIncome / equity) * 100 : null;

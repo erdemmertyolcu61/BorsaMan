@@ -171,7 +171,7 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
 
     // Near-stop warning (within 2% of stop, not yet triggered)
     if (pos.stopLoss && price > pos.stopLoss) {
-      const proximity = ((price - pos.stopLoss) / price) * 100;
+      const proximity = ((price - pos.stopLoss) / pos.stopLoss) * 100;
       if (proximity <= 2) {
         const warnKey = `near-stop|${pos.id}`;
         if (!firedAlarmsRef.current.has(warnKey)) {
@@ -200,7 +200,8 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
       if (entry > (newStop ?? -Infinity)) newStop = entry;
     }
 
-    if (newStop && Math.abs((newStop - (pos.stopLoss ?? 0))) > 1e-4 && newStop > (pos.stopLoss ?? -Infinity)) {
+    const stopBase = pos.stopLoss ?? newStop ?? 1;
+    if (newStop && Math.abs((newStop - (pos.stopLoss ?? 0)) / stopBase) > 0.001 && newStop > (pos.stopLoss ?? -Infinity)) {
       updatePortfolio({
         ...portfolio,
         positions: portfolio.positions.map(p =>

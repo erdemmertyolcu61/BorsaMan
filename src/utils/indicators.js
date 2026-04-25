@@ -909,10 +909,19 @@ export function calcAll(prices) {
   const gapUp = gapPct > 1;
   const gapDown = gapPct < -1;
 
-  // Intraday momentum (last 1-4 hours or last few bars if 1h data)
-  const momentum1h = n >= 2 ? ((closes[n - 1] - closes[Math.max(n - 7, 0)]) / (closes[Math.max(n - 7, 0)] || 1)) * 100 : 0;
-  const momentum4h = momentum1h;
-  const momentumIntraday = n >= 2 ? ((closes[n - 1] - closes[Math.max(n - 5, 0)]) / (closes[Math.max(n - 5, 0)] || 1)) * 100 : 0;
+  // ── INTRADAY METRICS (Fix: using true daily high/low/open instead of n-5 days) ──
+  const today = prices[n - 1] || {};
+  const tOpen = today.open || lastClose;
+  const tHigh = today.high || lastClose;
+  const tLow = today.low || lastClose;
+  
+  // How close is it to the high of the day? (1 = at high, 0 = at low)
+  const dayHighLowRange = (tHigh - tLow) > 0 ? (lastClose - tLow) / (tHigh - tLow) : 0.5;
+  // Net move since open (stripping out the gap)
+  const openToCurrentPct = tOpen > 0 ? ((lastClose - tOpen) / tOpen) * 100 : 0;
+  
+  // Replace old 5-day momentum with true intraday net move
+  const momentumIntraday = openToCurrentPct;
 
   // Volume surge detection
   const volSurge = volRatio > 2.5 ? 'explosive' : volRatio > 1.8 ? 'strong' : volRatio > 1.3 ? 'moderate' : 'normal';
@@ -920,20 +929,81 @@ export function calcAll(prices) {
   // Relative strength vs XU100 (sector proxy)
   const relStrength = changePct; // Simplified: can be enhanced with benchmark comparison
 
-  // Opening range break
-  const orHigh = Math.max(...prices.slice(Math.max(0, n - 5), n).map(p => p.high));
-  const orLow = Math.min(...prices.slice(Math.max(0, n - 5), n).map(p => p.low));
-  const orBreakout = lastClose > orHigh * 1.01;
-  const orBreakdown = lastClose < orLow * 0.99;
+  // ── SHORT-PERIOD MOMENTUM (approximate 1h / 4h from daily bars) ──
+  // On daily bars we cannot get true intraday 1h/4h, so approximate from recent bars
+  const momentum1h = n >= 2 ? ((closes[n-1] - closes[n-2]) / closes[n-2]) * 100 : 0;
+  const momentum4h = n >= 4 ? ((closes[n-1] - closes[n-4]) / closes[n-4]) * 100 : momentum1h;
 
-  // Momentum score (0-100)
-  const momentumScore = Math.min(100, Math.max(0, Math.round(
-    (gapUp ? 20 : gapDown ? -15 : 0) +
-    (volRatio > 2 ? 25 : volRatio > 1.5 ? 15 : 0) +
-    Math.min(25, momentumIntraday * 2) +
-    (orBreakout ? 15 : orBreakdown ? -10 : 0) +
-    (changePct > 3 ? 15 : changePct > 0 ? changePct * 3 : changePct < -2 ? -10 : 0)
-  )));
+  // ── FORWARD MOMENTUM — Trend analysis over last 3-5 days ──
+  // Instead of rewarding TODAY'S spike, reward GRADUAL momentum buildup
+  // This prevents the "tavan yapmış hisse bias"
+  const momentumSlope = (() => {
+    if (n < 5) return 0;
+    // Linear regression slope over last 5 days
+    const recent = closes.slice(-5);
+    const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+    let num = 0, den = 0;
+    for (let i = 0; i < recent.length; i++) {
+      num += (i - 2) * (recent[i] - avg);  // i-2 centers the slope
+      den += Math.pow(i - 2, 2);
+    }
+    const slope = den > 0 ? (num / den) / avg * 100 : 0;  // % change per day
+    
+    // Categorize: steep spike vs gradual trend
+    // slope > 1.5%/day = steep, 0.5-1.5 = moderate, < 0.5 = gradual
+    return {
+      value: slope,
+      trend: slope > 1.5 ? 'steep' : slope > 0.5 ? 'moderate' : slope > -0.5 ? 'gradual' : slope > -1.5 ? 'weak' : 'declining',
+      isSteep: slope > 1.5,  // sudden spike — could be fade risk
+      isGradual: slope > 0 && slope <= 1.5,  // sustainable — preferred
+      hasMomentum: slope > 0.3  // has positive trend
+    };
+  })();
+
+  // ── OPENING RANGE BREAKOUT / BREAKDOWN ──
+  // Check if today's close broke above yesterday's high (breakout) or below yesterday's low (breakdown)
+  const prevBar = n >= 2 ? prices[n-2] : null;
+  const orBreakout = prevBar ? lastClose > prevBar.high : false;
+  const orBreakdown = prevBar ? lastClose < prevBar.low : false;
+
+  // Momentum score (0-100) — Refined for "Falling Knife" & "Fade Gap" protection
+  let momScore = 0;
+  // Only reward Gap Up if it's holding its gains (not selling off)
+  if (gapUp && dayHighLowRange > 0.5) momScore += 15;
+  else if (gapDown) momScore -= 15;
+  
+  // Volume points
+  momScore += (volRatio > 2 ? 25 : volRatio > 1.5 ? 15 : 0);
+  
+  // True Intraday Trend points (up to 25 points)
+  if (openToCurrentPct > 0) {
+    momScore += Math.min(25, openToCurrentPct * 5);
+  } else {
+    momScore -= Math.min(20, Math.abs(openToCurrentPct * 5));
+  }
+  
+// Closing Strength Points
+  if (dayHighLowRange > 0.8) momScore += 15; // Holding near high
+  else if (dayHighLowRange < 0.3) momScore -= 25; // Selling off heavily from high (Weak Close)
+  
+  // ── FORWARD MOMENTUM SCORING (replaces simple today change) ──
+  // Instead of rewarding TODAY'S spike with changePct, reward gradual momentum buildup
+  // This eliminates "tavan yapmış hisse" bias
+  if (momentumSlope.isGradual && momentumSlope.value > 0.5) {
+    // Gradual sustainable momentum — PREFERRED
+    momScore += 20;
+  } else if (momentumSlope.isSteep && changePct > 3) {
+    // Steep spike today (>3%) — likely a fade candidate, apply 50% penalty
+    momScore *= 0.5;
+  } else if (changePct > 8) {
+    // "Bugün tavan" — entry noktası kaçırıldı, 70% ceza
+    momScore *= 0.3;
+  } else {
+    // Normal case: use moderate change scoring
+    momScore += (changePct > 0 ? changePct * 2 : changePct * 0.5);
+  }
+  
+  const momentumScore = Math.min(100, Math.max(0, Math.round(momScore)));
 
   // Add momentum fields to result
   result.gapPct = gapPct;
@@ -946,7 +1016,13 @@ export function calcAll(prices) {
   result.relStrength = relStrength;
   result.orBreakout = orBreakout;
   result.orBreakdown = orBreakdown;
+  result.dayHighLowRange = dayHighLowRange;
+  result.openToCurrentPct = openToCurrentPct;
   result.momentumScore = momentumScore;
+  // NEW: Forward momentum fields
+  result.momentumSlope = momentumSlope.value;
+  result.momentumTrend = momentumSlope.trend;
+  result.forwardMomentum = momentumSlope.hasMomentum && momentumSlope.isGradual;
 
   return result;
 }

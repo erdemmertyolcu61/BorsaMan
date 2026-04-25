@@ -1,4 +1,4 @@
-import { getDataViaProxies } from './proxyEngine.js';
+import { getDataViaProxies } from './fetchEngine.js';
 
 // ============================================================
 // KAP SENTIMENT SCORING ENGINE

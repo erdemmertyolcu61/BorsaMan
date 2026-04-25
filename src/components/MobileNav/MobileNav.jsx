@@ -4,7 +4,7 @@
 export default function MobileNav({ activeTab, onTabChange }) {
   const tabs = [
     { id: 'analyze', label: 'Analiz', icon: '◉' },
-    { id: 'trades', label: 'İntraday', icon: '★' },
+    { id: 'trades', label: 'Intraday', icon: '★' },
     { id: 'signals', label: 'Sinyal', icon: '◈' },
     { id: 'portfolio', label: 'Portföy', icon: '◆' },
   ];

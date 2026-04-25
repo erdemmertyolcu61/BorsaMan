@@ -225,65 +225,82 @@ export function getRegimeIndicatorWeights(regime) {
   return weights;
 }
 
-export function detectHiddenDivergence(prices, ind) {
-  if (!prices || prices.length < 20 || !ind.rsi || ind.rsi.length < 10) {
-    return null;
+// ── Swing pivot helpers ──
+// A swing high/low is a bar whose value is the extreme within ±lookback bars.
+// We scan the last `window` bars to find chronologically ordered swings.
+function _findSwingHighs(prices, rsi, lookback = 3, window = 30) {
+  const n = prices.length;
+  const start = Math.max(lookback, n - window);
+  const swings = [];
+  for (let i = start; i < n - lookback; i++) {
+    if (!prices[i]?.high) continue;
+    let isSwing = true;
+    for (let j = Math.max(0, i - lookback); j <= Math.min(n - 1, i + lookback); j++) {
+      if (j !== i && (prices[j]?.high ?? 0) > prices[i].high) { isSwing = false; break; }
+    }
+    if (isSwing) swings.push({ price: prices[i].high, rsi: rsi[i] ?? 50, idx: i });
   }
+  return swings; // chronological order
+}
+
+function _findSwingLows(prices, rsi, lookback = 3, window = 30) {
+  const n = prices.length;
+  const start = Math.max(lookback, n - window);
+  const swings = [];
+  for (let i = start; i < n - lookback; i++) {
+    if (!prices[i]?.low) continue;
+    let isSwing = true;
+    for (let j = Math.max(0, i - lookback); j <= Math.min(n - 1, i + lookback); j++) {
+      if (j !== i && (prices[j]?.low ?? Infinity) < prices[i].low) { isSwing = false; break; }
+    }
+    if (isSwing) swings.push({ price: prices[i].low, rsi: rsi[i] ?? 50, idx: i });
+  }
+  return swings;
+}
+
+/**
+ * detectHiddenDivergence — chronological swing-pivot approach.
+ *
+ * Bullish hidden divergence (trend continuation UP):
+ *   price makes HIGHER low, RSI makes LOWER low → sellers losing steam,
+ *   trend likely continues upward.
+ *
+ * Bearish hidden divergence (trend continuation DOWN):
+ *   price makes HIGHER high, RSI makes LOWER high → buyers losing steam,
+ *   trend likely continues downward.
+ *
+ * Previous implementation sorted all 20 bars globally and compared extremes —
+ * that is NOT divergence analysis, it almost always returned false positives.
+ */
+export function detectHiddenDivergence(prices, ind) {
+  if (!prices || prices.length < 20 || !ind.rsi || ind.rsi.length < 10) return null;
 
   const rsi = ind.rsi;
-  const n = rsi.length;
 
-  const priceHighs = [];
-  const priceLows = [];
-  const rsiHighs = [];
-  const rsiLows = [];
-
-  for (let i = Math.max(0, n - 20); i < n; i++) {
-    const priceHigh = prices[i]?.high || 0;
-    const priceLow = prices[i]?.low || 0;
-    const rsiVal = rsi[i];
-
-    priceHighs.push({ val: priceHigh, idx: i });
-    priceLows.push({ val: priceLow, idx: i });
-    rsiHighs.push({ val: rsiVal, idx: i });
-    rsiLows.push({ val: rsiVal, idx: i });
-  }
-
-  priceHighs.sort((a, b) => b.val - a.val);
-  priceLows.sort((a, b) => a.val - b.val);
-  rsiHighs.sort((a, b) => b.val - a.val);
-  rsiLows.sort((a, b) => a.val - b.val);
-
-  const topPriceHigh = priceHighs[0];
-  const topRsiHigh = rsiHighs[0];
-  if (topPriceHigh && topRsiHigh) {
-    const prevPriceIdx = Math.max(0, topPriceHigh.idx - 5);
-    const prevRsiIdx = Math.max(0, topRsiHigh.idx - 5);
-    const prevPrice = prices[prevPriceIdx]?.high || 0;
-    const prevRsi = rsi[prevRsiIdx] || 50;
-
-    if (topPriceHigh.val > prevPrice && topRsiHigh.val < prevRsi) {
+  // ── Bearish hidden: price HH, RSI LH ──
+  const swingHighs = _findSwingHighs(prices, rsi, 3, 30);
+  if (swingHighs.length >= 2) {
+    const last = swingHighs[swingHighs.length - 1];
+    const prev = swingHighs[swingHighs.length - 2];
+    if (last.price > prev.price && last.rsi < prev.rsi) {
       return {
         type: 'BEARISH_HIDDEN',
-        description: 'Hidden bearish divergence - trend continuation',
-        confidence: 75
+        description: 'Hidden bearish divergence — price HH, RSI LH: trend continuation down',
+        confidence: 72,
       };
     }
   }
 
-  const bottomPriceLow = priceLows[0];
-  const bottomRsiLow = rsiLows[0];
-  if (bottomPriceLow && bottomRsiLow) {
-    const prevPriceIdx = Math.max(0, bottomPriceLow.idx - 5);
-    const prevRsiIdx = Math.max(0, bottomRsiLow.idx - 5);
-    const prevPrice = prices[prevPriceIdx]?.low || 0;
-    const prevRsi = rsi[prevRsiIdx] || 50;
-
-    if (bottomPriceLow.val < prevPrice && bottomRsiLow.val > prevRsi) {
+  // ── Bullish hidden: price HL, RSI LL ──
+  const swingLows = _findSwingLows(prices, rsi, 3, 30);
+  if (swingLows.length >= 2) {
+    const last = swingLows[swingLows.length - 1];
+    const prev = swingLows[swingLows.length - 2];
+    if (last.price > prev.price && last.rsi < prev.rsi) {
       return {
         type: 'BULLISH_HIDDEN',
-        description: 'Hidden bullish divergence - trend continuation',
-        confidence: 75
+        description: 'Hidden bullish divergence — price HL, RSI LL: trend continuation up',
+        confidence: 72,
       };
     }
   }

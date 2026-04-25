@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import SectorHeatmap from '../Heatmap/SectorHeatmap.jsx';
-import { isMarketOpen } from '../../hooks/useAIAdvisor.js';
+import { isMarketOpen, isMarketClosedForDay } from '../../hooks/useAIAdvisor.js';
 import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
 import { getSourceHealth, recordSourceSuccess, recordSourceFailure } from '../../utils/fetchEngine.js';
 import { 
@@ -285,7 +285,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
       {topPicks.length > 0 && !scanning && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
           <span style={{ color: 'var(--t3)', fontSize: 11 }}>En İyi:</span>
-          {topPicks.slice(0, 3).map(p => (
+          {[...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 3).map(p => (
             <button key={p.symbol} onClick={() => onAnalyze && onAnalyze(p.symbol)} style={{
               background: 'var(--green2)', color: 'var(--green)', border: '1px solid var(--green)',
               borderRadius: 4, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600
@@ -398,7 +398,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
             {/* Today's Top 10 */}
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', marginBottom: 8, textTransform: 'uppercase' }}>
-                Bugünün Top 10 (Dün Çekilen)
+                {isMarketClosedForDay() ? 'Bugünün BIST Top 10 (Kesinleşen)' : 'Dünün BIST Top 10'}
               </div>
               {top10Loading ? (
                 <div style={{ color: 'var(--t3)', fontSize: 11 }}>Yükleniyor...</div>
@@ -547,8 +547,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   <span style={{ color: 'var(--cyan)' }}>Skor: {p.score.toFixed(1)}</span>
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginTop: 2, fontSize: 9, color: 'var(--t3)' }}>
-                  <span style={{ color: 'var(--red)' }}>Stop: {p.stop.toFixed(2)}</span>
-                  <span style={{ color: 'var(--green)' }}>Hedef: {p.target.toFixed(2)}</span>
+                  <span style={{ color: 'var(--red)' }}>Stop: {p.stop ? p.stop.toFixed(2) : '-'}</span>
+                  <span style={{ color: 'var(--green)' }}>Hedef: {p.target ? p.target.toFixed(2) : '-'}</span>
                   {p.holdText && <span>{p.holdText}</span>}
                 </div>
               </div>

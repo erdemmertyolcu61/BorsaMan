@@ -14,7 +14,9 @@ import { logError } from './errorLogger.js';
 
 const API_KEY_STORAGE = 'claude_api_key';
 const PROXY_CLAUDE_ENDPOINT = '/api/claude'; // relative — served by proxy server
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const EXPERT_MODEL = 'claude-opus-4-7';              // deep expert analysis
+const BATCH_MODEL  = 'claude-sonnet-4-20250514';     // high-volume / batch ops
+const DEFAULT_MODEL = EXPERT_MODEL;
 const DEFAULT_TEMPERATURE = 0.6;
 
 export function setApiKey(key) {
@@ -70,150 +72,363 @@ export function buildExpertPrompt(symbol, analysis = {}, market = {}, portfolio 
   const {
     price, change, signal, cls, score, conf,
     rsi, macd, macdSignal, bb, atr, vwap, mfi, obv,
-    ma20, ma50, ma200,
+    ma20, ma50, ma100, ma200,
     entry, stop, target, rr,
     targetT2, targetT3, targetLong: longTerm,
     setup = [], wyckoff, sector, holdText,
     mcProfitProb, mcMedian,
     fundamentals = {},
+    // Smart Money / Flow
+    adx, cmf, obvTrend, obvDivergence, rsiDivergence,
+    // Advanced indicators
+    ichimoku, supertrend, trix, williamsR, roc10,
+    wyckoffSpring, volumeClimax, stochRSI,
+    // Momentum profile
+    dayHighLowRange, momentumScore, forwardMomentum, momentumTrend,
+    // Fundamental grade
+    fundamentalGrade, fundamentalScore,
+    // SMC levels
+    bosSignal, fvgSignal, orderBlockLevel,
   } = analysis;
 
   const {
-    xu100 = null, usdtry = null, marketSentiment = null,
+    xu100 = null, usdtry = null, cpi = null, govBond10y = null,
+    marketSentiment = null,
   } = market;
 
-  const fmt = (v, d = 2) => (v == null || !Number.isFinite(v)) ? '-' : Number(v).toFixed(d);
-  const setupList = Array.isArray(setup) ? setup.slice(0, 6).join(', ') : (setup || '-');
+  const fmt = (v, d = 2) => (v == null || !Number.isFinite(Number(v))) ? '-' : Number(v).toFixed(d);
+  const pct = (v) => v == null ? '-' : `%${fmt(v, 1)}`;
+  const setupList = Array.isArray(setup) ? setup.slice(0, 8).join(', ') : (setup || '-');
   const regime = detectMarketRegime(market);
 
-  // Portfolio context (optional)
+  // ── Smart Money fingerprint ──────────────────────────────────────────────
+  const smartMoneySignals = [];
+  if (obvTrend === 'accumulation') smartMoneySignals.push('OBV birikim');
+  if (cmf != null && cmf > 0.1) smartMoneySignals.push(`CMF=${fmt(cmf, 2)} (kurumsal giris)`);
+  if (mfi != null && mfi < 30) smartMoneySignals.push(`MFI=${fmt(mfi, 0)} (ucuz alim)`);
+  if (mfi != null && mfi > 75) smartMoneySignals.push(`MFI=${fmt(mfi, 0)} (kurumsal cikis)`);
+  if (obvDivergence === 'bullish') smartMoneySignals.push('OBV pozitif diverjans (gizli alim)');
+  if (rsiDivergence === 'bullish') smartMoneySignals.push('RSI bullish diverjans');
+  if (rsiDivergence === 'bearish') smartMoneySignals.push('RSI bearish diverjans');
+  if (wyckoffSpring) smartMoneySignals.push('Wyckoff Spring (stop-hunt sonrasi toparlanma)');
+  if (volumeClimax === 'selling') smartMoneySignals.push('Satis klimaksi — dip transferi olasi');
+  if (volumeClimax === 'buying') smartMoneySignals.push('Alis klimaksi — tepeden panikli satis olabilir');
+
+  // ── Multi-timeframe trend summary ──────────────────────────────────────
+  const trendLines = [];
+  if (ma20 && price) trendLines.push(`MA20(${price > ma20 ? '▲' : '▼'}${fmt(ma20)})`);
+  if (ma50 && price) trendLines.push(`MA50(${price > ma50 ? '▲' : '▼'}${fmt(ma50)})`);
+  if (ma100 && price) trendLines.push(`MA100(${price > ma100 ? '▲' : '▼'}${fmt(ma100)})`);
+  if (ma200 && price) trendLines.push(`MA200(${price > ma200 ? '▲' : '▼'}${fmt(ma200)})`);
+  if (supertrend) trendLines.push(`ST(${supertrend.trend || '-'}${supertrend.flip ? ' FLIP!' : ''} ${fmt(supertrend.value)})`);
+  if (ichimoku) trendLines.push(`Ichi(${ichimoku.cloudPosition || '-'} cloud${ichimoku.tkCross ? ' TK:' + ichimoku.tkCross : ''}${ichimoku.kumoBreakout ? ' KUMO!' : ''})`);
+
+  // ── Advanced momentum snapshot ───────────────────────────────────────────
+  const momLines = [];
+  if (stochRSI) {
+    const k = stochRSI.k ? stochRSI.k[stochRSI.k.length - 1] : null;
+    const d = stochRSI.d ? stochRSI.d[stochRSI.d.length - 1] : null;
+    if (k != null) momLines.push(`StochRSI K=${fmt(k, 0)} D=${fmt(d, 0)}`);
+  }
+  if (adx != null) momLines.push(`ADX=${fmt(adx, 0)}${adx > 25 ? '(TRENDLI)' : adx < 15 ? '(YATAY)' : ''}`);
+  if (trix) momLines.push(`TRIX(${trix.crossover || (trix.lastTRIX > 0 ? 'pozitif' : 'negatif')})`);
+  if (williamsR != null) momLines.push(`WillR=${fmt(williamsR, 0)}${williamsR < -80 ? '(ASIRI SATIM)' : williamsR > -20 ? '(ASIRI ALIM)' : ''}`);
+  if (roc10 != null) momLines.push(`ROC10=${pct(roc10)}`);
+  if (dayHighLowRange != null) momLines.push(`GunIci=${pct(dayHighLowRange * 100)}(${dayHighLowRange > 0.7 ? 'ZIRVEYE YAKIN' : dayHighLowRange < 0.3 ? 'DIBE YAKIN' : 'orta'})`);
+  if (momentumScore != null) momLines.push(`MomSkor=${fmt(momentumScore, 0)}/100`);
+
+  // ── Portfolio context (optional) ──────────────────────────────────────────
   let portfolioBlock = '';
   if (portfolio) {
     const pc = buildPortfolioContext(portfolio);
     const alreadyHolds = pc.symbols.includes(symbol);
     const concentration = pc.concentration.map(([s, v]) => `${s}:${((v / (pc.totalValue || 1)) * 100).toFixed(0)}%`).join(' ');
-    portfolioBlock = `\nPORTFOY: ${pc.openCount} acik poz, deger=${fmt(pc.totalValue)} TL, nakit=${fmt(pc.cash)} TL. Sektor konsant: ${concentration || '-'}. ${alreadyHolds ? `DIKKAT: ${symbol} zaten portfoyde.` : ''}`;
+    portfolioBlock = `\nPORTFOY: ${pc.openCount} acik poz, deger=${fmt(pc.totalValue)} TL, nakit=${fmt(pc.cash)} TL. Sektör: ${concentration || '-'}. ${alreadyHolds ? `⚠ ${symbol} zaten portfoyde — pozisyon büyütme mi, çıkış hazırlığı mı?` : ''}`;
   }
 
-  // Contrarian flags auto-detected — injected to force the model to address them
+  // ── Auto-detected contrarian flags ────────────────────────────────────────
   const flags = [];
-  if (score >= 7 && ma200 && price && price < ma200) flags.push('skor yuksek AMA fiyat MA200 altinda (trend ters)');
-  if (rsi >= 70) flags.push(`RSI=${fmt(rsi, 0)} asiri alim`);
-  if (rsi <= 30) flags.push(`RSI=${fmt(rsi, 0)} asiri satim`);
-  if (regime.regime === 'BEAR_TREND' && cls === 'buy') flags.push('makro bear trend ama AL sinyali');
-  if (regime.regime === 'OVERBOUGHT' && cls === 'buy') flags.push('piyasa asiri alim, AL riskli');
-  if (mcProfitProb != null && mcProfitProb < 45 && cls === 'buy') flags.push(`Monte Carlo P(kar)=%${fmt(mcProfitProb, 0)} dusuk`);
-  const flagsText = flags.length ? flags.map(f => `- ${f}`).join('\n') : '- tespit yok';
+  if (score >= 7 && ma200 && price && price < ma200) flags.push('skor yuksek AMA fiyat MA200 altinda — ana trend karsiti');
+  if (rsi != null && rsi >= 72) flags.push(`RSI=${fmt(rsi, 0)} asiri alim — momentum fade riski`);
+  if (rsi != null && rsi <= 28) flags.push(`RSI=${fmt(rsi, 0)} asiri satim — bıçak tutma riski`);
+  if (regime.regime === 'BEAR_TREND' && cls === 'buy') flags.push('MAKRO BEAR TREND / AL sinyali — kontr-trend, %30 daha az boyut');
+  if (regime.regime === 'OVERBOUGHT' && cls === 'buy') flags.push('PIYASA ASIRI ALIM — yeni girisler yerine kar realizasyonu one al');
+  if (mcProfitProb != null && mcProfitProb < 45 && cls === 'buy') flags.push(`Monte Carlo P(kar)=${pct(mcProfitProb)} — istatistiksel dezavantaj`);
+  if (adx != null && adx < 15 && cls === 'buy') flags.push('ADX < 15 — trendsiz piyasa, kırılım sinyali daha güvenilir');
+  if (dayHighLowRange != null && dayHighLowRange < 0.25 && cls === 'buy') flags.push('Gün içi zayıf kapanış (%25 altı) — kurumsal baskı devam edebilir');
+  if (ichimoku?.cloudPosition === 'below' && cls === 'buy') flags.push('Ichimoku bulutu altında — güçlü direnc bölgesi');
+  if (rsiDivergence === 'bearish' && cls === 'buy') flags.push('RSI bearish diverjans — fiyat yapay yükseliyor olabilir');
+  if (obvDivergence === 'bearish' && cls === 'buy') flags.push('OBV bearish diverjans — kurumsal dağıtım sinyali');
+  const flagsText = flags.length ? flags.map(f => `⚠ ${f}`).join('\n') : '✓ Kritik uyarı tespit edilmedi';
 
-  return `Sen BIST uzmani bir Wall Street stratejistisin. ${symbol} icin profesyonel, tarafsiz, olculu bir degerlendirme yap.
+  return `Sen elit bir Wall Street stratejisti ve BIST uzmanisin. ${symbol} hakkinda derinlemesine, somut, sayisal bir analiz yap.
 
-=== PIYASA REJIMI ===
-Rejim: ${regime.regime}  Bias: ${regime.bias}  XU100 Deg: ${fmt(regime.xu100Chg, 2)}%  Breadth: ${fmt(regime.breadth, 2)}  Ort.RSI: ${fmt(regime.avgRSI, 0)}
-Kural: BEAR_TREND'te AL sinyallerine agir supheyle yaklas. OVERBOUGHT'ta karli satis onerileri one cikar. OVERSOLD'da contrarian long firsatlari degerlendir.
+═══ PIYASA REJIMI & MAKRO ═══
+Rejim: ${regime.regime}  Bias: ${regime.bias}  XU100: ${pct(regime.xu100Chg)}  Breadth: ${fmt(regime.breadth, 2)}  Ort.RSI: ${fmt(regime.avgRSI, 0)}
+USDTRY=${fmt(usdtry, 4)}  ${cpi != null ? `TUFE=${pct(cpi)}` : ''}  ${govBond10y != null ? `10Y Tahvil=%${fmt(govBond10y, 2)}` : ''}
+Sentiment: ${marketSentiment?.sentiment || '-'}  AL:${marketSentiment?.buys || '-'}  SAT:${marketSentiment?.sells || '-'}
+KURAL: BEAR_TREND → AL'ları yalnızca güçlü temel+teknik örtüşmesiyle değerlendir, boyutu %50 küçült. OVERBOUGHT → kar realizasyonu öncelikli.
 
-=== 7-KATMANLI ANALIZ HIYERARSISI (siradan agirlikli) ===
-1) MAKRO (x1.0): XU100=${fmt(xu100)}  USDTRY=${fmt(usdtry, 4)}  Sentiment=${marketSentiment?.sentiment || '-'}
-2) SEKTOREL (x0.9): ${sector || '-'}
-3) TEMEL (x0.8): F/K=${fmt(fundamentals.pe)} PD/DD=${fmt(fundamentals.pb)} ROE=${fmt(fundamentals.roe)}% KarTrend=${fundamentals.profitTrend || '-'} BrutMarj=${fmt(fundamentals.grossMargin)}% OpMarj=${fmt(fundamentals.opMargin)}%
-4) TEKNIK (x1.0): Fiyat=${fmt(price)} Deg=%${fmt(change)} MA20=${fmt(ma20)} MA50=${fmt(ma50)} MA200=${fmt(ma200)} RSI=${fmt(rsi, 1)} MACD=${fmt(macd, 3)}/${fmt(macdSignal, 3)} BB=${bb ? `${fmt(bb.lower)}-${fmt(bb.upper)}` : '-'} ATR=${fmt(atr)} VWAP=${fmt(vwap)}
-5) ZAMAN (x0.9): Sinyal=${signal || '-'} (${cls || '-'})  Skor=${fmt(score, 1)}/10  Conf=${fmt(conf, 0)}%  Wyckoff=${wyckoff || '-'}
-6) RISK (x1.2): Stop=${fmt(stop)}  ATR-multiple=${atr && stop && price ? fmt(Math.abs(price - stop) / atr, 1) : '-'}
-7) POZISYON (x1.0): Giris=${fmt(entry)}  T1=${fmt(target)}  T2=${fmt(targetT2)}  T3=${fmt(targetT3)}  Uzun=${fmt(longTerm)}  R/R=1:${fmt(rr, 2)}  Vade=${holdText || '-'}
+═══ 7-KATMANLI ANALİZ ═══
+1) MAKRO (x1.0): Yukaridaki piyasa rejim verileri geçerli.
+2) SEKTOREL (x0.9): ${sector || '-'}  ${market.sectorRotation ? `Sektör skoru: ${market.sectorRotation}` : ''}
+3) TEMEL (x0.8): F/K=${fmt(fundamentals.pe)} PD/DD=${fmt(fundamentals.pb)} ROE=${pct(fundamentals.roe)} KarTrend=${fundamentals.profitTrend || '-'} Grade=${fundamentalGrade || fundamentals.grade || '-'}
+   BrütMarj=${pct(fundamentals.grossMargin)} OpMarj=${pct(fundamentals.opMargin)} NetMarj=${pct(fundamentals.netMargin)} D/E=${fmt(fundamentals.debtToEquity)}
+4) TEKNİK (x1.0):
+   Fiyat=${fmt(price)} Değ=${pct(change)} | ${trendLines.join(' | ')}
+   RSI=${fmt(rsi, 1)} MACD=${fmt(macd, 3)}/${fmt(macdSignal, 3)} ATR=${fmt(atr)} VWAP=${fmt(vwap)}
+   BB=${bb ? `${fmt(bb.lower)}-${fmt(bb.upper)}` : '-'}  Wyckoff=${wyckoff || '-'}
+5) ZAMAN (x0.9): Sinyal=${signal || '-'} (${cls || '-'})  Skor=${fmt(score, 1)}/10  Güven=${fmt(conf, 0)}%
+6) RİSK (x1.2): Stop=${fmt(stop)}  Stop Uzaklığı=${atr && stop && price ? pct(((price - stop) / price) * 100) : '-'}  ATR Katsayısı=${atr && stop && price ? fmt(Math.abs(price - stop) / atr, 1) : '-'}
+7) POZİSYON (x1.0): Giriş=${fmt(entry)} T1=${fmt(target)} T2=${fmt(targetT2)} T3=${fmt(targetT3)} Uzun=${fmt(longTerm)} R/R=1:${fmt(rr, 2)} Vade=${holdText || '-'}
 
-AKILLI PARA: MFI=${fmt(mfi, 0)} OBV=${obv?.trend || '-'}
-SETUPLAR: ${setupList || '-'}
-MONTE CARLO: P(kar)=%${fmt(mcProfitProb, 0)}  Medyan=${fmt(mcMedian)}${portfolioBlock}
+═══ AKILLI PARA & KURUMSAL AKIŞ ═══
+${smartMoneySignals.length ? smartMoneySignals.map(s => `• ${s}`).join('\n') : '• Kurumsal akış nötr'}
 
-=== OTOMATIK TESPIT EDILEN UYARILAR ===
+═══ MOMENTuM & İLERİ GÖSTERGELER ═══
+${momLines.length ? momLines.join('  |  ') : '-'}
+SMC Setup'lar: ${setupList || '-'}
+Monte Carlo: P(kâr)=${pct(mcProfitProb)} Medyan=${fmt(mcMedian)}${portfolioBlock}
+
+═══ OTOMATİK TESPİT EDİLEN UYARILAR ═══
 ${flagsText}
 
-=== CONTRARIAN PROTOKOL ===
-Her uyariyi cevabinda ACIKCA ele al. Uyari varsa confidence'i >=20 puan dusur. Hicbir uyari YOKSA ve rejim sinyalle uyumluysa confidence artirilabilir.
+═══ CONTRARİAN PROTOKOL ═══
+Her uyarıyı cevabında AÇIKÇA ele al. Uyarı var → confidence -20 puan minimum. Birden fazla uyarı → D notu düşün.
+Monte Carlo P(kâr) < %45 + AL öneri = istatistiksel gerekçe zorunlu.
 
-=== CEVAP FORMATI (Turkce, sade, max 220 kelime) ===
-[ONERI] AL/TUT/SAT + vade (gun/hafta/ay) + guven (DUSUK/ORTA/YUKSEK).
-[CONFIDENCE] 1-10 arasi kendi degerlendirmen. Gerekce 1 cumle.
-[OZET] En kritik 3 madde (makro/sektor/teknik hangisi belirleyici).
-[RISK] En buyuk 2 risk — somut, sayisal.
-[AKSIYON] Giris-stop-T1-T2-T3 fiyatlari + kademeli alim plani (orn: %40 sinyalde, %40 pullback'te, %20 breakout'ta).
-[ALTERNATIF] Sinyal yanlisa kirilim seviyesi nedir, ne izlemeli?${portfolio ? '\n[PORTFOY_ETKI] Bu pozisyon mevcut portfoy ile nasil etkilesir? (konsantrasyon/korelasyon).' : ''}`;
+═══ YANIT FORMATI (Türkçe, profesyonel, max 240 kelime) ═══
+[ONERI] AL/TUT/SAT + vade + güven (DÜŞÜK/ORTA/YÜKSEK) + Setup Grade (A/B/C/D)
+[CONFIDENCE] 1-10 skala + TEK cümle gerekçe + flag varsa nasıl etkiledi
+[OZET] Belirleyici 3 faktör — hangisi ağır basıyor (makro/sektör/teknik/akıllı para)?
+[RISK] En büyük 2 somut risk + tetikleyici seviyeler
+[AKSIYON] Giriş=${fmt(entry)} Stop=${fmt(stop)} T1=${fmt(target)} T2=${fmt(targetT2)} T3=${fmt(targetT3)} + Kademeli alım planı (ör: %40 şimdi/%40 pullback/${fmt(ma20)} /%20 breakout)
+[ALTERNATIF] Sinyal geçersizleşirse hangi seviye, ne izle${portfolio ? '\n[PORTFOY_ETKI] Korelasyon, konsantrasyon ve mevcut pozisyonlara etkisi' : ''}`;
 }
 
-// ── Daily Picks Prompt (A/B/C grades) ──────────────────────────────────────
+// ── Daily Picks Prompt (A/B/C/D grades) ────────────────────────────────────
 export function buildDailyPicksPrompt(picks = [], market = {}) {
   const ctx = market.marketSentiment || market.sentiment || {};
-  const header = `Piyasa: ${ctx.sentiment || '-'}  AL:${ctx.buys || 0} SAT:${ctx.sells || 0}  RSI ort: ${ctx.avgRSI?.toFixed(0) || '-'}`;
+  const regime = detectMarketRegime(market);
 
-  const rows = picks.slice(0, 8).map(p => {
-    const grade = gradeSetup(p);
-    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} R/R=1:${p.rr?.toFixed(2)} RSI=${p.rsi?.toFixed(0)}`;
+  const fmt = (v, d = 2) => (v == null || !Number.isFinite(Number(v))) ? '-' : Number(v).toFixed(d);
+
+  const header = `Rejim: ${regime.regime} (Bias: ${regime.bias})
+XU100: ${regime.xu100Chg >= 0 ? '+' : ''}${regime.xu100Chg?.toFixed(1) || '-'}%  Breadth: ${fmt(regime.breadth, 2)}  OrtRSI: ${ctx.avgRSI?.toFixed(0) || '-'}
+AL:${ctx.buys || 0} SAT:${ctx.sells || 0}  Sentiment: ${ctx.sentiment || '-'}`;
+
+  const rows = picks.slice(0, 10).map(p => {
+    const grade = gradeSetup(p, regime.regime);
+
+    // Smart money summary
+    const sm = [];
+    if (p.obvTrend === 'accumulation') sm.push('OBV+');
+    if (p.mfi != null && p.mfi < 35) sm.push(`MFI=${fmt(p.mfi, 0)}`);
+    if (p.cmf != null && p.cmf > 0.05) sm.push(`CMF=${fmt(p.cmf, 2)}`);
+    const smStr = sm.length ? sm.join('/') : '-';
+
+    const stDir = p.supertrend?.trend
+      ? p.supertrend.trend.slice(0, 2).toUpperCase()
+      : (p.ichimoku?.cloudPosition === 'above' ? 'UC' : '-');
+    const wy = p.wyckoff ? p.wyckoff.slice(0, 3).toUpperCase() : '-';
+    const fg = p.fundamentalGrade || p.fundamentals?.grade || '-';
+    const mc = p.mcProfitProb != null ? `MC=${fmt(p.mcProfitProb, 0)}%` : '';
+
+    // KAP haber sentiment — varsa kısa başlık ile (max 45 karakter)
+    let kapStr = '';
+    if (p.kapSentiment != null && p.kapCount > 0) {
+      const sign = p.kapSentiment >= 0 ? '+' : '';
+      const headline = p.kapHeadline ? ` "${p.kapHeadline.slice(0, 45)}"` : '';
+      kapStr = ` KAP=${sign}${fmt(p.kapSentiment, 1)}(${p.kapCount})${headline}`;
+    }
+
+    return `- ${p.symbol}[${grade}] ${p.signal || '-'} sk=${fmt(p.score, 1)} fiy=${fmt(p.price, 2)} stop=${fmt(p.stop, 2)} T1=${fmt(p.target, 2)} RR=1:${fmt(p.rr, 2)} RSI=${fmt(p.rsi, 0)} AkPar:${smStr} Tr:${stDir} Wy:${wy} Fund:${fg}${mc ? ' ' + mc : ''}${kapStr}`;
   }).join('\n');
 
-  return `Sen BIST gunluk strateji uzmanisin. Bugun icin en iyi firsatlari sirala.
+  const regimeWarn = regime.regime === 'BEAR_TREND'
+    ? '\n!! BEAR_TREND: Yalnizca A-notlu + guclu temel destekli hisseler. Boyutlari -%30-50 kucult.'
+    : regime.regime === 'OVERBOUGHT'
+    ? '\n!! OVERBOUGHT: Yeni giris yerine mevcut pozisyon yonetimi on planda. A notu esigini yukselt.'
+    : '';
 
-${header}
+  return `Sen Wall Street seviyesinde BIST gunluk strateji uzmanisin. Bugunun en iyi firsatlarini analiz et.
 
-ADAY LISTESI:
+=== PIYASA BAGLAMI ===
+${header}${regimeWarn}
+
+=== ADAY LISTESI ===
 ${rows}
 
-Her hisseyi A/B/C notuyla derecelendir:
-- A = guclu kurulum (skor>=7, R/R>=2, teknik+temel uyumlu, hacim destekli)
-- B = orta kurulum (skor 5-7, R/R 1.5-2, tek teyit eksik)
-- C = zayif kurulum (skor<5 veya R/R<1.5 veya teyit yok)
+=== GRADELEME KRITERLERI ===
+A (Elite): Skor>=6.8/10, R/R>=2.0, hacim teyidi, >=2 akilli para sinyali, trend uyumlu, rejim uyumlu
+B (Guclu): Skor>=5.8/10, R/R>=1.5, >=1 akilli para VEYA trend sinyali
+C (Zayif): Kriter eksik, sistematik avantaj yok
+D (Girilmez): Rejim karsit+coklu uyari VEYA P(kar)<%40 VEYA stop>%10
 
-CEVAP FORMATI:
-1. Bugunun TOP3'u (sadece A notunu ver)
-2. Her biri icin 1 cumle neden
-3. Ortak tema (sektor rotasyonu, momentum, defansif vb.)
-4. Kacinilmasi gereken hisseler (C notu)
-5. Genel piyasa tavsiyesi (1 cumle)
-Max 180 kelime, Turkce.`;
+=== YANIT FORMATI (Turkce, max 200 kelime) ===
+TOP-3 BUGUN: (A notu yoksa en guclu B'ler — onceligini gerekce ile)
+Her biri: 1 cumle NEDEN + giris/stop/T1 + vade (intraday/swing/uzun)
+ORTAK TEMA: Sektor rotasyonu, momentum tipi, makro uyum
+KACIN: C/D notlu hisseler ve kisa gerekcesi
+PIYASA TAVSIYESI: 1 cumle (rejimi ve hacim durumunu dikkate al)`;
 }
 
-function gradeSetup(p) {
+// gradeSetup — multi-factor A/B/C/D classification matching SMC_RULEBOOK thresholds
+// score is on 0-10 scale; A >= 6.8/10 (= 68/100), B >= 5.8/10 (= 58/100)
+function gradeSetup(p, regimeOverride) {
   const s = p.score || 0;
   const rr = p.rr || 0;
-  if (s >= 7 && rr >= 2) return 'A';
-  if (s >= 5 && rr >= 1.5) return 'B';
+  const cls = p.cls || (typeof p.signal === 'string' && p.signal.includes('AL') ? 'buy' : 'hold');
+  const isBuy = cls === 'buy';
+  const regime = regimeOverride || p.regime || p.marketRegime || '';
+  const bearTrend = regime === 'BEAR_TREND';
+  const overbought = regime === 'OVERBOUGHT';
+
+  // ── D: hard disqualifiers (checked first) ─────────────────────────────
+  const mcProb = p.mcProfitProb ?? null;
+  if (mcProb != null && mcProb < 40) return 'D';
+
+  const stopDist = p.stopDistancePct != null
+    ? p.stopDistancePct
+    : (p.price > 0 && p.stop > 0 ? Math.abs((p.price - p.stop) / p.price) * 100 : null);
+  if (stopDist != null && stopDist > 10) return 'D';
+
+  // Multiple active contra-signals → D
+  let contraCount = 0;
+  if (bearTrend && isBuy) contraCount++;
+  if (overbought && isBuy) contraCount++;
+  if (p.rsi != null && p.rsi > 72 && isBuy) contraCount++;
+  if (p.rsiDivergence === 'bearish' && isBuy) contraCount++;
+  if (p.obvDivergence === 'bearish' && isBuy) contraCount++;
+  if (contraCount >= 2) return 'D';
+
+  // ── Smart money signal count ───────────────────────────────────────────
+  let smartMoney = 0;
+  if (p.obvTrend === 'accumulation') smartMoney++;
+  if (p.mfi != null && p.mfi < 30) smartMoney++;
+  if (p.cmf != null && p.cmf > 0.10) smartMoney++;
+  if (p.wyckoffSpring) smartMoney++;
+  if (p.obvDivergence === 'bullish') smartMoney++;
+
+  // ── Trend alignment ────────────────────────────────────────────────────
+  const supertrendUp = p.supertrend?.trend === 'UP' || p.supertrend?.direction === 'up';
+  const ichimokuAbove = p.ichimoku?.cloudPosition === 'above';
+  const maAligned = p.ma50 && p.ma200 && p.price > 0 && p.price > p.ma50 && p.ma50 > p.ma200;
+  const trendAligned = supertrendUp || ichimokuAbove || maAligned;
+
+  // Volume confirmation — omit penalty when field absent (don't penalize missing data)
+  const volConfirmed = p.volRatio != null ? p.volRatio >= 1.3 : true;
+
+  // Fundamental strength bonus
+  const fg = p.fundamentalGrade || p.fundamentals?.grade || '';
+  const fundStrong = fg === 'A+' || fg === 'A' || fg === 'B+';
+
+  // ── A: Elit Kurulum ───────────────────────────────────────────────────
+  if (s >= 6.8 && rr >= 2.0 && volConfirmed && smartMoney >= 2 && trendAligned && !bearTrend && !overbought) return 'A';
+  // Strong score compensates missing vol if fundamentals support
+  if (s >= 7.5 && rr >= 2.0 && smartMoney >= 2 && trendAligned && !bearTrend && fundStrong) return 'A';
+
+  // ── B: Guclu Kurulum ──────────────────────────────────────────────────
+  if (s >= 5.8 && rr >= 1.5 && (smartMoney >= 1 || trendAligned)) return 'B';
+  // Multiple confirmations compensate borderline score
+  if (s >= 5.5 && rr >= 1.5 && smartMoney >= 2 && trendAligned) return 'B';
+
   return 'C';
 }
 
 // ── Static SMC / strategy rulebook (CACHE-ELIGIBLE) ────────────────────────
-// This block is identical on every call — Anthropic prompt caching will
-// return it from the cache for ~5 minutes, reducing input cost by ~90%
-// on multi-ticker scans (e.g. Daily Picks, Advisor runs over BIST50).
-//
-// Must stay >= 1024 tokens combined with the base system prompt, otherwise
-// Anthropic silently declines to cache. Keep this as the long, stable half.
-const SMC_RULEBOOK = `=== SMART MONEY CONCEPTS (SMC) KURALLARI ===
-BOS (Break of Structure): Onceki pivot high/low'un hacimli (>=1.3x ort) kirilimi trend teyididir.
-  - Bull BOS: fiyat son swing high uzerine hacim ile kapanirsa; stop son swing low'un altinda.
-  - Bear BOS: fiyat son swing low altina hacim ile kapanirsa; stop son swing high uzerinde.
-CHoCH (Change of Character): BOS zincirinin tersine ilk kirilim — trend donus sinyali.
-  Confluence: FVG + OB + MFI/OBV diverjansi birlesimi >= 2 teyit gerektirir.
-Order Block (OB): BOS'tan onceki son KARSIT yonde mum. Retest zonunda tepki beklenir.
-  - Bullish OB: bull BOS'tan onceki son bearish mum (low, high) bolgesi.
-  - Bearish OB: bear BOS'tan onceki son bullish mum bolgesi.
-  - OB kirildiginda gecersiz sayilir (broke-below / broke-above).
-FVG (Fair Value Gap): 3-mumluk boslugun mitigate edilmemis alani.
-  - Bullish FVG: bar[i+2].low > bar[i].high → fiyat geri donerse destek.
-  - Bearish FVG: bar[i+2].high < bar[i].low → fiyat geri donerse direnc.
-Liquidity Sweep: 20-bar ekstrem + MFI/OBV diverjans = stop-hunt. Ters yonde devam beklenir.
+// >= 1024 tokens ile birlikte — Anthropic prompt caching aktif.
+const SMC_RULEBOOK = `=== SMART MONEY CONCEPTS (SMC) — WALL STREET KURALLARI ===
 
-=== 7-KATMANLI AGIRLIKLANDIRMA ===
-Makro(1.0) > Risk(1.2) > Teknik(1.0) > Pozisyon(1.0) > Sektorel(0.9) > Zaman(0.9) > Temel(0.8)
-Risk katmani (1.2) en yuksek agirlikta — stop uzakligi, ATR katsayisi ve R/R orani kararı bukar.
+TEMEL PRENSİP: Piyasa yapıcılar (market maker) her hareketten önce likiditeyi temizler.
+Büyük oyuncular pozisyon girmeden önce stop kümelerini süpürür, ardından gerçek yönde hareket eder.
 
-=== CONTRARIAN PROTOKOL ===
-Asiri iyimser/kotumser tespit edildiginde confidence -20 puan.
-Rejim karsit (BEAR_TREND'te AL, OVERBOUGHT'ta AL) = uyari zorunlu.
-Monte Carlo P(kar) < %45 ve AL onerisi = cevapta ACIKCA ele al.
+BOS (Break of Structure — Yapı Kırılımı):
+  - Bull BOS: Fiyat son swing high'ı KAPANIŞ bazında HACIMLE (>=1.3x ort) geçer → yukselis trendi teyidi.
+    Stop: son swing low'un %0.5 altı. Minimum hacim şartı yerine getirilmezse ZAYIF BOS say.
+  - Bear BOS: Fiyat son swing low'u KAPANIŞ bazında hacimle kırar → düşüş trendi teyidi.
+  - Not: Gölge (wick) kırılması BOS DEĞİLDİR. Sadece kapanış fiyatı geçerlidir.
 
-=== SETUP GRADE (A/B/C/D) ===
-A: skor>=7 + R/R>=2 + teknik+temel uyumlu + hacim destekli
-B: skor 5-7 + R/R 1.5-2 + tek teyit eksik
-C: skor<5 VEYA R/R<1.5 VEYA teyit yok
-D: rejim karsit + birden fazla uyari aktif`;
+CHoCH (Change of Character — Karakter Değişimi):
+  - Devam eden BOS zincirini KIRAN ilk karşıt yapı → trend dönüşü erken sinyali.
+  - CHoCH + OBV diverjansı = yüksek güvenilirlik kombinasyonu.
+  - Confluence kuralı: FVG + OB + MFI/OBV diverjansi = en az 2 teyit zorunlu.
+
+Order Block (OB — Kurum Emirleri):
+  - Bullish OB: Yukseliş BOS'undan önceki SON DÜŞÜŞ mumu. Alt-üst değerler destek bölgesidir.
+  - Bearish OB: Düşüş BOS'undan önceki son yükseliş mumu. Alt-üst değerler direnç bölgesidir.
+  - Kural: OB kırıldığında GEÇERSİZ OLUR — yeniden test bekleme.
+  - Güçlü OB: Oluşumda hacim ortalamanın 1.5x üzeri + MFI desteği.
+
+FVG (Fair Value Gap — Adil Değer Boşluğu):
+  - Bullish FVG: bar[i].high < bar[i+2].low → doldurulmamış boşluk DESTEK görevi görür.
+  - Bearish FVG: bar[i].low > bar[i+2].high → doldurulmamış boşluk DİRENÇ görevi görür.
+  - FVG mitigate olduğunda geçersizdir. Kısmi dolum (%50) en güçlü reaksiyon noktasıdır.
+
+Liquidity Sweep (Likidite Süpürmesi):
+  - 20-bar ekstrem seviyesi (equal high/low) yakınında MFI/OBV diverjansı = STOP HUNT sinyali.
+  - Sweep sonrası ters yön hareketi = "Judas Swing" → gerçek yön o yöndür.
+  - BIST'e özgü: Sabah 09:30-10:00 arası likidite süpürmeleri yaygın, yönü 10:30'da teyit et.
+
+Premium / Discount Zones:
+  - Swing range'in %50'si (equilibrium): altı = discount (alım bölgesi), üstü = premium (satış bölgesi).
+  - Kural: Trend UP → discount'tan al, premium'da sat. Trend DOWN → premium'dan sat, discount'ta kapat.
+
+=== BIST'E ÖZGÜ PIYASA YAPISI ===
+• Öğle arası (12:30-14:00): Hacim düşer, sahte breakout'lar yaygın. Bu saatte verilen sinyalleri görmezden gel veya beklettir.
+• Açılış seansı (09:30-10:30): En volatil dönem. Gap fill trendi güçlü — boşlukların %65'i aynı gün kapanır.
+• Kapanış saatleri (16:30-17:30): Kurumsal dengeleme — güçlü kapanış = ertesi gün açılış momentumu.
+• Yabancı fon etkisi: USDTRY'de >%0.5 günlük artış → defansif sektörler (Sabancı, Koç) göreceli güçlenir.
+• TCMB PPK kararları ve enflasyon verileri: Finans sektörü bu günlerde ana trende karşı hareket edebilir.
+• Borç/Equity oranı yüksek şirketler (D/E > 2.0): TL faiz artışlarında orantısız zarar görür.
+
+=== KURUMSAL AKIŞ TESPİTİ (Akıllı Para Fingerprint) ===
+KUVVETLI BİRİKİM SİNYALLERİ (en az 3 tanesi):
+  ✓ OBV birikim trendi (fiyat yatay/aşağı, OBV yükseliyor)
+  ✓ MFI < 30 (ucuza kurumsal alım)
+  ✓ CMF > +0.10 (Chaikin Money Flow pozitif)
+  ✓ Düşüş mumlarında yüksek hacim, yükseliş mumlarında yüksek hacim YOK
+  ✓ Wyckoff Accumulation (Spring + Test + BUEC faz sırası)
+  ✓ OBV pozitif diverjans (fiyat dip yaparken OBV yeni dip YAPMIYOR)
+
+KUVVETLI DAĞITIM SİNYALLERİ:
+  ✓ OBV dağıtım (fiyat yükseliyor ama OBV düşüyor)
+  ✓ MFI > 75 + fiyat yeni zirve = distribüsyon
+  ✓ Wyckoff Distribution (UTAD + Sign of Weakness)
+  ✓ Hacim klimaksı + kapanış alt yarıda
+
+=== 7-KATMANLI AĞIRLIKLAMA (Sabit Kural) ===
+Risk(1.2) = EN YÜKSEK → stop mesafesi ve ATR katsayısı her kararı belirler.
+Makro(1.0) = Rejim belirleme — bear trend'de her AL sinyali %30 daha küçük boyutla ele alınır.
+Teknik(1.0) = Birden fazla indikatör teyidi zorunlu.
+Pozisyon(1.0) = R/R < 1.2 olan işlemler asla girilmez.
+Sektörel(0.9) + Zaman(0.9) = Destekleyici faktörler.
+Temel(0.8) = Uzun vade için kritik, kısa vade swing'ler için destekleyici.
+
+=== CONTRARİAN PROTOKOL ===
+Aşırı iyimser/kötümser tespit edildiğinde confidence -20 puan zorunlu.
+Rejim karşıt (BEAR_TREND'te AL, OVERBOUGHT'ta AL) = uyarı ve boyut küçültme zorunlu.
+Monte Carlo P(kâr) < %45 + AL önerisi = istatistiksel gerekçe ZORUNLU, aksi halde öneri YAPILMAZ.
+RSI > 72 + yeni long önerisi = en az 1 teyit daha gerekli.
+Birden fazla aktif uyarı = D notu, giriş ertelenir veya iptal edilir.
+
+=== SETUP GRADE SİSTEMİ (A/B/C/D) ===
+A (Elit Kurulum):
+  • Skor >= 68/100 VE R/R >= 2.0 VE hacim teyidi (volRatio >= 1.3)
+  • VE en az 2 akıllı para sinyali (OBV+MFI veya OBV+CMF)
+  • VE trend uyumlu (Supertrend UP veya Ichimoku above cloud)
+  • VE rejim uyumlu (BEAR_TREND'te A notu verilmez)
+B (Güçlü Kurulum):
+  • Skor >= 58/100 VE R/R >= 1.5
+  • VE en az 1 akıllı para sinyali VEYA trend indikatörü teyidi
+  • Tek eksik teyit kabul edilir
+C (Zayıf Kurulum):
+  • Skor < 58 VEYA R/R < 1.5 VEYA teyit yok
+  • Risk/ödül oranı sistematik üstünlük sağlamaz
+D (Girilmez):
+  • Rejim karşıt VE birden fazla aktif uyarı
+  • VEYA Monte Carlo P(kâr) < %40
+  • VEYA stop mesafesi > %10 (ATR çok geniş)`;
 
 const BASE_SYSTEM_PROMPT = 'Sen Wall Street tarzi BIST stratejistisin. Turkce cevap ver. Gerekirse haberlere web_search ile bak. Emin olmadigin yerde "emin degilim" de, uydurma. Asagidaki SMC ve 7-katmanli hiyerarsi kurallari TUM cevaplarinda gecerlidir.';
 
@@ -308,9 +523,18 @@ Format: [{"id":"...","sentiment":"Pozitif","score":7,"reason":"..."}]`;
 
   if (result.error) return { error: result.error };
   try {
-    const m = result.text.match(/\[[\s\S]*\]/);
-    if (!m) return { error: 'AI JSON dondurmedi.' };
-    return JSON.parse(m[0]);
+    // Try full parse first, then extract first top-level array
+    const text = result.text.trim();
+    try { return JSON.parse(text); } catch {}
+    const start = text.indexOf('[');
+    if (start === -1) return { error: 'AI JSON dondurmedi.' };
+    let depth = 0, end = -1;
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === '[') depth++;
+      else if (text[i] === ']') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end === -1) return { error: 'AI JSON dondurmedi.' };
+    return JSON.parse(text.slice(start, end + 1));
   } catch (e) {
     return { error: 'JSON parse: ' + e.message };
   }
@@ -349,6 +573,7 @@ export async function askDailyPicks(picks, market) {
   return callClaude({
     prompt: buildDailyPicksPrompt(picks, market),
     systemPrompt: 'Sen BIST gunluk strateji uzmanisin. Turkce yaz.',
+    model: BATCH_MODEL,
     temperature: DEFAULT_TEMPERATURE,
     maxTokens: 900,
   });

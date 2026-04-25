@@ -1,24 +1,41 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchSingle } from '../utils/fetchEngine.js';
+import { fetchSingle, isBistClosedDay } from '../utils/fetchEngine.js';
 import { getUnifiedAnalysis, genSignal } from '../utils/signals.js';
 import { calcAll } from '../utils/indicators.js';
 import { getStockList, SECTORS } from '../utils/constants.js';
-import { calcSectorMetrics, rankSectors } from '../utils/sectorEngine.js';
+import { calcSectorMetrics, rankSectors, getSectorStocks } from '../utils/sectorEngine.js';
+import { fetchKapNews } from '../utils/NewsEngine.js';
+import { calcKAPSentiment } from '../utils/kapEngine.js';
+
+// ── Istanbul TZ helper (module-scoped, created once) ──
+const _advisorTzFmt = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Europe/Istanbul',
+  hour: '2-digit', minute: '2-digit', hour12: false,
+});
+function _istanbulMinutes() {
+  const parts = _advisorTzFmt.formatToParts(new Date());
+  const h = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0', 10);
+  const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0', 10);
+  return h * 60 + m;
+}
 
 /**
- * isMarketOpen - Check if BIST market is currently open
+ * isMarketOpen — TZ-stable BIST session check (Istanbul time + holiday calendar).
+ * Replaces the old runtime-TZ getHours/getMinutes approach.
  */
 export function isMarketOpen() {
-  const now = new Date();
-  const hour = now.getHours();
-  const minute = now.getMinutes();
-  const day = now.getDay();
-  const timeMinutes = hour * 60 + minute;
-  const isWeekday = day >= 1 && day <= 5;
-  // BIST: 09:30-12:30 (morning session) + 14:00-17:30 (afternoon session)
-  const isMorningSession = timeMinutes >= 570 && timeMinutes < 750;  // 09:30 - 12:30
-  const isAfternoonSession = timeMinutes >= 840 && timeMinutes < 1050; // 14:00 - 17:30
-  return isWeekday && (isMorningSession || isAfternoonSession);
+  if (isBistClosedDay(new Date())) return false;
+  const t = _istanbulMinutes();
+  // BIST: 09:30-12:30 (morning) + 14:00-17:30 (afternoon) Istanbul time
+  const morning   = t >= 570 && t < 750;   // 09:30-12:30
+  const afternoon = t >= 840 && t < 1050;  // 14:00-17:30
+  return morning || afternoon;
+}
+
+export function isMarketClosedForDay() {
+  if (isBistClosedDay(new Date())) return true;
+  const t = _istanbulMinutes();
+  return t >= 1110 || t < 570; // after 18:30 or before 09:30 Istanbul
 }
 
 const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market open
@@ -32,48 +49,58 @@ function calcTomorrowPotential(result) {
   if (!result) return 0;
   let tpScore = 0;
   
-  // 1. Closing position within Bollinger Bands (lower = more upside)
-  if (result.bollPct != null) {
-    if (result.bollPct < 20) tpScore += 15;
-    else if (result.bollPct < 40) tpScore += 8;
-    else if (result.bollPct > 80) tpScore -= 10;
+  // 1. Weak Close Penalty (CRITICAL: Protect against Falling Knives & Bull Traps)
+  // If a stock closed in the bottom 30% of its daily range, it was heavily rejected.
+  if (result.dayHighLowRange !== undefined && result.dayHighLowRange < 0.3) {
+    return 0; // Immediate disqualification for tomorrow (extreme falling knife risk)
   }
   
-  // 2. Volume trend (rising volume = institutional interest)
+  // 2. Closing position within Bollinger Bands (lower = more upside)
+  // Fix: Only reward touching lower band IF there is a bullish divergence or RSI oversold bounce
+  if (result.bollPct != null) {
+    if (result.bollPct < 20 && (result.rsi < 40 || result.rsiDivergence === 'bullish')) {
+      tpScore += 15; // Mean-reversion setup
+    }
+    else if (result.bollPct > 80) {
+      tpScore -= 10; // Overextended
+    }
+  }
+  
+  // 3. Volume trend (rising volume = institutional interest)
   if (result.volRatio) {
     if (result.volRatio > 2) tpScore += 12;
     else if (result.volRatio > 1.5) tpScore += 8;
     else if (result.volRatio > 1.2) tpScore += 4;
   }
   
-  // 3. Support proximity (close to support = limited downside)
+  // 4. Support proximity (close to support = limited downside)
   if (result.stopPct != null) {
     const riskPct = Math.abs(result.stopPct);
     if (riskPct < 3) tpScore += 10;
     else if (riskPct < 5) tpScore += 5;
   }
   
-  // 4. Momentum direction (positive momentum = continuation likely)
+  // 5. Momentum direction (positive momentum = continuation likely)
   if (result.momentumScore) {
     tpScore += Math.min(15, result.momentumScore * 0.2);
   }
   
-  // 5. Ichimoku/Supertrend alignment
+  // 6. Ichimoku/Supertrend alignment
   if (result.ichimoku?.cloudPosition === 'above') tpScore += 5;
   if (result.supertrend?.trend === 'UP') tpScore += 5;
   if (result.ichimoku?.tkCross === 'bullish') tpScore += 8;
   if (result.supertrend?.flip === 'bullish') tpScore += 8;
   
-  // 6. R/R quality
+  // 7. R/R quality
   if (result.rr >= 2.5) tpScore += 10;
   else if (result.rr >= 2) tpScore += 6;
   else if (result.rr >= 1.5) tpScore += 3;
   
-  // 7. Smart money accumulation
+  // 8. Smart money accumulation
   if (result.obvTrend === 'accumulation') tpScore += 8;
   if (result.cmf > 0.1) tpScore += 5;
   
-  // 8. Score itself
+  // 9. Score itself
   tpScore += Math.min(15, (result.score || 0) * 0.2);
   
   return Math.max(0, Math.min(100, tpScore));
@@ -95,6 +122,11 @@ export function useAIAdvisor(portfolio) {
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0 });
   const [lastUpdate, setLastUpdate] = useState(null);
   const runningRef = useRef(false);
+  const riskAlertsRef = useRef([]);
+  // Onceki taramadan kalan sembol → sektor gucu haritasi.
+  // Scan esnasinda mevcut sektorel veri henuz hazir degil; bir onceki taramanin
+  // sonuclari kullanilarak her sembol icin sektorel baglam saglanir.
+  const prevSectorStrengthRef = useRef({});
 
   const pushLog = useCallback((entry) => {
     setAdvisorLog(prev => [{ time: new Date(), ...entry }, ...prev].slice(0, 100));
@@ -132,6 +164,7 @@ export function useAIAdvisor(portfolio) {
       alerts.push({ type: 'err', msg: 'Nakit bakiye eksi — marjin riski' });
     }
     setRiskAlerts(alerts);
+    riskAlertsRef.current = alerts;
   }, [portfolio]);
 
   // ── Core scan implementation ──
@@ -157,7 +190,9 @@ export function useAIAdvisor(portfolio) {
             const data = await fetchSingle(sym, '6mo', '1d', true);
             if (data && data.prices && data.prices.length >= 20) {
               const ind = calcAll(data.prices);
-              const sig = genSignal(ind, data.prices);
+              // Onceki taramadan gelen sektorel guc — yoksa null (ilk taramada)
+              const sectorStrength = prevSectorStrengthRef.current[sym] ?? null;
+              const sig = genSignal(ind, data.prices, { sectorStrength });
               const last = data.prices[data.prices.length - 1];
               const prev = data.prices[data.prices.length - 2] || last;
               const change = prev.close ? ((last.close - prev.close) / prev.close) * 100 : 0;
@@ -199,6 +234,7 @@ export function useAIAdvisor(portfolio) {
                 stopPct: sig.stop && sig.entry ? ((sig.stop - sig.entry) / sig.entry) * 100 : 0,
                 targetPct: sig.t1 && sig.entry ? ((sig.t1 - sig.entry) / sig.entry) * 100 : 0,
                 // Intraday momentum fields
+                dayHighLowRange: ind.dayHighLowRange ?? 0.5,
                 gapPct: ind.gapPct,
                 gapUp: ind.gapUp,
                 momentumIntraday: ind.momentumIntraday,
@@ -252,6 +288,18 @@ export function useAIAdvisor(portfolio) {
         sector: s.sector, avgScore: s.avgScore, total: s.scanned, strength: s.strength, rotation: s.rotation,
       }));
 
+      // ── Sonraki tarama icin sembol → sektor gucu haritasini guncelle ──
+      // Her sembol kendi sektorunun strength degerini alir.
+      {
+        const sectorStockMap = getSectorStocks(); // { [sector]: [sym, ...] }
+        const nextMap = {};
+        for (const [sector, metrics] of Object.entries(sectorMetrics)) {
+          const stocks = sectorStockMap[sector] || [];
+          for (const s of stocks) nextMap[s] = metrics.strength;
+        }
+        prevSectorStrengthRef.current = nextMap;
+      }
+
       const sentimentObj = {
         sentiment, color, buys, sells, scanned: results.length, avgRSI, accumulations,
         sectorRotation,
@@ -259,19 +307,30 @@ export function useAIAdvisor(portfolio) {
 
       // ── Top picks — dual mode ──
       const bullishPortfolio = portfolio?.positions?.map(p => p.symbol) || [];
-      const isAfterHours = opts.afterHours || !isMarketOpen();
+      const isAfterHours = opts.afterHours || isMarketClosedForDay();
       
       const picks = results
         .filter(r => {
+          // ── Sektor CIKIS engeli: her iki modda da gecerli ──
+          // Onceki taramadan gelen sektor gucu <= 20 ise AL onerisi bloklanir.
+          const sectorStr = prevSectorStrengthRef.current[r.symbol];
+          if (r.cls === 'buy' && sectorStr != null && sectorStr <= 20) return false;
+
           if (isAfterHours) {
             // After hours: strict filter — only high-conviction setups
             const isBuy = r.cls === 'buy';
+            // Weak close disqualification
+            if (r.dayHighLowRange !== undefined && r.dayHighLowRange < 0.3) return false;
+
             const hasSetup = isBuy && r.score >= 60 && r.rr >= 1.5;
             const hasTrend = (r.ichimoku?.cloudPosition === 'above') || (r.supertrend?.trend === 'UP');
             return hasSetup || (hasTrend && isBuy && r.score >= 55 && r.rr >= 1.2);
           } else {
             // Market open: strict filter (score100 scale: 0-100)
             const isBuy = r.cls === 'buy';
+            // Must hold gains intraday (prevent recommending faded spikes)
+            if (r.dayHighLowRange !== undefined && r.dayHighLowRange < 0.4) return false;
+            
             const hasTraditionalSignal = isBuy && r.score >= 60 && r.rr >= 1.5;
             const hasMomentumBoost = r.momentumScore >= 50 && (r.change || 0) > 0 && r.score >= 55;
             return hasTraditionalSignal || hasMomentumBoost;
@@ -288,16 +347,30 @@ export function useAIAdvisor(portfolio) {
             // After hours: sort by tomorrow potential
             return (b.tomorrowPotential || 0) - (a.tomorrowPotential || 0);
           } else {
-            // Market open: momentum + score
-            const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2);
-            const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2);
+            // Market open: live momentum is king, traditional score is secondary
+            const scoreA = ((a.score || 0) * 0.4) + ((a.momentumScore || 0) * 0.6);
+            const scoreB = ((b.score || 0) * 0.4) + ((b.momentumScore || 0) * 0.6);
             return scoreB - scoreA;
           }
         })
         .slice(0, 10);
 
+      // ── KAP haber entegrasyonu: seçilen top picks için paralel çekme (max 10 istek) ──
+      // Scan loop'u sırasında 648 sembol için KAP çekmek çok yavaş olur.
+      // Sadece filtreden geçen picks için çekiyoruz — max 10 çağrı, kabul edilebilir.
+      const picksWithKAP = await Promise.all(picks.map(async (r) => {
+        try {
+          const disclosures = await fetchKapNews(r.symbol);
+          if (disclosures && disclosures.length > 0) {
+            const kap = calcKAPSentiment(disclosures);
+            return { ...r, kapSentiment: kap.score, kapHeadline: kap.headline, kapCount: kap.count };
+          }
+        } catch { /* KAP non-fatal — picks still shown without news */ }
+        return r;
+      }));
+
       setScanResults(results);
-      setTopPicks(picks);
+      setTopPicks(picksWithKAP);
       setMarketSentiment(sentimentObj);
       setSectorHeatmap(sectorMetrics);
       setLastUpdate(new Date());
@@ -309,10 +382,10 @@ export function useAIAdvisor(portfolio) {
       window.dispatchEvent(new CustomEvent('advisor-scan-complete', {
         detail: {
           results,
-          topPicks: picks,
+          topPicks: picksWithKAP,
           marketContext: sentimentObj,
           sectorRotation,
-          riskAlerts,
+          riskAlerts: riskAlertsRef.current,
           timestamp: Date.now(),
           scanMode: isAfterHours ? 'afterHours' : 'intraday',
         },
@@ -323,7 +396,7 @@ export function useAIAdvisor(portfolio) {
       setScanning(false);
       runningRef.current = false;
     }
-  }, [portfolio, pushLog, riskAlerts]);
+  }, [portfolio, pushLog]);
 
   const manualScan = useCallback(() => {
     runScan({ universe: SCAN_UNIVERSE });

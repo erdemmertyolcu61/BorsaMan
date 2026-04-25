@@ -772,12 +772,10 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
         <div style={{ background: 'var(--bg0)', padding: 10, borderRadius: 5, borderLeft: '3px solid var(--red)' }}>
           <div style={{ fontSize: 8, textTransform: 'uppercase', color: 'var(--t3)' }}>Stop</div>
           <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--red)' }}>{r.intradayStop?.toFixed(2) || '-'}</div>
-          <div style={{ fontSize: 9, color: 'var(--red)' }}>{intLoss.toFixed(2)}%</div>
         </div>
         <div style={{ background: 'var(--bg0)', padding: 10, borderRadius: 5, borderLeft: '3px solid var(--green)' }}>
           <div style={{ fontSize: 8, textTransform: 'uppercase', color: 'var(--t3)' }}>Hedef</div>
           <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--green)' }}>{r.intradayTarget?.toFixed(2) || '-'}</div>
-          <div style={{ fontSize: 9, color: 'var(--green)' }}>+{intGain.toFixed(2)}%</div>
         </div>
         <div style={{ background: 'var(--bg0)', padding: 10, borderRadius: 5, borderLeft: '3px solid var(--yellow)' }}>
           <div style={{ fontSize: 8, textTransform: 'uppercase', color: 'var(--t3)' }}>R/O</div>

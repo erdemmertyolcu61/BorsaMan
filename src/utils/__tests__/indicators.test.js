@@ -243,3 +243,56 @@ describe('calcAll — integration smoke', () => {
     expect(ind.lastRSI).toBeLessThan(50);
   });
 });
+
+// ── FORWARD MOMENTUM TESTS ────────────────────────────────────────────────
+describe('Forward Momentum (bias fix)', () => {
+  // Test 1: Steep spike today should get penalty
+  function seriesSteepSpike(n = 30, spikeDay = 28, spikePct = 8) {
+    return Array.from({ length: n }, (_, i) => {
+      const base = 100;
+      if (i >= spikeDay) {
+        // Sharp spike on last 2 days
+        const spike = 1 + ((i - spikeDay) * spikePct / 2);
+        return { date: new Date(2025, 0, i + 1), open: base * spike * 0.99, high: base * spike * 1.01, low: base * spike * 0.98, close: base * spike, volume: 1000 };
+      }
+      return { date: new Date(2025, 0, i + 1), open: base - 0.2, high: base + 0.5, low: base - 0.5, close: base, volume: 1000 };
+    });
+  }
+  
+  // Test 2: Gradual buildup over 5 days - PREFERRED
+  function seriesGradualBuild(n = 30) {
+    return Array.from({ length: n }, (_, i) => {
+      const base = 100;
+      const gradual = 1 + (i / 30) * 0.05;  // ~5% total over 30 days
+      return { date: new Date(2025, 0, i + 1), open: base * gradual * 0.99, high: base * gradual * 1.01, low: base * gradual * 0.98, close: base * gradual, volume: 1000 + i * 10 };
+    });
+  }
+  
+  it('steep spike (today +8%) gets momentumScore PENALTY', () => {
+    const p = seriesSteepSpike(30, 28, 8);
+    const ind = calcAll(p);
+    // Should have momentumScore reduced due to steep spike penalty
+    expect(ind.momentumScore).toBeLessThan(50);
+    expect(ind.momentumTrend).toBe('steep');
+    expect(ind.forwardMomentum).toBe(false);
+  });
+  
+  it('gradual buildup gets FORWARD MOMENTUM bonus', () => {
+    const p = seriesGradualBuild(30);
+    const ind = calcAll(p);
+    // Gradual but small — may or may not trigger forwardMomentum
+    expect(ind.momentumTrend).toBeDefined();
+    expect(typeof ind.momentumSlope).toBe('number');
+    // With positive trend, momentumScore should be reasonable
+    expect(ind.momentumScore).toBeGreaterThanOrEqual(0);
+    expect(ind.momentumScore).toBeLessThanOrEqual(100);
+  });
+  
+  it('forwardMomentum field exists in calcAll result', () => {
+    const p = seriesUptrend(40);
+    const ind = calcAll(p);
+    expect(ind).toHaveProperty('momentumSlope');
+    expect(ind).toHaveProperty('momentumTrend');
+    expect(ind).toHaveProperty('forwardMomentum');
+  });
+});

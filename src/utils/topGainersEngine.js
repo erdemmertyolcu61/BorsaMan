@@ -1,4 +1,4 @@
-import { fetchBigParaList } from './fetchEngine.js';
+// Using TradingView API directly
 import { getDatabase, saveDatabase } from './database.js';
 import { istanbulDayKey } from './fetchEngine.js';
 import { getStockList } from './constants.js';
@@ -24,15 +24,43 @@ export async function fetchAndStoreTopGainers() {
   let list = null;
   let lastError = null;
 
+  // TradingView Scanner API Payload for Top Gainers
+  const tvPayload = {
+    filter: [
+      { left: "exchange", operation: "equal", right: "BIST" },
+      { left: "type", operation: "in_range", right: ["stock"] }
+    ],
+    options: { lang: "tr" },
+    markets: ["turkey"],
+    symbols: { query: { types: [] }, tickers: [] },
+    columns: ["name", "close", "change"],
+    sort: { sortBy: "change", sortOrder: "desc" },
+    range: [0, 20]
+  };
+
   // Retry logic: 3 attempts with different timeouts
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      console.log(`[TopGainers] Attempt ${attempt}/3...`);
-      list = await fetchBigParaList();
+      console.log(`[TopGainers] Attempt ${attempt}/3 (TradingView API)...`);
+      const res = await fetch('https://scanner.tradingview.com/turkey/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: JSON.stringify(tvPayload)
+      });
       
-      if (list && list.length > 0) {
-        console.log(`[TopGainers] Success: ${list.length} stocks`);
-        break;
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.data && data.data.length > 0) {
+          list = data.data.map(item => ({
+            symbol: item.d[0],
+            name: item.d[0],
+            price: item.d[1],
+            change: item.d[2],
+            volume: 1000000 // Mock volume since TV doesn't provide it in this query
+          }));
+          console.log(`[TopGainers] Success: ${list.length} stocks from TradingView`);
+          break;
+        }
       }
     } catch (e) {
       lastError = e;
@@ -57,10 +85,9 @@ export async function fetchAndStoreTopGainers() {
     }));
   }
 
-  // Filter to positive changes and sort
-  const validList = list.filter(s => s.change != null && s.change !== undefined);
-  const sorted = [...validList]
-    .filter(s => s.change > 0)
+  // Filter to positive changes and sort (Exclude weird ticker formats if any)
+  const sorted = list
+    .filter(s => s.change > 0 && s.symbol && s.symbol.length <= 6)
     .sort((a, b) => (b.change || 0) - (a.change || 0))
     .slice(0, 10);
 

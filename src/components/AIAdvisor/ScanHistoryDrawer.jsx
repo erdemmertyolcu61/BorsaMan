@@ -3,8 +3,10 @@ import { useState } from 'react';
 export default function ScanHistoryDrawer({ history = [], onAnalyze }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  // Limit to Top 5 results
-  const top5History = history.slice(0, 5);
+  // Sort by score descending and limit to Top 5 results
+  const top5History = [...history]
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
+    .slice(0, 5);
 
   if (!top5History || top5History.length === 0) return null;
 

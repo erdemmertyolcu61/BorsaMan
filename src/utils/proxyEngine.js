@@ -76,6 +76,9 @@ export async function _racePublicProxies(url) {
   const proxies = [
     'https://api.allorigins.win/get?url=',
     'https://corsproxy.io/?',
+    'https://thingproxy.freeboard.io/fetch/',
+    'https://cors-anywhere.herokuapp.com/', // Note: Needs opt-in sometimes, but good as fallback
+    'https://api.codetabs.com/v1/proxy?quest='
   ];
 
   const results = await Promise.allSettled(

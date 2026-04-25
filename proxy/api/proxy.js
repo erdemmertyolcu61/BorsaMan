@@ -29,6 +29,27 @@ const ALLOWED_DOMAINS = [
   'www.kap.org.tr',
 ];
 
+const ALLOWED_SOURCES = new Set([
+  'yahoo', 'yahoo_fund', 'bigpara', 'bigpara_list',
+  'isyatirim', 'isyatirim_fin', 'foreks', 'default',
+]);
+
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:4173',
+];
+
+function getCorsOrigin(req) {
+  const origin = req.headers.origin;
+  // No origin header = Electron renderer or server-to-server (allow)
+  if (!origin) return null;
+  if (ALLOWED_ORIGINS.includes(origin)) return origin;
+  // Allow any Vercel deployment of this project
+  if (/^https:\/\/bist[\w-]*\.vercel\.app$/.test(origin)) return origin;
+  return false; // blocked
+}
+
 // Source-specific headers for better success rate
 const SOURCE_HEADERS = {
   yahoo: {
@@ -106,17 +127,35 @@ function getHeaders(source) {
 }
 
 export default async function handler(req, res) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // CORS — restrict to known origins; Electron has no origin header (allowed)
+  const allowedOrigin = getCorsOrigin(req);
+  if (allowedOrigin === false) {
+    return res.status(403).json({ error: 'Origin not allowed' });
+  }
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin ?? '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Vary', 'Origin');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
+  // Validate source parameter
+  const rawSource = req.query.source || 'default';
+  if (!ALLOWED_SOURCES.has(rawSource)) {
+    return res.status(400).json({ error: 'Invalid source parameter' });
+  }
+
+  // Validate + sanitize symbol (alphanumeric, dots, max 20 chars)
+  if (req.query.symbol) {
+    if (!/^[A-Za-z0-9.]{1,20}$/.test(req.query.symbol)) {
+      return res.status(400).json({ error: 'Invalid symbol parameter' });
+    }
+  }
+
   let targetUrl = req.query.url;
-  let sourceType = req.query.source || 'default';
+  let sourceType = rawSource;
 
   // Build URL from shorthand if no direct URL provided
   if (!targetUrl && req.query.source) {
@@ -182,8 +221,8 @@ export default async function handler(req, res) {
     return res.status(response.status).send(text);
   } catch (err) {
     if (err.name === 'AbortError') {
-      return res.status(504).json({ error: 'Upstream timeout (10s)', source: sourceType });
+      return res.status(504).json({ error: 'upstream_timeout', source: sourceType });
     }
-    return res.status(500).json({ error: err.message, source: sourceType });
+    return res.status(500).json({ error: 'fetch_failed', source: sourceType });
   }
 }

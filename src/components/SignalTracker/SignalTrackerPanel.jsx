@@ -151,6 +151,7 @@ export default function SignalTrackerPanel({ tracker, onAnalyze }) {
                   <th style={{ padding: '4px 6px', textAlign: 'left' }}>Sembol</th>
                   <th style={{ padding: '4px 6px', textAlign: 'left' }}>Sinyal</th>
                   <th style={{ padding: '4px 6px', textAlign: 'center' }}>Skor</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'center', color: 'var(--cyan)' }}>Günlük</th>
                   <th style={{ padding: '4px 6px', textAlign: 'center' }}>1G</th>
                   <th style={{ padding: '4px 6px', textAlign: 'center' }}>3G</th>
                   <th style={{ padding: '4px 6px', textAlign: 'center' }}>5G</th>
@@ -167,6 +168,7 @@ export default function SignalTrackerPanel({ tracker, onAnalyze }) {
                       {s.signal}
                     </td>
                     <td style={{ padding: '4px 6px', textAlign: 'center' }}>{(s.score ?? 0).toFixed(1)}</td>
+                    <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.dailyChange} /></td>
                     <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d1} /></td>
                     <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d3} /></td>
                     <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d5} /></td>

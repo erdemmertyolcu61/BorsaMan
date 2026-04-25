@@ -3,6 +3,23 @@ import { analyzeDetailedFinancials, getFundamentalGrade } from './fundamentalEng
 import { runWallStreetAnalysis } from './wallStreet.js';
 import { detectMarketRegime, getAdaptiveThresholds, getRegimeIndicatorWeights, detectHiddenDivergence, MarketRegime } from './adaptiveThresholds.js';
 
+// ══════════════════════════════════════════════════════════════════
+// RELIABILITY FEEDBACK MODULE
+// useSignalTracker pushes live win-rate stats here after each batch
+// price-check cycle. genSignal reads them to self-attenuate when
+// the system is consistently losing on a signal class.
+// ══════════════════════════════════════════════════════════════════
+const _reliabilityHints = {};
+
+/**
+ * Called by useSignalTracker after each batch price-check cycle.
+ * hints: { buy?: { winRate: number, sampleSize: number },
+ *           sell?: { winRate: number, sampleSize: number } }
+ */
+export function setSignalReliabilityHints(hints) {
+  if (hints && typeof hints === 'object') Object.assign(_reliabilityHints, hints);
+}
+
 // ============================================================
 // ADVANCED PATTERN DETECTION ENGINE (UNIFIED)
 // ============================================================
@@ -156,6 +173,13 @@ export function getUnifiedAnalysis(sym, data, extraContext) {
   const sig = genSignal(ind, prices, extraContext || {});
   const events = [];
 
+  // ── Regime-adaptive confidence threshold ──
+  // CHOPPY piyasada zayif sinyaller toplanarak yaniltici guven olusturabilir.
+  // CHOPPY: 88, diger: 80 — sadece gercek confluence'i gecirme.
+  const _regime = detectMarketRegime(prices, ind);
+  const _regimeStr = _regime?.regime ?? _regime;
+  const requiredConf = _regimeStr === MarketRegime.CHOPPY ? 88 : 80;
+
   const signalEvent = sig.score >= 5 ? { type: 'SIGNAL_BUY', desc: `Sinyal skoru: ${sig.score.toFixed(1)} (GUCLU AL)`, confidence: 75, direction: 'buy' }
     : sig.score <= -5 ? { type: 'SIGNAL_SELL', desc: `Sinyal skoru: ${sig.score.toFixed(1)} (GUCLU SAT)`, confidence: 75, direction: 'sell' }
     : null;
@@ -185,7 +209,7 @@ export function getUnifiedAnalysis(sym, data, extraContext) {
     const composite = Math.min(95, avgConf + confluenceBonus);
     const hasVolume = ind.volRatio > 1.2;
     const minConfluence = buyEvents.length >= 2;
-    if (composite >= 80 && hasVolume && minConfluence) {
+    if (composite >= requiredConf && hasVolume && minConfluence) {
       bestBuy = { direction: 'buy', confidence: Math.round(composite), events: buyEvents, confluenceCount: buyEvents.length, price: ind.lastClose, entry: sig.entry, stop: sig.stop, target: sig.t1, rr: sig.rr, rsi: ind.lastRSI, adx: ind.adx, volRatio: ind.volRatio, score: sig.score };
     }
   }
@@ -195,7 +219,12 @@ export function getUnifiedAnalysis(sym, data, extraContext) {
     const confluenceBonus = Math.min(15, (sellEvents.length - 1) * 6);
     const composite = Math.min(95, avgConf + confluenceBonus);
     const minSellConfluence = sellEvents.length >= 2;
-    if (composite >= 80 && minSellConfluence) {
+    // Sat sinyali icin hacim yerine akilli para cikisini kontrol et:
+    // kurumsal dagitim cunku sessiz hacimde baslar, yuksek volum gerektirmez.
+    const hasSmartMoneyExit = ind.obvTrend === 'distribution'
+      || (ind.cmf != null && ind.cmf < -0.05)
+      || (ind.mfi != null && ind.mfi > 75);
+    if (composite >= requiredConf && minSellConfluence && (hasSmartMoneyExit || sellEvents.length >= 3)) {
       bestSell = { direction: 'sell', confidence: Math.round(composite), events: sellEvents, confluenceCount: sellEvents.length, price: ind.lastClose, rsi: ind.lastRSI, adx: ind.adx, volRatio: ind.volRatio, score: sig.score };
     }
   }
@@ -640,6 +669,25 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     }
   }
 
+  // ── WEAK CLOSE & PIN BAR PENALTY (After-Hours Fall Protection) ──
+  if (ind.dayHighLowRange !== undefined) {
+    if (ind.dayHighLowRange < 0.3) {
+      score -= 2.5; 
+      reasons.push({ t: 'ZAYIF KAPANIS: Zirveden sert satis yedi (Tuzak riski)', c: 'bearish' });
+    }
+    const today = prices && prices.length > 0 ? prices[prices.length - 1] : null;
+    if (today && today.high > today.low) {
+      const bodyTop = Math.max(today.open, today.close);
+      const bodyBottom = Math.min(today.open, today.close);
+      const upperShadow = today.high - bodyTop;
+      const bodySize = bodyTop - bodyBottom;
+      if (upperShadow > bodySize * 2 && ind.dayHighLowRange < 0.4) {
+        score -= 2.0;
+        reasons.push({ t: 'SHOOTING STAR / PIN BAR: Yukaridan reddedildi', c: 'bearish' });
+      }
+    }
+  }
+
   // ── MOMENTUM QUALITY: Volume confirms price direction ──
   if (prices && prices.length >= 5 && ind.volRatio != null) {
     const last3 = prices.slice(-3);
@@ -657,6 +705,21 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     // Rising price on falling volume = weak rally
     if (priceUp && ind.volRatio < 0.7) {
       score -= 0.5; reasons.push({ t: 'ZAYIF RALLI: Yukselis dusuk hacimle — susdurulabilir', c: 'bearish' });
+    }
+  }
+
+  // ── VOLUME PROFILE (Deeper Thinking: POC Rejection / Breakout) ──
+  if (ind.volumeProfile && ind.volumeProfile.poc) {
+    const poc = ind.volumeProfile.poc;
+    const distanceToPOC = ((p - poc) / poc) * 100;
+    
+    // Trapped below POC
+    if (distanceToPOC < 0 && distanceToPOC > -3 && ind.dayHighLowRange < 0.4) {
+      score -= 1.5; reasons.push({ t: `HACIM PROFILI TUZAGI: Fiyat ${poc.toFixed(2)} POC seviyesinin altinda baskilaniyor`, c: 'bearish' });
+    }
+    // Breaking above POC with volume
+    else if (distanceToPOC > 0 && distanceToPOC < 3 && ind.volRatio > 1.3) {
+      score += 1.5; reasons.push({ t: `HACIM PROFILI KIRILIMI: ${poc.toFixed(2)} POC seviyesi hacimle asildi`, c: 'bullish' });
     }
   }
 
@@ -694,21 +757,21 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     const isWeeklyBear = htfContext.weeklyTrend === 'bear';
     const isWeeklyBull = htfContext.weeklyTrend === 'bull';
 
-    // ── DAILY + WEEKLY BEAR: Hard penalty for buy signals ──
+    // ── DAILY + WEEKLY BEAR: Penalty for buy signals (Softened to catch bottoms) ──
     if (htfContext.trend === 'bear' && score > 0) {
       if (isWeeklyBear) {
-        // Both daily AND weekly bearish → SEVERE penalty (50% score cut)
-        const penalty = Math.max(3, score * 0.5);
+        // Both daily AND weekly bearish → Reduced penalty (25% score cut)
+        const penalty = Math.max(1.5, score * 0.25);
         score -= penalty;
-        reasons.push({ t: 'MTF SERT FILTRE: Haftalik+Gunluk trend DUSUS — alis sinyal skoru %50 kesildi (-' + penalty.toFixed(1) + ')', c: 'bearish' });
+        reasons.push({ t: 'MTF UYARI: Haftalik+Gunluk trend DUSUS — alis sinyal skoru %25 kesildi (-' + penalty.toFixed(1) + ')', c: 'bearish' });
       } else if (isStrongHTFTrend) {
-        // Daily bearish with strong ADX → heavy penalty
-        score -= 3;
-        reasons.push({ t: 'MTF UYARI: Guclu gunluk dusus trendi (ADX:' + htfStrength.toFixed(0) + ') — alis cok riskli (-3)', c: 'bearish' });
+        // Daily bearish with strong ADX → moderate penalty
+        score -= 1.5;
+        reasons.push({ t: 'MTF UYARI: Guclu gunluk dusus trendi (ADX:' + htfStrength.toFixed(0) + ') — dipten donus riski (-1.5)', c: 'bearish' });
       } else {
-        // Daily bearish, weak trend → moderate penalty
-        score -= 2;
-        reasons.push({ t: 'MTF UYARI: Gunluk trend DUSUS — kisa vadeli alis riskli (-2)', c: 'bearish' });
+        // Daily bearish, weak trend → light penalty
+        score -= 1;
+        reasons.push({ t: 'MTF UYARI: Gunluk trend DUSUS — dipten donus potansiyeli (-1)', c: 'bearish' });
       }
     }
     // ── DAILY + WEEKLY BULL: Strong bonus for buy signals ──
@@ -795,12 +858,23 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     }
   }
 
-  // ── SECTOR RELATIVE STRENGTH ──
+  // ── SECTOR RELATIVE STRENGTH (HARD GATE) ──
+  // Sector CIKIS (exit) suppresses buy signals regardless of other indicators.
+  // Sector GUCLU GIRIS provides a meaningful tailwind bonus.
   if (sectorStrength != null) {
-    if (sectorStrength >= 70) {
-      score += 1; reasons.push({ t: 'SEKTOR GUCU: Sektor endekse karsi guclu (' + sectorStrength + '/100)', c: 'bullish' });
+    if (sectorStrength >= 80) {
+      score += 2;
+      reasons.push({ t: 'SEKTOR GUCLU GIRIS: Sektorde para akisi guclu (' + sectorStrength + '/100) — sektorel tailwind', c: 'bullish' });
+    } else if (sectorStrength >= 70) {
+      score += 1;
+      reasons.push({ t: 'SEKTOR GUCU: Sektor endekse karsi guclu (' + sectorStrength + '/100)', c: 'bullish' });
+    } else if (sectorStrength <= 20) {
+      // CIKIS territory — hard penalty, automatically caps buy signals
+      score -= 2.5;
+      reasons.push({ t: 'SEKTOR CIKIS ALARMI: Para sektordan kacıyor (' + sectorStrength + '/100) — AL sinyali bastırıldı', c: 'bearish' });
     } else if (sectorStrength <= 30) {
-      score -= 1; reasons.push({ t: 'SEKTOR ZAYIF: Sektor endekse karsi zayif (' + sectorStrength + '/100)', c: 'bearish' });
+      score -= 1.5;
+      reasons.push({ t: 'SEKTOR ZAYIF: Sektor endekse karsi zayif (' + sectorStrength + '/100)', c: 'bearish' });
     }
   }
 
@@ -1062,8 +1136,8 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
 
   // ── R/R QUALITY GATE: Downgrade signals with poor R/R ──
   // Loosened for extreme momentum: if volume is huge and score is high, we can accept a bit more risk
-  const minRR = (ind.volRatio > 2.5 && score100 >= 70) ? 0.75 : 1.0;
-  if (rr < 1.5 && cls === 'buy') {
+  const minRR = (ind.volRatio > 2.5 && score100 >= 70) ? 0.5 : 1.0;
+  if (rr < 1.0 && cls === 'buy') {
     if (rr < minRR) {
       signal = 'TUT'; cls = 'hold';
       reasons.push({ t: 'R/R FILTRESI: Risk/Odul 1:' + rr.toFixed(1) + ' yetersiz (Eşik: ' + minRR + ') — sinyal iptal', c: 'bearish' });
@@ -1192,6 +1266,30 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     baseSig.edge = 50;
   }
 
+  // ── RELIABILITY FEEDBACK ──
+  // useSignalTracker, her 10 dakikalik fiyat kontrol dongusunden sonra
+  // kazanma oranini buraya push eder. Sistem surekli kaybediyorsa guveni duser;
+  // surekli kazaniyorsa guveni hafifce artar. Min 15 ornek sart.
+  {
+    const hint = _reliabilityHints[baseSig.cls];
+    if (hint && hint.sampleSize >= 15) {
+      const currentConf = parseFloat(baseSig.conf) || 50;
+      if (hint.winRate < 0.35) {
+        baseSig.conf = String(Math.max(10, Math.round(currentConf * 0.80)));
+        baseSig.reasons.push({
+          t: `GUVENILIRLIK UYARISI: Son ${hint.sampleSize} ${baseSig.cls.toUpperCase()} sinyalinde win rate %${(hint.winRate * 100).toFixed(0)} — guven %20 azaltildi`,
+          c: 'neutral',
+        });
+      } else if (hint.winRate > 0.65 && hint.sampleSize >= 20) {
+        baseSig.conf = String(Math.min(95, Math.round(currentConf * 1.10)));
+        baseSig.reasons.push({
+          t: `GUVENILIRLIK BONUS: ${hint.sampleSize} ornekle %${(hint.winRate * 100).toFixed(0)} win rate — guven %10 arttirildi`,
+          c: 'bullish',
+        });
+      }
+    }
+  }
+
   return baseSig;
 }
 
@@ -1252,7 +1350,22 @@ export function calcPosition(accountSize, riskPct = 2, entry, stop, options = {}
     const bonus = Math.floor(shares * 0.10);
     shares += bonus;
   }
-  
+
+  // ── GRADE-BASED LOT SCALING ──
+  // A-grade: full conviction, B+: 85%, B: 75%, C: 50%, D: skip entirely.
+  // Never open full size on low-edge setups — grade already embeds edge quality.
+  if (options.setupGrade) {
+    const GRADE_MULT = { 'A': 1.0, 'B+': 0.85, 'B': 0.75, 'C': 0.5, 'D': 0.0 };
+    const mult = GRADE_MULT[options.setupGrade];
+    if (mult !== undefined) {
+      shares = Math.floor(shares * mult);
+      if (shares <= 0) {
+        return { shares: 0, cost: 0, maxLoss: 0, riskPct: 0, costPct: 0,
+                 method: 'grade_blocked', setupGrade: options.setupGrade };
+      }
+    }
+  }
+
   // Cap by available cash
   const maxByBudget = Math.floor(accountSize / entry);
   if (shares > maxByBudget) shares = maxByBudget;
