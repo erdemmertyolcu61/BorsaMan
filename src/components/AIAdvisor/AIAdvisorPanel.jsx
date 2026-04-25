@@ -474,264 +474,261 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
   );
 }
 
-// Expandable bottom panel for detailed AI insights
+// ── Collapsible Bottom Strip — "Son Başarılı AI Analizi" ──────────────────
+// Shows the top-scored picks from the last scan as a horizontal scrollable
+// card strip, exactly like the design in the reference screenshot.
+// Persists to / restores from localStorage so it survives page navigation.
 export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, onAnalyze }) {
   const {
     topPicks = [],
-    riskAlerts = [],
     marketSentiment = null,
-    advisorLog = [],
-    sectorHeatmap = {},
-    scanResults = [],
+    scanning = false,
   } = advisor;
-  const [open, setOpen] = useState(false);
-  const [intradayResults, setIntradayResults] = useState([]);
 
-  // Listen for intraday scan results
+  const [open, setOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  // ── Cached picks: use live if available, fall back to localStorage ──
+  const [displayPicks, setDisplayPicks] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bist_last_ai_picks');
+      if (saved) {
+        const d = JSON.parse(saved);
+        if (d?.picks?.length > 0) return d.picks;
+      }
+    } catch {}
+    return [];
+  });
+  const [cachedMeta, setCachedMeta] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bist_last_ai_picks');
+      if (saved) {
+        const d = JSON.parse(saved);
+        return { ts: d.ts, scanned: d.scanned, sentiment: d.sentiment, buys: d.buys, sells: d.sells };
+      }
+    } catch {}
+    return null;
+  });
+
+  // Update display picks when live scan completes
   useEffect(() => {
-    const handler = (e) => {
-      if (e.detail?.results) setIntradayResults(e.detail.results);
+    if (topPicks.length > 0) {
+      setDisplayPicks([...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)));
+    }
+  }, [topPicks]);
+
+  // Load fresh meta from localStorage when scan updates it
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const saved = localStorage.getItem('bist_last_ai_picks');
+        if (saved) {
+          const d = JSON.parse(saved);
+          if (d?.ts) setCachedMeta({ ts: d.ts, scanned: d.scanned, sentiment: d.sentiment, buys: d.buys, sells: d.sells });
+        }
+      } catch {}
     };
-    window.addEventListener('trades-scan-complete', handler);
-    return () => window.removeEventListener('trades-scan-complete', handler);
+    window.addEventListener('advisor-scan-complete', handler);
+    return () => window.removeEventListener('advisor-scan-complete', handler);
   }, []);
 
-  if (!marketSentiment && topPicks.length === 0) return null;
+  const isFromCache = topPicks.length === 0;
+  const meta = cachedMeta;
+  const picks = displayPicks.slice(0, 10);
+
+  // Don't render if dismissed or nothing to show
+  if (dismissed || picks.length === 0) return null;
+
+  // Format age string for the cache badge
+  const cacheAge = meta?.ts ? (() => {
+    const mins = Math.floor((Date.now() - meta.ts) / 60000);
+    if (mins < 1) return 'az önce';
+    if (mins < 60) return `${mins}dk önce`;
+    return `${Math.floor(mins / 60)}s önce`;
+  })() : null;
+
+  const buyCount = picks.filter(p => p.cls !== 'sell').length;
+  const sellCount = picks.filter(p => p.cls === 'sell').length;
 
   return (
     <div style={{
       position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 900,
       background: 'var(--bg1)', borderTop: '2px solid var(--cyan)',
-      transition: 'max-height 0.3s ease',
-      maxHeight: open ? 420 : 32, overflow: 'hidden',
+      transition: 'max-height 0.28s ease',
+      maxHeight: open ? 200 : 40, overflow: 'hidden',
+      boxShadow: '0 -4px 24px rgba(0,0,0,0.5)',
     }}>
-      {/* Toggle header */}
-      <div onClick={() => setOpen(o => !o)} style={{
+      {/* ── Header bar ── */}
+      <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '6px 16px', cursor: 'pointer', userSelect: 'none',
-        background: 'var(--bg2)', borderBottom: '1px solid var(--border)', height: 32, boxSizing: 'border-box',
+        padding: '0 12px', height: 40, background: 'var(--bg2)',
+        borderBottom: open ? '1px solid var(--border)' : 'none',
+        userSelect: 'none', boxSizing: 'border-box',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 10 }}>
-          <span style={{ fontWeight: 800, color: 'var(--blue)', fontSize: 11, letterSpacing: 0.5 }}>
-            ★ EN İYİ 5 FIRSAT
+        {/* Left: title + badge */}
+        <div
+          onClick={() => setOpen(o => !o)}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flex: 1 }}
+        >
+          <span style={{ fontWeight: 800, color: 'var(--cyan)', fontSize: 11, letterSpacing: 0.5 }}>
+            SON BAŞARILI AI ANALİZİ ({picks.length})
           </span>
-          {/* AL / SAT breakdown */}
-          {(() => {
-            const buyCount = topPicks.filter(p => p.cls !== 'sell').length;
-            const sellCount = topPicks.filter(p => p.cls === 'sell').length;
-            return (
-              <span style={{ fontSize: 10, color: 'var(--t3)' }}>
-                <span style={{ color: 'var(--green)', fontWeight: 700 }}>{buyCount} AL</span>
-                {sellCount > 0 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {sellCount} SAT</span>}
-              </span>
-            );
-          })()}
-          {marketSentiment && <span style={{ color: marketSentiment.color, fontWeight: 700, background: marketSentiment.color + '18', padding: '2px 8px', borderRadius: 4, fontSize: 9 }}>{marketSentiment.sentiment}</span>}
-          {!open && [...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 5).map(p => {
+          {isFromCache && (
+            <span style={{
+              fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+              background: '#ffd60022', color: 'var(--yellow)', border: '1px solid #ffd60044',
+            }}>
+              OTOMATİK YEDEK {cacheAge ? `• ${cacheAge}` : ''}
+            </span>
+          )}
+          {scanning && (
+            <span style={{ fontSize: 9, color: 'var(--orange)', fontWeight: 600 }}>● Taranıyor...</span>
+          )}
+          {/* AL / SAT counts */}
+          <span style={{ fontSize: 10, color: 'var(--t3)' }}>
+            <span style={{ color: 'var(--green)', fontWeight: 700 }}>{buyCount} AL</span>
+            {sellCount > 0 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {sellCount} SAT</span>}
+          </span>
+          {/* Sentinel symbols preview (collapsed) */}
+          {!open && picks.slice(0, 5).map(p => {
             const isSell = p.cls === 'sell';
             return (
               <span key={p.symbol} style={{
-                color: isSell ? 'var(--red)' : 'var(--green)', fontWeight: 700, fontSize: 10,
-                background: 'var(--bg3)', padding: '1px 6px', borderRadius: 3,
-                border: `1px solid ${isSell ? 'var(--red)' : 'var(--border)'}`,
+                fontSize: 10, fontWeight: 700,
+                color: isSell ? 'var(--red)' : 'var(--green)',
+                background: 'var(--bg3)', padding: '1px 7px', borderRadius: 3,
+                border: `1px solid ${isSell ? '#ff444433' : 'var(--border)'}`,
               }}>
-                {p.symbol} {isSell ? '↓' : ''}
+                {p.symbol}{isSell ? ' ↓' : ''}
               </span>
             );
           })}
         </div>
-        <span style={{ color: 'var(--t2)', fontSize: 12, transition: 'transform 0.3s', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>▲</span>
-      </div>
-      {/* Content */}
-      <div style={{ padding: '0 16px 10px', display: 'flex', gap: 16, fontSize: 10, overflowY: 'auto', maxHeight: 380, flexWrap: 'wrap' }}>
-      {/* Top 5 Picks — sorted by score, AL=green SAT=red */}
-      {topPicks.length > 0 && (
-        <div style={{ flex: 2, minWidth: 320 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-            ★ En İyi 5 Fırsat
-            <span style={{ fontSize: 9, color: 'var(--t3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
-              ({topPicks.filter(p => p.cls !== 'sell').length} AL · {topPicks.filter(p => p.cls === 'sell').length} SAT)
-            </span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 }}>
-            {[...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 5).map((p, idx) => {
-              const isSell = p.cls === 'sell';
-              const accentColor = isSell ? 'var(--red)' : 'var(--green)';
-              const accentBg = isSell ? 'var(--red2)' : 'var(--green2)';
-              const stopPctAbs = Math.abs(p.stopPct || 0);
-              const targetPctAbs = Math.abs(p.targetPct || 0);
-              return (
-                <div key={p.symbol}
-                  onClick={() => onAnalyze && onAnalyze(p.symbol)}
-                  style={{
-                    background: 'var(--bg3)',
-                    borderLeft: `3px solid ${accentColor}`,
-                    borderRadius: 4, padding: '7px 10px', cursor: 'pointer',
-                    position: 'relative', overflow: 'hidden',
-                  }}>
-                  {/* Rank badge */}
-                  <div style={{
-                    position: 'absolute', top: 4, right: 6,
-                    fontSize: 8, color: 'var(--t3)', fontWeight: 700,
-                  }}>#{idx + 1}</div>
-
-                  {/* Symbol + signal badge */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--t1)' }}>{p.symbol}</span>
-                      <span style={{
-                        fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
-                        background: accentBg, color: accentColor, border: `1px solid ${accentColor}`,
-                      }}>
-                        {isSell ? 'SAT' : 'AL'}
-                      </span>
-                      {p._alreadyHolding && <span style={{ fontSize: 8, color: 'var(--orange)' }}>●portfoy</span>}
-                    </div>
-                    <span style={{ fontWeight: 700, color: 'var(--cyan)', fontSize: 11 }}>{(p.score || 0).toFixed(1)}</span>
-                  </div>
-
-                  {/* Price + change + sector */}
-                  <div style={{ display: 'flex', gap: 6, marginTop: 4, fontSize: 10, color: 'var(--t2)', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 600, color: 'var(--t1)' }}>{(p.price || 0).toFixed(2)} TL</span>
-                    <span style={{ color: (p.change || 0) >= 0 ? 'var(--green)' : 'var(--red)', fontSize: 9 }}>
-                      {(p.change || 0) >= 0 ? '+' : ''}{(p.change || 0).toFixed(1)}%
-                    </span>
-                    <span style={{ color: 'var(--t3)', fontSize: 8 }}>{p.sector}</span>
-                  </div>
-
-                  {/* Stop / Target with percentage */}
-                  <div style={{ display: 'flex', gap: 10, marginTop: 4, fontSize: 9 }}>
-                    <span>
-                      <span style={{ color: 'var(--t3)' }}>Stop </span>
-                      <span style={{ color: 'var(--red)', fontWeight: 600 }}>
-                        {p.stop ? p.stop.toFixed(2) : '-'}
-                        {stopPctAbs > 0 && <span style={{ color: 'var(--t3)', fontWeight: 400 }}> ({stopPctAbs.toFixed(1)}%)</span>}
-                      </span>
-                    </span>
-                    <span>
-                      <span style={{ color: 'var(--t3)' }}>Hedef </span>
-                      <span style={{ color: accentColor, fontWeight: 600 }}>
-                        {p.target ? p.target.toFixed(2) : '-'}
-                        {targetPctAbs > 0 && <span style={{ color: 'var(--t3)', fontWeight: 400 }}> ({isSell ? '-' : '+'}{targetPctAbs.toFixed(1)}%)</span>}
-                      </span>
-                    </span>
-                    <span style={{ color: 'var(--t3)' }}>R/R 1:{(p.rr || 0).toFixed(1)}</span>
-                  </div>
-
-                  {/* Sell-side: sell potential / buy-side: tomorrow potential */}
-                  {isSell && p.sellPotential != null && (
-                    <div style={{ marginTop: 3, fontSize: 8, color: 'var(--red)' }}>
-                      Aşağı potansiyel: <span style={{ fontWeight: 700 }}>{p.sellPotential}</span>/100
-                      {(p.rsi || 0) > 65 && <span style={{ color: 'var(--orange)', marginLeft: 4 }}>RSI {(p.rsi || 0).toFixed(0)} ↑aşırı</span>}
-                    </div>
-                  )}
-                  {!isSell && p.tomorrowPotential != null && p.tomorrowPotential > 0 && (
-                    <div style={{ marginTop: 3, fontSize: 8, color: 'var(--green)' }}>
-                      Potansiyel: <span style={{ fontWeight: 700 }}>{p.tomorrowPotential}</span>/100
-                      {p.newsHeadline && <span style={{ color: 'var(--t3)', marginLeft: 4 }} title={p.newsHeadline}>📰</span>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+        {/* Right: chevron + X */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span
+            onClick={() => setOpen(o => !o)}
+            style={{ color: 'var(--t2)', fontSize: 12, cursor: 'pointer',
+              transition: 'transform 0.28s', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}
+          >▲</span>
+          <span
+            onClick={() => setDismissed(true)}
+            style={{ color: 'var(--t3)', fontSize: 14, cursor: 'pointer', lineHeight: 1, padding: '0 2px' }}
+            title="Kapat"
+          >✕</span>
         </div>
-      )}
+      </div>
 
-      {/* Risk Alerts + Market Summary + Breadth */}
-      <div style={{ flex: 1, minWidth: 200 }}>
-        {/* Market Breadth Gauge */}
-        {marketSentiment && (
-          <div style={{ marginBottom: 8 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--purple)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Piyasa Genisligi</div>
-            <div style={{ background: 'var(--bg3)', padding: 8, borderRadius: 4, borderLeft: '3px solid ' + marketSentiment.color }}>
-              <div style={{ fontWeight: 700, color: marketSentiment.color, fontSize: 12 }}>{marketSentiment.sentiment}</div>
-              {/* Breadth bar: AL vs SAT visual */}
-              <div style={{ marginTop: 6 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--t3)', marginBottom: 2 }}>
-                  <span style={{ color: 'var(--green)' }}>{marketSentiment.buys} AL</span>
-                  <span>{marketSentiment.scanned - marketSentiment.buys - marketSentiment.sells} TUT</span>
-                  <span style={{ color: 'var(--red)' }}>{marketSentiment.sells} SAT</span>
+      {/* ── Card strip ── */}
+      <div style={{
+        display: 'flex', gap: 0, overflowX: 'auto', overflowY: 'hidden',
+        height: 160, alignItems: 'stretch', padding: '8px 12px', boxSizing: 'border-box',
+        scrollbarWidth: 'thin',
+      }}>
+        {picks.map((p, idx) => {
+          const isSell = p.cls === 'sell';
+          const accent = isSell ? 'var(--red)' : 'var(--green)';
+          const accentDim = isSell ? '#ff444418' : '#00e68618';
+          const stopPctAbs = Math.abs(p.stopPct || 0);
+          const targetPctAbs = Math.abs(p.targetPct || 0);
+          const signalLabel = isSell
+            ? 'GÜÇLÜ SAT'
+            : p.signal?.includes('GÜÇLÜ') ? 'GÜÇLÜ AL'
+            : p.signal?.includes('SAT') ? 'SAT'
+            : 'AL';
+
+          return (
+            <div
+              key={p.symbol}
+              onClick={() => onAnalyze && onAnalyze(p.symbol)}
+              title={p._fallback ? 'Bu hisse katı filtreden geçemedi; en yüksek skorlu alternatif.' : ''}
+              style={{
+                flexShrink: 0, width: 210,
+                background: p._fallback ? 'var(--bg2)' : 'var(--bg3)',
+                borderLeft: `3px solid ${accent}`,
+                borderRight: '1px solid var(--border)',
+                padding: '8px 12px', cursor: 'pointer',
+                display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                opacity: p._fallback ? 0.78 : 1,
+                position: 'relative',
+              }}
+            >
+              {/* Row 1: symbol + sector + signal */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--t1)' }}>{p.symbol}</span>
+                  <span style={{ fontSize: 8, color: 'var(--t3)', marginLeft: 5 }}>{p.sector}</span>
                 </div>
-                <div style={{ display: 'flex', height: 10, borderRadius: 3, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                  <div style={{ width: `${marketSentiment.buys / marketSentiment.scanned * 100}%`, background: 'var(--green)', transition: 'width 0.5s' }} />
-                  <div style={{ flex: 1, background: 'var(--bg2)' }} />
-                  <div style={{ width: `${marketSentiment.sells / marketSentiment.scanned * 100}%`, background: 'var(--red)', transition: 'width 0.5s' }} />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 8, color: 'var(--t3)' }}>
-                  <span>A/D: {(marketSentiment.buys / (marketSentiment.sells || 1)).toFixed(2)}</span>
-                  <span>RSI: {marketSentiment.avgRSI.toFixed(0)}</span>
-                  <span>Birikim: {marketSentiment.accumulations}</span>
-                </div>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
+                  background: accentDim, color: accent, border: `1px solid ${accent}44`,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {signalLabel}
+                </span>
               </div>
-              {/* Sector Rotation */}
-              {marketSentiment.sectorRotation && marketSentiment.sectorRotation.length > 0 && (
-                <div style={{ marginTop: 6, borderTop: '1px solid var(--border)', paddingTop: 4 }}>
-                  <div style={{ fontSize: 7, textTransform: 'uppercase', color: 'var(--t3)', letterSpacing: 0.5, marginBottom: 3 }}>Sektor Rotasyonu</div>
-                  {marketSentiment.sectorRotation.slice(0, 4).map((s, i) => (
-                    <div key={s.sector} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, padding: '1px 0' }}>
-                      <span style={{ color: i === 0 ? 'var(--green)' : 'var(--t2)' }}>{i + 1}. {s.sector}</span>
-                      <span style={{ color: s.avgScore >= 2 ? 'var(--green)' : s.avgScore >= 0 ? 'var(--yellow)' : 'var(--red)' }}>
-                        {s.avgScore >= 0 ? '+' : ''}{s.avgScore.toFixed(1)} ({s.total})
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+
+              {/* Row 2: price + change + R/R + score */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 10, marginTop: 5 }}>
+                <span style={{ fontWeight: 600, color: 'var(--t1)' }}>{(p.price || 0).toFixed(2)} TL</span>
+                <span style={{ color: (p.change || 0) >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                  {(p.change || 0) >= 0 ? '+' : ''}{(p.change || 0).toFixed(1)}%
+                </span>
+                <span style={{ color: 'var(--t3)', fontSize: 9 }}>R/O 1:{(p.rr || 0).toFixed(1)}</span>
+                <span style={{ color: 'var(--cyan)', fontWeight: 700, fontSize: 10, marginLeft: 'auto' }}>
+                  Skor: {(p.score || 0).toFixed(1)}
+                </span>
+              </div>
+
+              {/* Row 3: stop + target */}
+              <div style={{ display: 'flex', gap: 8, fontSize: 9, marginTop: 4 }}>
+                <span>
+                  <span style={{ color: 'var(--red)', fontWeight: 600 }}>
+                    Stop: {p.stop ? p.stop.toFixed(2) : '-'}
+                  </span>
+                  {stopPctAbs > 0 && <span style={{ color: 'var(--t3)' }}> ({stopPctAbs.toFixed(1)}%)</span>}
+                </span>
+                <span>
+                  <span style={{ color: accent, fontWeight: 600 }}>
+                    Hedef: {p.target ? p.target.toFixed(2) : '-'}
+                  </span>
+                  {targetPctAbs > 0 && <span style={{ color: 'var(--t3)' }}> ({isSell ? '-' : '+'}{targetPctAbs.toFixed(1)}%)</span>}
+                </span>
+              </div>
+
+              {/* Row 4: hold text */}
+              <div style={{ fontSize: 8, color: 'var(--t3)', marginTop: 3 }}>
+                {p.holdText || (isSell ? 'Kısa pozisyon' : '1-3 gün (kısa vade)')}
+                {p._alreadyHolding && <span style={{ color: 'var(--orange)', marginLeft: 4 }}>●portföy</span>}
+              </div>
+
+              {/* Rank pill */}
+              <div style={{
+                position: 'absolute', top: 4, right: 4,
+                fontSize: 7, color: 'var(--t3)', fontWeight: 700,
+                background: 'var(--bg1)', padding: '1px 4px', borderRadius: 3,
+              }}>#{idx + 1}</div>
+            </div>
+          );
+        })}
+
+        {/* Trailing info card */}
+        {meta && (
+          <div style={{
+            flexShrink: 0, width: 140,
+            background: 'var(--bg2)', borderLeft: '1px solid var(--border)',
+            padding: '8px 12px', display: 'flex', flexDirection: 'column',
+            justifyContent: 'center', gap: 5, color: 'var(--t3)', fontSize: 9,
+          }}>
+            <div style={{ color: 'var(--cyan)', fontWeight: 700, fontSize: 10 }}>{meta.sentiment}</div>
+            <div><span style={{ color: 'var(--green)' }}>{meta.buys} AL</span> · <span style={{ color: 'var(--red)' }}>{meta.sells} SAT</span></div>
+            <div>{meta.scanned} tarandı</div>
+            {cacheAge && <div>{cacheAge}</div>}
+            <div style={{ marginTop: 4, fontSize: 8, color: '#ffffff22' }}>
+              * Bu veriler yeni bir tarama tamamlanana kadar güncel kalır. Yeni tarama bittiğinde otomatik güncellenir.
             </div>
           </div>
         )}
-
-        {/* Risk Alerts */}
-        {riskAlerts.length > 0 && (
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--orange)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Uyarılar</div>
-            {riskAlerts.slice(0, 5).map((a, i) => (
-              <div key={i} style={{
-                fontSize: 9, padding: '3px 6px', marginBottom: 2, borderRadius: 3,
-                background: a.type === 'err' ? 'var(--red2)' : a.type === 'warn' ? '#ffd60022' : 'var(--green2)',
-                color: a.type === 'err' ? 'var(--red)' : a.type === 'warn' ? 'var(--yellow)' : 'var(--green)',
-              }}>
-                {a.type === 'err' ? '!' : a.type === 'warn' ? '!' : '+'} {a.msg}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Intraday Trade Results Cross-Reference */}
-      {intradayResults.length > 0 && (
-        <div style={{ flex: '1 1 100%', borderTop: '1px solid var(--border)', paddingTop: 8 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--yellow)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
-            Intraday Firsatlar ({intradayResults.length})
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {intradayResults.slice(0, 6).map(r => (
-              <div key={r.symbol} onClick={() => onAnalyze && onAnalyze(r.symbol)} style={{
-                background: 'var(--bg3)', borderLeft: '3px solid var(--yellow)', borderRadius: 4,
-                padding: '4px 8px', cursor: 'pointer', minWidth: 140,
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontWeight: 700, fontSize: 11, color: 'var(--t1)' }}>{r.symbol}</span>
-                  <span style={{ fontSize: 9, color: 'var(--yellow)', fontWeight: 600 }}>%{r.confidence}</span>
-                </div>
-                <div style={{ display: 'flex', gap: 6, fontSize: 9, color: 'var(--t3)', marginTop: 2 }}>
-                  <span>{r.price?.toFixed(2)}</span>
-                  <span style={{ color: r.change >= 0 ? 'var(--green)' : 'var(--red)' }}>{r.change >= 0 ? '+' : ''}{r.change?.toFixed(1)}%</span>
-                  <span>R/R 1:{r.intradayRR?.toFixed(1)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Sector Heatmap */}
-      {sectorHeatmap && Object.keys(sectorHeatmap).length > 0 && (
-        <div style={{ flex: '1 1 100%', borderTop: '1px solid var(--border)', paddingTop: 8 }}>
-          <SectorHeatmap sectorMetrics={sectorHeatmap} />
-        </div>
-      )}
       </div>
     </div>
   );

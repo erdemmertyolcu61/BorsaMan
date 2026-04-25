@@ -313,8 +313,8 @@ export async function tryProxy(url, ms = 10000) {
 // slow public proxy.
 //
 // Contract: resolves with text payload, OR null if every racer fails within 5.5s.
-const RACE_PER_REQUEST_MS = 5000;   // strict timeout per probe
-const RACE_CEILING_MS     = 5500;   // absolute resolve-or-null bound
+const RACE_PER_REQUEST_MS = 7000;   // per-probe timeout (was 5s — increased to reduce false negatives)
+const RACE_CEILING_MS     = 7500;   // absolute resolve-or-null bound
 
 export function getDataViaProxies(targetUrl, ms = RACE_PER_REQUEST_MS) {
   _proxyStats.total++;
@@ -361,13 +361,12 @@ function _buildRacers(targetUrl, ms) {
     });
   }
 
-  // Public proxies: include only if their circuits are not open
+  // Public proxies: 3 fastest/most-reliable only — corsproxy.org and codetabs
+  // removed (high latency / rate-limited, slowed BIST50 scan by ~40%).
   const publicProxies = [
     { label: 'allorigins-get', url: 'https://api.allorigins.win/get?url=' + encodeURIComponent(targetUrl), timeout: ms },
     { label: 'corsproxy.io',   url: 'https://corsproxy.io/?' + encodeURIComponent(targetUrl),            timeout: ms },
     { label: 'allorigins-raw', url: 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), timeout: ms },
-    { label: 'corsproxy.org',  url: 'https://corsproxy.org/?' + encodeURIComponent(targetUrl),           timeout: ms },
-    { label: 'codetabs',       url: 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl), timeout: ms },
   ];
   for (const p of publicProxies) {
     if (!_isCircuitOpen(p.label)) racers.push({ ...p, label: p.label });

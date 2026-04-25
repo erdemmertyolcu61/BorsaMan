@@ -12,7 +12,7 @@ import AnalyzeTab from './components/Analyze/AnalyzeTab.jsx';
 import TradesTab from './components/Trades/TradesTab.jsx';
 import PortfolioTab from './components/Portfolio/PortfolioTab.jsx';
 import SignalsTab from './components/Signals/SignalsTab.jsx';
-import AIAdvisorPanel from './components/AIAdvisor/AIAdvisorPanel.jsx';
+import AIAdvisorPanel, { AIAdvisorDetailPanel } from './components/AIAdvisor/AIAdvisorPanel.jsx';
 import AlertLog from './components/AlertLog/AlertLog.jsx';
 import Tabs from './components/Tabs/Tabs.jsx';
 import MobileNav from './components/MobileNav/MobileNav.jsx';
@@ -284,6 +284,11 @@ export default function App() {
 
       <AlertLog alertLog={alertLog} onAnalyze={handleAIAnalyze} advisor={advisor} livePrice={livePrice} portfolio={state.portfolio} />
       <ScanHistoryDrawer history={scanHistory} onAnalyze={handleAIAnalyze} />
+      <AIAdvisorDetailPanel
+        advisor={advisor}
+        portfolio={state.portfolio}
+        onAnalyze={handleAIAnalyze}
+      />
       <MobileNav activeTab={state.activeTab} onTabChange={state.setActiveTab} />
     </>
   );

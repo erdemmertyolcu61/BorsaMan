@@ -496,19 +496,21 @@ export function useAIAdvisor(portfolio) {
       // ── BUY PICKS ──
       const buyPicks = results
         .filter(r => {
-          if ((r.atrPct || 0) < 1.5) return false;
+          if ((r.atrPct || 0) < 1.2) return false;
           if (r.cls !== 'buy') return false;
 
           if (isAfterHours) {
-            const hasSetup = r.score >= 58 && r.rr >= 1.5;
+            // After hours: more lenient — want next-day setups
+            const hasSetup = r.score >= 52 && r.rr >= 1.0;
             const hasTrend = (r.ichimoku?.cloudPosition === 'above') || (r.supertrend?.trend === 'UP');
             const hasCatalyst = r.newsCategories?.some(c =>
               ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c));
-            if (hasCatalyst && r.score >= 52 && r.rr >= 1.2) return true;
-            return hasSetup || (hasTrend && r.score >= 55 && r.rr >= 1.2);
+            if (hasCatalyst && r.score >= 46) return true;
+            return hasSetup || (hasTrend && r.score >= 50);
           } else {
-            const hasTraditionalSignal = r.score >= 60 && r.rr >= 1.5;
-            const hasMomentumBoost = r.momentumScore >= 50 && (r.change || 0) > 0 && r.score >= 55
+            // Market open: live momentum threshold
+            const hasTraditionalSignal = r.score >= 55 && r.rr >= 1.0;
+            const hasMomentumBoost = r.momentumScore >= 50 && (r.change || 0) > 0 && r.score >= 50
               && (r.recentPump || 0) < 5;
             return hasTraditionalSignal || hasMomentumBoost;
           }
@@ -555,7 +557,26 @@ export function useAIAdvisor(portfolio) {
         .sort((a, b) => (b.sellPotential || 0) - (a.sellPotential || 0))
         .slice(0, 3); // max 3 sell candidates alongside buy picks
 
-      const picks = [...buyPicks, ...sellPicks];
+      // ── Fallback: always surface at least 5 buy candidates ──
+      // If the strict filter left the list empty (e.g. all rr too low), fall back
+      // to top-N from all buy results sorted by score so the panel is never blank.
+      const minBuyCount = 5;
+      let picks = [...buyPicks, ...sellPicks];
+      if (buyPicks.length < minBuyCount) {
+        const existingSyms = new Set(picks.map(p => p.symbol));
+        const fallbackBuys = results
+          .filter(r => r.cls === 'buy' && (r.atrPct || 0) >= 1.2 && !existingSyms.has(r.symbol))
+          .sort((a, b) => (b.score || 0) - (a.score || 0))
+          .slice(0, minBuyCount - buyPicks.length)
+          .map(r => normalizeStopTarget({
+            ...r,
+            tomorrowPotential: isAfterHours ? calcTomorrowPotential(r) : 0,
+            _alreadyHolding: bullishPortfolio.includes(r.symbol),
+            _scanMode: isAfterHours ? 'afterHours' : 'intraday',
+            _fallback: true, // mark so UI can dim slightly
+          }));
+        picks = [...picks, ...fallbackBuys];
+      }
 
       // ── Market news enrichment: fetch borsa haberleri, eslestir + sentiment ──
       // Sadece top 10 pick + universe filtrelenir; tum tarama icin haber cekmiyoruz.
@@ -584,6 +605,26 @@ export function useAIAdvisor(portfolio) {
       setMarketSentiment(sentimentObj);
       setSectorHeatmap(sectorMetrics);
       setLastUpdate(new Date());
+
+      // Persist top picks to localStorage so the bottom panel survives page reload
+      if (picks.length > 0) {
+        try {
+          localStorage.setItem('bist_last_ai_picks', JSON.stringify({
+            picks: picks.slice(0, 10).map(p => ({
+              symbol: p.symbol, sector: p.sector, price: p.price, change: p.change,
+              signal: p.signal, cls: p.cls, score: p.score, rr: p.rr,
+              stop: p.stop, target: p.target, stopPct: p.stopPct, targetPct: p.targetPct,
+              holdText: p.holdText, atrPct: p.atrPct, tomorrowPotential: p.tomorrowPotential,
+              sellPotential: p.sellPotential, _fallback: p._fallback,
+            })),
+            sentiment: sentimentObj.sentiment,
+            scanned: results.length,
+            buys: sentimentObj.buys,
+            sells: sentimentObj.sells,
+            ts: Date.now(),
+          }));
+        } catch { /* localStorage full or unavailable */ }
+      }
       
       const modeLabel = isAfterHours ? 'Kapanis Sonrasi (Yarin Icin)' : 'Canli';
       pushLog({ type: 'ok', msg: `${modeLabel} tarama: ${results.length} hisse, ${buyPicks.length} AL / ${sellPicks.length} SAT firsat` });
