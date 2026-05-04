@@ -1,0 +1,22 @@
+# Backtest lab — minimum stack
+pandas>=2.0
+numpy>=1.24
+pyyaml>=6.0
+yfinance>=0.2.40
+pyarrow>=14.0          # parquet
+pandas-ta>=0.3.14      # 130+ indicators
+
+# Backtesting engines (pick one)
+vectorbt>=0.26         # vectorized — fast for sweeps
+backtrader>=1.9        # event-driven — more realistic
+
+# Optimization
+optuna>=3.5            # Bayesian param search
+
+# Visualization
+plotly>=5.18
+matplotlib>=3.8
+
+# CLI / progress
+tqdm>=4.66
+rich>=13.7

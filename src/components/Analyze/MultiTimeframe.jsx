@@ -48,47 +48,41 @@ export default function MultiTimeframe({ symbol }) {
     if (!symbol || loading) return;
     setLoading(true);
     const tfs = {};
-    for (const tf of TIMEFRAMES) {
-      try {
-        const r = await fetchSingle(symbol, tf.range, tf.interval, true);
-        if (!r || r.prices.length < 15) {
-          tfs[tf.key] = null;
-          continue;
+    // PARALLEL: Fetch all timeframes simultaneously instead of sequentially
+    const results = await Promise.all(
+      TIMEFRAMES.map(async (tf) => {
+        try {
+          const r = await fetchSingle(symbol, tf.range, tf.interval, true);
+          if (!r || r.prices.length < 15) return { key: tf.key, data: null };
+          let prices = r.prices;
+          if (tf.key === 'h4') prices = aggregate4H(r.prices);
+          const ind = calcAll(prices);
+          const sig = genSignal(ind, prices);
+          let trend = 'neutral';
+          if (ind.lastClose > (ind.lastMA20 || 0) && ind.lastClose > (ind.lastMA50 || 0)) trend = 'up';
+          else if (ind.lastClose < (ind.lastMA20 || Infinity) && ind.lastClose < (ind.lastMA50 || Infinity)) trend = 'down';
+          const maAligned =
+            ind.lastMA20 && ind.lastMA50 && ind.lastMA100
+              ? ind.lastMA20 > ind.lastMA50 && ind.lastMA50 > ind.lastMA100
+                ? 'bullish'
+                : ind.lastMA20 < ind.lastMA50 && ind.lastMA50 < ind.lastMA100
+                  ? 'bearish'
+                  : 'mixed'
+              : 'unknown';
+          const macdHist = ind.macd?.histogram?.length > 0
+            ? ind.macd.histogram[ind.macd.histogram.length - 1]
+            : null;
+          return { key: tf.key, data: {
+            signal: sig.signal, cls: sig.cls, score: sig.score, trend,
+            rsi: ind.lastRSI, macd: macdHist, maAligned, adx: ind.adx,
+            volRatio: ind.volRatio, obvTrend: ind.obvTrend,
+          }};
+        } catch {
+          return { key: tf.key, data: null };
         }
-        let prices = r.prices;
-        if (tf.key === 'h4') prices = aggregate4H(r.prices);
-        const ind = calcAll(prices);
-        const sig = genSignal(ind, prices);
-        let trend = 'neutral';
-        if (ind.lastClose > (ind.lastMA20 || 0) && ind.lastClose > (ind.lastMA50 || 0)) trend = 'up';
-        else if (ind.lastClose < (ind.lastMA20 || Infinity) && ind.lastClose < (ind.lastMA50 || Infinity)) trend = 'down';
-        const maAligned =
-          ind.lastMA20 && ind.lastMA50 && ind.lastMA100
-            ? ind.lastMA20 > ind.lastMA50 && ind.lastMA50 > ind.lastMA100
-              ? 'bullish'
-              : ind.lastMA20 < ind.lastMA50 && ind.lastMA50 < ind.lastMA100
-                ? 'bearish'
-                : 'mixed'
-            : 'unknown';
-        const macdHist = ind.macd?.histogram?.length > 0
-          ? ind.macd.histogram[ind.macd.histogram.length - 1]
-          : null;
-        tfs[tf.key] = {
-          signal: sig.signal,
-          cls: sig.cls,
-          score: sig.score,
-          trend,
-          rsi: ind.lastRSI,
-          macd: macdHist,
-          maAligned,
-          adx: ind.adx,
-          volRatio: ind.volRatio,
-          obvTrend: ind.obvTrend,
-        };
-      } catch {
-        tfs[tf.key] = null;
-      }
-    }
+      })
+    );
+    for (const { key, data } of results) { tfs[key] = data; }
     const valid = Object.values(tfs).filter(Boolean);
     const buyCount = valid.filter(v => v.cls === 'buy').length;
     const sellCount = valid.filter(v => v.cls === 'sell').length;

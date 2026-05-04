@@ -1,0 +1,38 @@
+## Strategy parameter sweep ranges
+## Used by optimizer for grid/random/Optuna search
+
+ma_cross:
+  enabled: true
+  ma_short: [5, 10, 20]
+  ma_long: [50, 100, 200]
+  filter_ma200: [true, false]   # only buy if price > MA200
+
+rsi_reversal:
+  enabled: true
+  rsi_period: [10, 14, 21]
+  oversold: [25, 30, 35]
+  overbought: [65, 70, 75]
+
+macd_signal:
+  enabled: true
+  fast: [8, 12]
+  slow: [21, 26]
+  signal: [9]
+
+bollinger_reversal:
+  enabled: true
+  period: [20]
+  std: [1.8, 2.0, 2.5]
+  exit_mode: ["mean", "opposite_band"]
+
+breakout:
+  enabled: false
+  lookback: [10, 20, 55]      # Donchian-style
+  volume_mult: [1.5, 2.0]
+
+## Common across all strategies
+common:
+  stop_loss: [0.015, 0.02, 0.03]
+  take_profit: [0.03, 0.05, 0.08]
+  trailing_stop_pct: [null, 0.03, 0.05]
+  hold_max_days: [5, 10, 20]

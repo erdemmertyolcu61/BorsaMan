@@ -1,0 +1,27 @@
+## Data source + universe configuration
+data:
+  source: "yfinance"           # yfinance | csv | parquet | bist_terminal_proxy
+  timeframe: "1d"              # 1d | 1h | 15m | 5m | 1m
+  start_date: "2022-01-01"
+  end_date: "2026-04-27"
+  cache_dir: "./data/raw"
+  processed_dir: "./data/processed"
+
+universe:
+  mode: "manual"               # manual | bist30 | bist50 | bist100 | bistall
+  manual_list:
+    - ASELS
+    - THYAO
+    - GARAN
+    - AKBNK
+    - SISE
+    - EREGL
+    - KCHOL
+    - SAHOL
+    - TUPRS
+    - PETKM
+
+filters:
+  min_avg_daily_volume_tl: 2000000  # 2M TL/day liquidity gate
+  min_history_days: 252             # need >= 1 year data
+  exclude_symbols: []

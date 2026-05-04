@@ -1,4 +1,5 @@
 const { app, BrowserWindow, screen, shell, Menu, Notification, ipcMain, safeStorage } = require('electron');
+const { fork } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
@@ -338,6 +339,203 @@ ipcMain.handle('security:list', async () => {
   return { keys: Object.keys(readSecretsFile()) };
 });
 
+// ── ML Database IPC Bridge ──
+// DatabaseManager.js is ESM → must use dynamic import() from CJS
+// better-sqlite3 runs in main process; renderer accesses via IPC
+import('../src/utils/DatabaseManager.js')
+  .then(async ({ registerMLDbIPC }) => {
+    await registerMLDbIPC(ipcMain);
+  })
+  .catch(err => {
+    // better-sqlite3 may not be installed yet — graceful degradation
+    console.warn('[Electron] ML Database init skipped:', err?.message);
+  });
+
+// ── Autonomous ML Training CRON — Friday 20:00 (BIST kapanisindan sonra) ──
+// Native JS scheduler — no node-cron dependency needed.
+// Runs the full ML pipeline in a forked child_process so the UI never freezes.
+// The worker communicates progress + results via IPC messages.
+
+let _mlTrainingWorker = null;
+let _lastTrainingDate = null; // "YYYY-MM-DD" — prevent double-runs on same day
+
+function getMLDbPath() {
+  try {
+    return path.join(app.getPath('userData'), 'bist_ml_engine.db');
+  } catch {
+    return path.join(process.cwd(), 'data', 'bist_ml_engine.db');
+  }
+}
+
+function startMLTraining(opts = {}) {
+  if (_mlTrainingWorker) {
+    console.log('[CRON] ML training already in progress — skipping');
+    return false;
+  }
+
+  const workerPath = path.join(__dirname, 'ml-training-worker.cjs');
+  if (!fs.existsSync(workerPath)) {
+    console.error('[CRON] ML training worker not found:', workerPath);
+    return false;
+  }
+
+  const dbPath = opts.dbPath || getMLDbPath();
+  console.log(`[CRON] Starting autonomous ML training (DB: ${dbPath})...`);
+
+  // Notify renderer that training started
+  if (mainWindow?.webContents) {
+    mainWindow.webContents.send('ml-training-status', {
+      status: 'started',
+      ts: Date.now(),
+      message: '🧠 Otonom Öğrenme başladı...',
+    });
+  }
+
+  _mlTrainingWorker = fork(workerPath, [], {
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    env: { ...process.env, NODE_ENV: 'production' },
+  });
+
+  // Capture stdout/stderr for logging
+  _mlTrainingWorker.stdout?.on('data', (data) => {
+    console.log(`[MLWorker stdout] ${data.toString().trim()}`);
+  });
+  _mlTrainingWorker.stderr?.on('data', (data) => {
+    console.error(`[MLWorker stderr] ${data.toString().trim()}`);
+  });
+
+  // Handle messages from worker
+  _mlTrainingWorker.on('message', (msg) => {
+    if (!msg?.type) return;
+
+    if (msg.type === 'progress') {
+      console.log(`[CRON] Phase ${msg.phase}: ${msg.pct}% — ${msg.msg}`);
+      if (mainWindow?.webContents) {
+        mainWindow.webContents.send('ml-training-status', {
+          status: 'progress',
+          phase: msg.phase,
+          pct: msg.pct,
+          message: msg.msg,
+        });
+      }
+    }
+
+    if (msg.type === 'complete') {
+      console.log(`[CRON] ML training complete: ${msg.newRules} rules, ${msg.elapsed}s elapsed`);
+      _mlTrainingWorker = null;
+      _lastTrainingDate = new Date().toISOString().slice(0, 10);
+
+      // Notify renderer
+      if (mainWindow?.webContents) {
+        mainWindow.webContents.send('ml-training-status', {
+          status: 'complete',
+          newRules: msg.newRules,
+          totalSignals: msg.totalSignals,
+          elapsed: msg.elapsed,
+          message: `🧠 Otonom Öğrenme Tamamlandı: ${msg.newRules} kural hafızaya eklendi.`,
+        });
+      }
+
+      // Desktop notification
+      showNotification({
+        id: `ml-training-${Date.now()}`,
+        tag: 'ml-training',
+        title: '🧠 Otonom Öğrenme Tamamlandı',
+        body: `${msg.newRules} kural keşfedildi/güncellendi (${msg.totalSignals} sinyal, ${msg.elapsed}s)`,
+        urgency: 'normal',
+      });
+    }
+
+    if (msg.type === 'error') {
+      console.error('[CRON] ML training error:', msg.message);
+      _mlTrainingWorker = null;
+
+      if (mainWindow?.webContents) {
+        mainWindow.webContents.send('ml-training-status', {
+          status: 'error',
+          message: `ML Eğitim hatası: ${msg.message}`,
+        });
+      }
+    }
+  });
+
+  _mlTrainingWorker.on('exit', (code) => {
+    console.log(`[CRON] ML worker exited with code ${code}`);
+    _mlTrainingWorker = null;
+  });
+
+  _mlTrainingWorker.on('error', (err) => {
+    console.error('[CRON] ML worker spawn error:', err?.message);
+    _mlTrainingWorker = null;
+  });
+
+  // Send start command to worker
+  _mlTrainingWorker.send({
+    type: 'start',
+    dbPath,
+    range: opts.range || '1y',
+    interSymbolMs: opts.interSymbolMs || 2000,
+    batchSize: opts.batchSize || 10,
+  });
+
+  return true;
+}
+
+// ── CRON Check: Every 60s, check if it's Friday 20:00 (Turkey time) ──
+// BIST closes at 18:00 Turkish time. We train at 20:00 to ensure all data settles.
+let _cronInterval = null;
+
+function startCRONScheduler() {
+  if (_cronInterval) return;
+
+  _cronInterval = setInterval(() => {
+    const now = new Date();
+    // Turkey is UTC+3
+    const turkeyOffset = 3 * 60; // minutes
+    const localMinutes = now.getUTCMinutes() + now.getUTCHours() * 60 + turkeyOffset;
+    const turkeyHour = Math.floor((localMinutes % 1440) / 60);
+    const turkeyMinute = localMinutes % 60;
+    const turkeyDay = now.getUTCDay(); // 0=Sun, 5=Fri
+
+    // Adjust day if Turkey time rolls over midnight
+    const turkeyDate = new Date(now.getTime() + turkeyOffset * 60 * 1000);
+    const dateStr = turkeyDate.toISOString().slice(0, 10);
+
+    // Friday (day=5), hour=20, first check within the 20:00 window
+    if (turkeyDate.getUTCDay() === 5 && turkeyHour === 20 && turkeyMinute < 2) {
+      // Prevent double-run on same day
+      if (_lastTrainingDate === dateStr) return;
+
+      console.log(`[CRON] Friday 20:00 TR triggered — starting autonomous ML training`);
+      startMLTraining();
+    }
+  }, 60_000); // check every 60 seconds
+
+  console.log('[CRON] ML training scheduler active — Friday 20:00 (TR time)');
+}
+
+// ── IPC Handlers for ML Training (manual trigger from renderer) ──
+ipcMain.handle('ml-training:start', async (_event, opts = {}) => {
+  const started = startMLTraining(opts);
+  return { started, message: started ? 'Eğitim başlatıldı' : 'Eğitim zaten devam ediyor' };
+});
+
+ipcMain.handle('ml-training:status', async () => {
+  return {
+    isRunning: _mlTrainingWorker !== null,
+    lastTrainingDate: _lastTrainingDate,
+  };
+});
+
+ipcMain.handle('ml-training:stop', async () => {
+  if (_mlTrainingWorker) {
+    _mlTrainingWorker.kill('SIGTERM');
+    _mlTrainingWorker = null;
+    return { stopped: true };
+  }
+  return { stopped: false, message: 'Aktif eğitim yok' };
+});
+
 // Remove default menu in production
 if (!isDev) {
   Menu.setApplicationMenu(null);
@@ -356,6 +554,9 @@ app.whenReady().then(async () => {
   }
 
   createWindow();
+
+  // Start the autonomous ML training CRON scheduler
+  startCRONScheduler();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

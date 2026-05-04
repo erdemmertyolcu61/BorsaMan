@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { QUICK_STOCKS } from '../../utils/constants.js';
-import { fetchData, fetchFundamentals } from '../../utils/fetchEngine.js';
+import { fetchData, fetchFundamentals, fetchBigParaBatchPrices } from '../../utils/fetchEngine.js';
 import { calcAll } from '../../utils/indicators.js';
 import { genSignal, calcPosition, getUnifiedAnalysis } from '../../utils/signals.js';
 import { setApiKey, buildExpertPrompt } from '../../utils/claude.js';
@@ -74,10 +74,12 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
     const effectiveRange = overrideRange || range;
     const effectiveInterval = overrideInterval || interval;
     try {
-      // Fetch price data and KAP disclosures in parallel
+      // Fetch price data, KAP disclosures, AND pre-warm batch cache in parallel
+      // Batch cache ensures applyLiveOverlay inside fetchData is ~0ms (no per-symbol HTTP)
       const [data, kapDisclosures] = await Promise.all([
         fetchData(s, effectiveRange, effectiveInterval, log).catch(() => null),
         fetchKAPDisclosures(s).catch(() => []),
+        fetchBigParaBatchPrices().catch(() => {}), // pre-warm batch cache
       ]);
       if (!data) {
         setBadge({ text: 'Hata', cls: 'err' });
@@ -88,6 +90,23 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
       const extraContext = { kapSentiment };
       const { ind, sig } = getUnifiedAnalysis(s, data, extraContext);
       setGData(data); setGInd(ind); setGSig(sig);
+      // Picks panel ile sync icin event dispatch — cache picks bayat ise kullanici gorur
+      try {
+        const lastBar = data.prices[data.prices.length - 1];
+        const prevBar = data.prices[data.prices.length - 2] || lastBar;
+        const change = prevBar?.close ? ((lastBar.close - prevBar.close) / prevBar.close) * 100 : 0;
+        window.dispatchEvent(new CustomEvent('analyze-result', {
+          detail: {
+            symbol: s,
+            signal: sig.signal,
+            cls: sig.cls,
+            score: Number(sig.score) || 0,
+            price: ind.lastClose,
+            change,
+            ts: Date.now(),
+          },
+        }));
+      } catch { /* event dispatch best-effort */ }
       // Monte Carlo simulation
       if (data.prices.length > 30) {
         try { setMcData(runMonteCarlo(data.prices, 20, 500)); } catch { setMcData(null); }

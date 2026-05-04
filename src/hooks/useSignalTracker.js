@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
 import { buildCalibrationModel, setSignalCalibration } from '../utils/signalCalibration.js';
+import { setSignalReliabilityHints } from '../utils/signals.js';
 
 let globalNotificationHandler = null;
 
@@ -113,22 +114,51 @@ function calcStats(signals) {
   const bySource = {};
   const byClass = {};
   const bySymbol = {};
+  // Per-signal-type attribution: hangi sinyal tipleri gercekte kazandiriyor?
+  // closed trade'lerin firedSignals listesinden hesaplanir.
+  const bySignalType = {};
+
   for (const s of signals) {
     const src = s.source || 'manual';
     bySource[src] = bySource[src] || { total: 0, wins: 0, totalRoi: 0 };
     bySource[src].total += 1;
     const roi = s.perf?.d5 ?? 0;
-    if (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN') { bySource[src].wins += 1; bySource[src].totalRoi += roi; }
+    const isWin = s.outcome === 'TARGET_HIT' || s.outcome === 'WIN';
+    if (isWin) { bySource[src].wins += 1; bySource[src].totalRoi += roi; }
 
     const cl = s.cls || 'other';
     byClass[cl] = byClass[cl] || { total: 0, wins: 0, totalRoi: 0 };
     byClass[cl].total += 1;
-    if (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN') { byClass[cl].wins += 1; byClass[cl].totalRoi += roi; }
+    if (isWin) { byClass[cl].wins += 1; byClass[cl].totalRoi += roi; }
 
     const sym = s.symbol;
     bySymbol[sym] = bySymbol[sym] || { total: 0, wins: 0, totalRoi: 0 };
     bySymbol[sym].total += 1;
-    if (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN') { bySymbol[sym].wins += 1; bySymbol[sym].totalRoi += roi; }
+    if (isWin) { bySymbol[sym].wins += 1; bySymbol[sym].totalRoi += roi; }
+
+    // Signal attribution — sadece kapali trade'ler icin
+    if (s.status === 'closed' && s.outcome && Array.isArray(s.firedSignals)) {
+      for (const sigType of s.firedSignals) {
+        bySignalType[sigType] = bySignalType[sigType] || { total: 0, wins: 0, totalRoi: 0 };
+        bySignalType[sigType].total++;
+        if (isWin) {
+          bySignalType[sigType].wins++;
+          bySignalType[sigType].totalRoi += roi;
+        }
+      }
+    }
+  }
+
+  // Win-rate hesapla + zayif ornekleri filtrele (< 8 trade)
+  const bySignalTypeStats = {};
+  for (const [type, data] of Object.entries(bySignalType)) {
+    if (data.total < 8) continue;
+    bySignalTypeStats[type] = {
+      ...data,
+      winRate: data.total > 0 ? data.wins / data.total : 0,
+      avgRoi: data.total > 0 ? data.totalRoi / data.total : 0,
+      sampleSize: data.total,
+    };
   }
 
   return {
@@ -152,6 +182,7 @@ function calcStats(signals) {
     bySource,
     byClass,
     bySymbol,
+    bySignalType: bySignalTypeStats,
   };
 }
 
@@ -164,16 +195,39 @@ export function useSignalTracker() {
     persist(signals);
   }, [signals]);
 
-  // Publish ML calibration model to signals.js whenever closed-signal count changes.
-  // genSignal() reads this via setSignalCalibration() to bias score100 by realized winRate × expectancy.
+  // Publish ML calibration model + signal attribution hints to signals.js
+  // whenever closed-signal count changes.
+  // genSignal() reads both to bias score100 by realized performance.
   const closedCountRef = useRef(0);
   useEffect(() => {
     const closedCount = signals.filter(s => s.status === 'closed' && s.outcome).length;
     if (closedCount === closedCountRef.current) return;
     closedCountRef.current = closedCount;
+
     try {
+      // 1. Kalibrasyon modeli (bucket-based)
       const model = buildCalibrationModel(signals);
       setSignalCalibration(model);
+    } catch {}
+
+    try {
+      // 2. Sinyal atribuyon hint'leri (per-signal-type win-rate)
+      const stats = calcStats(signals);
+
+      // cls-level hint (mevcut buy/sell win-rate)
+      const closed = signals.filter(s => s.status === 'closed' && s.outcome);
+      const buyWins   = closed.filter(s => s.cls === 'buy' && (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN')).length;
+      const buyTotal  = closed.filter(s => s.cls === 'buy').length;
+      const sellWins  = closed.filter(s => s.cls === 'sell' && (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN')).length;
+      const sellTotal = closed.filter(s => s.cls === 'sell').length;
+
+      setSignalReliabilityHints({
+        buy:  buyTotal  > 0 ? { winRate: buyWins  / buyTotal,  sampleSize: buyTotal  } : null,
+        sell: sellTotal > 0 ? { winRate: sellWins / sellTotal, sampleSize: sellTotal } : null,
+        // per-signal-type attribution: genSignal bu map'i kullanarak
+        // firedSignals ile kesisen tiplere skor deltasi uygular
+        bySignalType: stats.bySignalType || {},
+      });
     } catch {}
   }, [signals]);
 

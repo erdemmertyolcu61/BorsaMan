@@ -13,6 +13,73 @@ import { fetchAsenaxList, fetchWithFallback, fetchBorsajsQuote } from './borsajs
 const _cache = {};
 const _inflight = {}; // Request deduplication: prevent parallel fetches for same symbol
 
+// ═══ L2 PERSISTENT CACHE — localStorage backed ═══
+// Survives page reload. 30-min TTL for daily/weekly bars (BIST closes daily).
+// On startup, hydrates _cache from localStorage so first scan is near-instant.
+const L2_CACHE_KEY = 'bist_fetch_l2_cache_v1';
+const L2_CACHE_TTL_MS = 30 * 60 * 1000; // 30 dakika
+const L2_MAX_ENTRIES = 800;             // ~648 BIST + intraday buffers
+
+function _hydrateL2Cache() {
+  try {
+    const raw = localStorage.getItem(L2_CACHE_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object') return;
+    const now = Date.now();
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && v._ts && (now - v._ts) < L2_CACHE_TTL_MS) {
+        // Restore date objects on price bars
+        // FORMING BAR GUARD: _isForming bars from previous sessions are stale —
+        // a bar that was "forming" yesterday is now a complete closed candle.
+        // Strip _isForming flag on hydration so the chart shows solid candles.
+        if (Array.isArray(v.prices)) {
+          for (const b of v.prices) {
+            if (b && b.date && typeof b.date === 'string') b.date = new Date(b.date);
+            if (b && b._isForming) delete b._isForming; // completed bars are never forming
+          }
+        }
+        _cache[k] = v;
+      }
+    }
+  } catch { /* corrupt cache → ignore */ }
+}
+
+let _l2WriteScheduled = false;
+function _scheduleL2Persist() {
+  if (_l2WriteScheduled) return;
+  _l2WriteScheduled = true;
+  // Throttle writes — coalesce multiple cache mutations into one localStorage write
+  setTimeout(() => {
+    _l2WriteScheduled = false;
+    try {
+      const entries = Object.entries(_cache);
+      if (entries.length > L2_MAX_ENTRIES) {
+        // Evict oldest by _ts
+        entries.sort((a, b) => (b[1]._ts || 0) - (a[1]._ts || 0));
+        for (const [k] of entries.slice(L2_MAX_ENTRIES)) delete _cache[k];
+      }
+      // Strip _isForming bars before persisting: forming bars are session-live only.
+      // If saved with _isForming=true, they come back as hollow candles on next load.
+      const cacheCopy = {};
+      for (const [k, v] of Object.entries(_cache)) {
+        if (!v || !Array.isArray(v.prices)) { cacheCopy[k] = v; continue; }
+        const cleanPrices = v.prices.map(b => {
+          if (!b || !b._isForming) return b;
+          const { _isForming, ...rest } = b; // eslint-disable-line no-unused-vars
+          return rest;
+        });
+        cacheCopy[k] = { ...v, prices: cleanPrices };
+      }
+      localStorage.setItem(L2_CACHE_KEY, JSON.stringify(cacheCopy));
+    } catch { /* quota or unavailable */ }
+  }, 2000);
+}
+
+if (typeof window !== 'undefined' && window.localStorage) {
+  _hydrateL2Cache();
+}
+
 // ═══ SOURCE HEALTH TRACKING ═══
 const _sourceHealth = {
   'bigpara': { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'online' },
@@ -117,26 +184,75 @@ export async function fetchBigParaBatchPrices() {
   if (Date.now() - _batchPriceCache.ts < BATCH_CACHE_TTL && Object.keys(_batchPriceCache.data).length > 0) {
     return _batchPriceCache.data;
   }
+
+  const remoteUrl = 'https://bigpara.hurriyet.com.tr/api/v1/borsa/canlilar/hpisinyal';
+  let text = null;
+  const t0 = Date.now();
+
   try {
-    const t0 = Date.now();
-    const url = '/api/bigpara/borsa/canlilar/hpisinyal';
-    const resp = await fetch(url, { signal: AbortSignal.timeout(12000) });
-    if (!resp.ok) throw new Error('BigPara batch failed: ' + resp.status);
-    const json = await resp.json();
+    // Strategy 1: Vite dev proxy (localhost only)
+    if (isLocalDev()) {
+      const resp = await fetch('/api/bigpara/borsa/canlilar/hpisinyal', {
+        signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined,
+      });
+      if (resp.ok) {
+        const t = await resp.text();
+        if (t && t.length > 100 && !t.includes('<!DOCTYPE')) text = t;
+      }
+    }
+
+    // Strategy 2: Electron IPC Bridge (production .exe — bypasses CORS)
+    if (!text && typeof window !== 'undefined' && window.electronAPI?.remoteFetch) {
+      try {
+        const res = await window.electronAPI.remoteFetch(remoteUrl + '?_t=' + Date.now(), { method: 'GET' });
+        if (res.success && res.text && res.text.length > 100) text = res.text;
+      } catch { /* Electron IPC failure — try next */ }
+    }
+
+    // Strategy 3: Direct fetch (web fallback — may be blocked by CORS)
+    if (!text) {
+      try {
+        const resp = await fetch(remoteUrl + '?_t=' + Date.now(), {
+          headers: { 'Accept': 'application/json' },
+          signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined,
+        });
+        if (resp.ok) {
+          const t = await resp.text();
+          if (t && t.length > 100 && !t.includes('<!DOCTYPE')) text = t;
+        }
+      } catch { /* CORS block — try proxy */ }
+    }
+
+    // Strategy 4: CORS proxy chain
+    if (!text) {
+      text = await getDataViaProxies(remoteUrl, 10000);
+    }
+
+    if (!text) throw new Error('All batch sources failed');
+
+    const json = JSON.parse(text);
     const prices = {};
     const list = json?.data || json || [];
     if (Array.isArray(list)) {
       for (const item of list) {
         const sym = (item.kod || item.hpiKod || '').replace('.E', '').replace('.IS', '');
         if (!sym) continue;
+        // Fiyat oncelik sirasi:
+        // son      = borsa saatlerinde anlık son işlem fiyatı (en güncel)
+        // kapanis  = günlük kapanış (borsa kapandıktan sonra final değer)
+        // fiyat    = genel fiyat alanı (fallback)
+        // Borsa açıkken son > kapanis; kapandıktan sonra ikisi eşit.
+        const sonFiyat   = parseFloat(item.son || 0);
+        const kapanisFiy = parseFloat(item.kapanis || 0);
+        const liveF      = (sonFiyat > 0 ? sonFiyat : kapanisFiy) || parseFloat(item.fiyat || 0);
         prices[sym] = {
-          price: parseFloat(item.kapanis || item.son || item.fiyat || 0),
-          change: parseFloat(item.yuzde || item.yuzdeDegisim || 0),
-          volume: parseInt(item.hacim || item.hacimLot || 0),
-          high: parseFloat(item.yuksek || 0),
-          low: parseFloat(item.dusuk || 0),
-          open: parseFloat(item.acilis || 0),
-          prevClose: parseFloat(item.oncekiKapanis || 0),
+          price:     liveF,
+          change:    parseFloat(item.yuzde || item.yuzdeDegisim || item.degisim || 0),
+          volume:    parseInt(item.hacim || item.hacimLot || 0),
+          high:      parseFloat(item.yuksek || 0),
+          low:       parseFloat(item.dusuk || 0),
+          open:      parseFloat(item.acilis || 0),
+          prevClose: parseFloat(item.oncekiKapanis || item.dunkuKapanis || 0),
         };
       }
     }
@@ -208,7 +324,13 @@ function parseTurkishDate(str) {
 }
 const _proxyStats = { total: 0, ok: 0, sources: {} };
 export function getProxyStats() { return { ..._proxyStats }; }
-export function clearCache() { Object.keys(_cache).forEach(k => delete _cache[k]); }
+export function clearCache() {
+  Object.keys(_cache).forEach(k => delete _cache[k]);
+  // L2 persistent cache da temizle — bayat localStorage verisinin scan'a karismasin
+  try { localStorage.removeItem(L2_CACHE_KEY); } catch {}
+  // BigPara batch cache da reset
+  try { _batchPriceCache = { ts: 0, data: {} }; } catch {}
+}
 
 function trackSource(src) {
   _proxyStats.sources[src] = (_proxyStats.sources[src] || 0) + 1;
@@ -599,7 +721,6 @@ export async function fetchBigParaList() {
     }
 
     console.log(`[BigParaList] Loaded ${result.length} stocks (source: ${successSource})`);
-    setFetchTimestamp('bigpara');
     return result;
   } catch (e) {
     console.error('[BigParaList] Parse error:', e.message, text?.slice(0, 200));
@@ -733,22 +854,43 @@ async function fetchIsYatirimHistorical(symbol, range) {
   const remoteUrl = 'https://www.isyatirim.com.tr/_layouts/15/Isyatirim.Website/Common/Data.aspx/HisseTekil?' + params;
 
   let text = null;
+  const t0 = Date.now();
+
+  // Strategy 1: Vite dev proxy (localhost only)
   if (isLocalDev()) {
-    text = await tryDirect(localUrl, 10000);
+    text = await tryDirect(localUrl, 8000);
   }
-  // In Electron production, try direct fetch with proper headers
+
+  // Strategy 2: Electron IPC Bridge (Production .exe — bypasses CORS entirely)
+  if (!text && typeof window !== 'undefined' && window.electronAPI?.remoteFetch) {
+    try {
+      const res = await window.electronAPI.remoteFetch(remoteUrl, { method: 'GET' });
+      if (res.success && res.text && res.text.length > 50 && !res.text.includes('<!DOCTYPE')) {
+        text = res.text;
+        recordSourceSuccess('isyatirim', Date.now() - t0);
+      }
+    } catch (e) { logError('fetch', 'Electron remoteFetch IsYatirim failed', e, { symbol, severity: 'debug' }); }
+  }
+
+  // Strategy 3: Direct fetch with proper headers
   if (!text) {
     try {
-      const r = await quickFetch(remoteUrl, 10000);
+      const r = await quickFetch(remoteUrl, 8000);
       if (r.ok) {
         const t = await r.text();
-        if (t && t.length > 50 && !t.includes('<!DOCTYPE')) text = t;
+        if (t && t.length > 50 && !t.includes('<!DOCTYPE')) {
+          text = t;
+          recordSourceSuccess('isyatirim', Date.now() - t0);
+        }
       }
     } catch (e) { logError('fetch', 'IsYatirim direct fetch failed', e, { symbol, severity: 'debug' }); }
   }
-  // Fallback to CORS proxies
+
+  // Strategy 4: CORS proxies as fallback
   if (!text) {
-    text = await getDataViaProxies(remoteUrl, 12000);
+    text = await getDataViaProxies(remoteUrl, 8000);
+    if (text) recordSourceSuccess('isyatirim', Date.now() - t0);
+    else recordSourceFailure('isyatirim');
   }
   if (!text) return null;
 
@@ -939,8 +1081,28 @@ function yahooChartUrl(symbol, range, interval, crumb = '', version = 'v8') {
   return base + '?' + params.toString();
 }
 
-// Yahoo-aware fetch: tries crumb-auth direct, then CORS proxies
+// Yahoo-aware fetch: tries Electron IPC → crumb-auth direct → CORS proxies
 async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
+  const t0 = Date.now();
+
+  // Strategy 1: Electron IPC Bridge (Production .exe — fastest, bypasses CORS)
+  if (typeof window !== 'undefined' && window.electronAPI?.remoteFetch) {
+    const urls = [
+      yahooChartUrl(symbol, range, interval, '', 'v8'),
+      `https://query2.finance.yahoo.com/v7/finance/chart/${symbol}.IS?range=${range}&interval=${interval}`,
+    ];
+    for (const url of urls) {
+      try {
+        const res = await window.electronAPI.remoteFetch(url, { method: 'GET' });
+        if (res.success && res.text && res.text.length > 100 && !res.text.startsWith('<')) {
+          recordSourceSuccess('yahoo', Date.now() - t0);
+          return res.text;
+        }
+      } catch { continue; }
+    }
+  }
+
+  // Strategy 2: Crumb-auth direct (browser / Vite dev)
   const crumbCtx = await ensureYahooCrumb();
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -949,7 +1111,6 @@ async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
     ...(crumbCtx.cookie ? { 'Cookie': crumbCtx.cookie } : {}),
   };
 
-  // Try v8 with crumb first, then v8 without, then v7
   const urls = [
     crumbCtx.value ? yahooChartUrl(symbol, range, interval, crumbCtx.value, 'v8') : null,
     yahooChartUrl(symbol, range, interval, '', 'v8'),
@@ -962,13 +1123,15 @@ async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
       const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined;
       const r = await fetch(url, { headers, credentials: 'include', ...(signal ? { signal } : {}) });
       if (r.status === 401 || r.status === 403) {
-        // Invalidate crumb so next call re-fetches
         _yahooCrumb.value = null;
         continue;
       }
       if (!r.ok) continue;
       const text = await r.text();
-      if (text && text.length > 100 && !text.startsWith('<')) return text;
+      if (text && text.length > 100 && !text.startsWith('<')) {
+        recordSourceSuccess('yahoo', Date.now() - t0);
+        return text;
+      }
     } catch { continue; }
   }
   return null;
@@ -1013,8 +1176,10 @@ export async function fetchSingle(symbol, range, interval, scanMode = false) {
   if (c && (Date.now() - c._ts < cacheTTL)) {
     // Daily/weekly cache hits: refresh today's candle via BigPara overlay
     // so pre-open / mid-day re-opens always merge the latest live bar.
+    // NON-BLOCKING: overlay is enrichment — return cached data immediately,
+    // overlay updates the object in-place (React re-renders on state change).
     if (!scanMode && (interval === '1d' || interval === '1wk')) {
-      try { await applyLiveOverlay(c, symbol); } catch { /* non-fatal */ }
+      applyLiveOverlay(c, symbol).catch(() => { /* non-fatal */ });
     }
     return c;
   }
@@ -1039,22 +1204,27 @@ export async function fetchSingle(symbol, range, interval, scanMode = false) {
   }
 }
 
+// Hedge delay — Tail-at-Scale: IsYatirim head-start, fire Yahoo as backup if slow.
+// 800ms is aggressive but user-initiated single analysis needs speed. In Electron
+// with IPC bridge, IsYatirim typically responds in 300-500ms; 800ms catches the
+// 80th percentile before firing the hedge.
+const HEDGE_DELAY_MS = 800;
+
 async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
   let p = null;
   let source = '';
 
   // ══════════════════════════════════════════════
-  // SOURCE PRIORITY — optimized for after-hours freshness
-  // İş Yatırım updates fastest after market close, Yahoo can lag by hours
+  // HEDGED PARALLEL FETCH — IsYatirim primary + Yahoo backup (1.5s delayed)
+  // Worst-case latency drops from sequential 4×7s = 28s to ~7s.
+  // Best-case (IsYatirim fast <1.5s) burns no extra quota.
   // ══════════════════════════════════════════════
-
-  // ---- SOURCE 1: İş Yatırım HisseTekil (daily/weekly — fastest after close) ----
   if (interval === '1d' || interval === '1wk') {
-    p = await fetchIsYatirimHistorical(symbol, range);
-    if (p) source = 'IsYatirim';
+    const result = await _hedgedDailyFetch(symbol, range, interval, ms);
+    if (result) { p = result.p; source = result.source; }
   }
 
-  // ---- SOURCE 2: Yahoo Finance (crumb-auth direct → CORS proxy fallback) ----
+  // ---- Intraday (15m / 60m) or daily fallback path ----
   if (!p) {
     // Try crumb-authenticated direct fetch first (bypasses CORS proxy rate limits)
     let text = await fetchYahooDirect(symbol, range, interval, ms);
@@ -1067,7 +1237,7 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
     if (p) source = 'Yahoo';
   }
 
-  // ---- SOURCE 3: Yahoo v7 fallback (different endpoint, sometimes works when v8 fails) ----
+  // ---- Yahoo v7 last-resort ----
   if (!p) {
     const url7 = `https://query2.finance.yahoo.com/v7/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&events=div%2Csplits`;
     const text = await getDataViaProxies(url7, ms);
@@ -1075,26 +1245,68 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
     if (p) source = 'Yahoo-v7';
   }
 
-  // ---- SOURCE 4: Foreks/ParaGaranti ----
-  if (!p) {
-    p = await fetchForeksHistorical(symbol, range, interval);
-    if (p) source = 'Foreks';
-  }
-
   if (p) {
     trackSource(source);
     const r = { symbol, prices: p, source, _ts: Date.now(), dataConfidence: 'high', divergencePct: 0 };
     _cache[ck] = r;
+    _scheduleL2Persist();
 
-    // BIGPARA LIVE OVERLAY — only meaningful for daily/weekly; skip for intraday intervals
-    // (15m/5m bars already contain the live bar, and a day-level overlay would corrupt them)
-    if (interval === '1d' || interval === '1wk') {
-      await applyLiveOverlay(r, symbol);
+    // BIGPARA LIVE OVERLAY:
+    //   - Non-scan single analysis: await with 3s timeout (need fresh price for chart,
+    //     but don't block forever). Batch cache makes this ~0ms typically.
+    //   - Scan mode: SKIP per-symbol overlay; scan uses batch BigPara prices instead.
+    //     This saves 648 × ~400ms = ~4 dakika per scan.
+    if ((interval === '1d' || interval === '1wk') && !scanMode) {
+      await Promise.race([
+        applyLiveOverlay(r, symbol),
+        new Promise(resolve => setTimeout(resolve, 3000)),
+      ]);
     }
     return r;
   }
 
   return null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Hedged daily/weekly fetch — IsYatirim head-start, Yahoo as backup hedge.
+// Pattern from Google's "Tail at Scale" — 95th percentile latency drops dramatically.
+// ══════════════════════════════════════════════════════════════════════════════
+async function _hedgedDailyFetch(symbol, range, interval, ms) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (p, source) => {
+      if (settled) return;
+      settled = true;
+      resolve(p && p.length > 0 ? { p, source } : null);
+    };
+
+    // Primary: IsYatirim (typically fastest after market close)
+    fetchIsYatirimHistorical(symbol, range)
+      .then(p => { if (p && p.length > 0) finish(p, 'IsYatirim'); })
+      .catch(() => {});
+
+    // Hedge: Yahoo, fired only if primary doesn't resolve within HEDGE_DELAY_MS
+    const hedgeTimer = setTimeout(async () => {
+      if (settled) return;
+      try {
+        let text = await fetchYahooDirect(symbol, range, interval, ms);
+        if (!text && !settled) {
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&includePrePost=false`;
+          text = await getDataViaProxies(url, ms);
+        }
+        if (settled) return;
+        const yp = text ? parseYahoo(text) : null;
+        if (yp && yp.length > 0) finish(yp, 'Yahoo-Hedge');
+      } catch { /* swallow */ }
+    }, HEDGE_DELAY_MS);
+
+    // Hard ceiling: prevents indefinite pending (cap at 8s regardless of caller's ms)
+    setTimeout(() => {
+      clearTimeout(hedgeTimer);
+      finish(null, '');
+    }, Math.min(ms, 8000));
+  });
 }
 
 /**
@@ -1109,7 +1321,29 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
 export async function applyLiveOverlay(r, symbol) {
   if (!r || !r.prices || r.prices.length === 0) return r;
   try {
-    const live = await fetchBigParaQuote(symbol);
+    // OPTIMIZATION: Try batch cache first (populated by advisor scan / live guard)
+    // This avoids a per-symbol HTTP round-trip (~400-8000ms) when batch data is fresh.
+    let live = null;
+    const batchData = _batchPriceCache.data;
+    const batchAge = Date.now() - _batchPriceCache.ts;
+    const sym = symbol.toUpperCase().replace('.IS', '');
+    if (batchAge < 120000 && batchData[sym] && batchData[sym].price > 0) {
+      const bd = batchData[sym];
+      live = {
+        price: bd.price,
+        open: bd.open || 0,
+        high: bd.high || 0,
+        low: bd.low || 0,
+        volume: bd.volume || 0,
+        change: bd.change || 0,
+        prevClose: bd.prevClose || 0,
+        date: new Date(),
+      };
+    }
+    // Fallback: per-symbol fetch if batch cache miss or stale
+    if (!live || !(live.price > 0)) {
+      live = await fetchBigParaQuote(symbol);
+    }
     if (!live || !(live.price > 0)) return r;
 
     const lastBar = r.prices[r.prices.length - 1];
@@ -1131,18 +1365,42 @@ export async function applyLiveOverlay(r, symbol) {
       if (live.volume && live.volume > 0) lastBar.volume = live.volume;
       r.lastPriceSource = 'BigPara';
     } else if (liveKey > lastKey) {
-      // Newer Istanbul day — append a fresh bar unless it's a weekend
+      // Newer Istanbul day — append a fresh bar ONLY if we have real OHLC data.
+      // A raw quote with no open/high/low (H=L=C) creates a zero-range candle that
+      // distorts ATR, Bollinger Bands, and can generate false buy signals.
+      // "Yeni gun mumunu sadece veri cektiginde goster." — User requirement.
       if (!isBistWeekend(live.date)) {
-        const [y, m, day] = liveKey.split('-').map(n => parseInt(n, 10));
-        r.prices.push({
-          date: new Date(Date.UTC(y, m - 1, day)),
-          open: live.open || live.prevClose || live.price,
-          high: live.high || live.price,
-          low: live.low || live.price,
-          close: live.price,
-          volume: live.volume || 0
-        });
-        r.lastPriceSource = 'BigPara+New';
+        const hasRealOpen = live.open > 0;
+        const hasRealHL = live.high > 0 && live.low > 0 && live.high > live.low;
+        // Only append if BigPara returned genuine intraday OHLC (market is open and trading)
+        if (hasRealOpen && hasRealHL) {
+          // DUPLICATE GUARD: if last bar is already a forming bar for today, UPDATE it
+          // instead of appending another one. Prevents multiple hollow candles.
+          const prevLast = r.prices[r.prices.length - 1];
+          const prevKey = prevLast ? istanbulDayKey(prevLast.date) : null;
+          if (prevLast?._isForming && prevKey === liveKey) {
+            // Update existing forming bar in place
+            prevLast.close = live.price;
+            if (live.high > prevLast.high) prevLast.high = live.high;
+            if (live.low < prevLast.low) prevLast.low = live.low;
+            if (live.volume > 0) prevLast.volume = live.volume;
+            r.lastPriceSource = 'BigPara+Update';
+          } else {
+            const [y, m, day] = liveKey.split('-').map(n => parseInt(n, 10));
+            r.prices.push({
+              date: new Date(Date.UTC(y, m - 1, day)),
+              open: live.open,
+              high: live.high,
+              low: live.low,
+              close: live.price,
+              volume: live.volume || 0,
+              _isForming: true,   // Candle still forming — exclude from indicator calc
+            });
+            r.lastPriceSource = 'BigPara+New';
+          }
+        }
+        // If OHLC not available (before market opens, stale quote): skip append.
+        // Historical data fetch will include today's bar once exchange publishes it.
       }
     }
     if (delta > 5 && liveKey >= lastKey) r.dataConfidence = 'low';
@@ -1195,24 +1453,63 @@ export async function fetchData(symbol, range, interval, logFn) {
   log(symbol + '.IS cekiliyor...', 'info');
   const ck = symbol + '_' + range + '_' + (interval === '1h' ? '60m' : interval);
 
+  // CIRCUIT BREAKER RECOVERY: Single analysis is user-initiated and high-priority.
+  // If circuit breakers were tripped by a previous batch scan, allow trial requests
+  // so single analysis isn't stuck behind stale backoff windows.
+  for (const label of Object.keys(_circuitState)) {
+    const s = _circuitState[label];
+    if (s && s.openedUntil && Date.now() >= s.openedUntil) {
+      // Backoff window expired — reset for trial
+      s.failures = Math.max(0, s.failures - 1);
+      s.openedUntil = 0;
+    }
+  }
+
   let d = await fetchSingle(symbol, range, interval, false);
   if (d) d.prices = sanitizePrices(d.prices);
   if (d && d.prices?.length >= 20) { log(d.prices.length + ' bar (' + d.source + ')', 'ok'); return d; }
 
-  log('Tekrar deneniyor (2/3)...', 'warn');
+  // Retry with cache clear + alternative range IN PARALLEL
+  log('Tekrar deneniyor...', 'warn');
   delete _cache[ck];
-  await new Promise(r => setTimeout(r, 2000));
-  d = await fetchSingle(symbol, range, interval, false);
-  if (d) d.prices = sanitizePrices(d.prices);
-  if (d && d.prices?.length >= 20) { log(d.prices.length + ' bar (R2/' + d.source + ')', 'ok'); return d; }
-
   const alt = range === 'max' ? '5y' : range === '5y' ? '2y' : range === '2y' ? '1y' : range === '6mo' ? '1y' : range === '3mo' ? '6mo' : range === '1mo' ? '3mo' : range;
+  const retryPromises = [
+    fetchSingle(symbol, range, interval, false).catch(() => null),
+  ];
   if (alt !== range) {
-    log('Farkli aralik deneniyor (' + alt + ')...', 'warn');
-    d = await fetchSingle(symbol, alt, interval, false);
-    if (d) d.prices = sanitizePrices(d.prices);
-    if (d && d.prices?.length >= 20) { log(d.prices.length + ' bar (R3/' + d.source + ')', 'ok'); return d; }
+    retryPromises.push(fetchSingle(symbol, alt, interval, false).catch(() => null));
   }
+  const retryResults = await Promise.all(retryPromises);
+  for (const rd of retryResults) {
+    if (rd) rd.prices = sanitizePrices(rd.prices);
+    if (rd && rd.prices?.length >= 20) {
+      log(rd.prices.length + ' bar (retry/' + rd.source + ')', 'ok');
+      return rd;
+    }
+  }
+
+  // LAST RESORT: Try L2 (localStorage) stale cache — better than showing nothing
+  try {
+    const raw = localStorage.getItem(L2_CACHE_KEY);
+    if (raw) {
+      const l2Store = JSON.parse(raw);
+      const l2 = l2Store?.[ck];
+      if (l2?.prices?.length >= 20) {
+        log(l2.prices.length + ' bar (L2-stale/' + (l2.source || '?') + ')', 'warn');
+        // Restore date objects
+        for (const b of l2.prices) {
+          if (b && b.date && typeof b.date === 'string') b.date = new Date(b.date);
+          if (b && b._isForming) delete b._isForming;
+        }
+        l2.dataConfidence = 'low';
+        l2._stale = true;
+        l2._ts = Date.now();
+        _cache[ck] = l2;
+        applyLiveOverlay(l2, symbol).catch(() => {});
+        return l2;
+      }
+    }
+  } catch { /* localStorage unavailable */ }
 
   log(symbol + ' gercek veri alinamadi.', 'err');
   return null;

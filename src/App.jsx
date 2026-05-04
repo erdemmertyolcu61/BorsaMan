@@ -5,19 +5,20 @@ import { useAlertLog } from './hooks/useAlertLog.js';
 import { useLivePrices } from './hooks/useLivePrices.js';
 import { useSignalTracker, setSignalNotificationHandler } from './hooks/useSignalTracker.js';
 import { useNotifications } from './hooks/useNotifications.jsx';
-import { useActiveAgents } from './hooks/useActiveAgents.js';
-import { initTop10Intelligence, dailyTop10Cycle } from './utils/top10Intelligence.js';
+import { usePaperTrading } from './hooks/usePaperTrading.js';
+import { usePaperTradeML } from './hooks/usePaperTradeML.js';
+import { runFreshRegimeReset } from './utils/resetStorage.js';
 import PremiumHeader from './components/Layout/PremiumHeader.jsx';
 import AnalyzeTab from './components/Analyze/AnalyzeTab.jsx';
 import TradesTab from './components/Trades/TradesTab.jsx';
 import PortfolioTab from './components/Portfolio/PortfolioTab.jsx';
 import SignalsTab from './components/Signals/SignalsTab.jsx';
+import PaperTradingPanel from './components/PaperTrading/PaperTradingPanel.jsx';
 import AIAdvisorPanel, { AIAdvisorDetailPanel } from './components/AIAdvisor/AIAdvisorPanel.jsx';
 import AlertLog from './components/AlertLog/AlertLog.jsx';
 import Tabs from './components/Tabs/Tabs.jsx';
 import MobileNav from './components/MobileNav/MobileNav.jsx';
 import ScanHistoryDrawer from './components/AIAdvisor/ScanHistoryDrawer.jsx';
-import ActiveAgentsPanel from './components/AIAdvisor/ActiveAgentsPanel.jsx';
 
 export default function App() {
   const state = useAppState();
@@ -25,6 +26,8 @@ export default function App() {
   const alertLog = useAlertLog(advisor);
   const signalTracker = useSignalTracker();
   const notifications = useNotifications();
+  const paperTrading = usePaperTrading();
+  const paperML = usePaperTradeML();
   const [watchlist, setWatchlist] = useState(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem('bist_watchlist') || '[]');
@@ -46,51 +49,16 @@ export default function App() {
     scanningRef.current = advisor.scanning;
   }, [advisor.scanning, advisor.topPicks]);
 
-  // ── Auto-run Top10 Intelligence at 18:30 (market close) ──
-  const top10RanRef = useRef(false);
-  const lastRunDateRef = useRef('');
-  
-  useEffect(() => {
-    const checkAndRunTop10 = async () => {
-      const now = new Date();
-      const today = now.toISOString().split('T')[0];
-      const hour = now.getHours();
-      const minute = now.getMinutes();
-      
-      // Check if already ran today
-      if (lastRunDateRef.current === today && top10RanRef.current) {
-        return;
-      }
-      
-      // Run at 18:30 (market close + 1 hour buffer)
-      if (hour === 18 && minute >= 30 && minute <= 35) {
-        if (!top10RanRef.current || lastRunDateRef.current !== today) {
-          console.log('[App] Running daily Top10 Intelligence cycle...');
-          try {
-            await initTop10Intelligence();
-            await dailyTop10Cycle();
-            top10RanRef.current = true;
-            lastRunDateRef.current = today;
-            console.log('[App] Top10 Intelligence cycle complete');
-          } catch (e) {
-            console.warn('[App] Top10 cycle failed:', e);
-          }
-        }
-      }
-    };
-    
-    // Initial check
-    checkAndRunTop10();
-    
-    // Check every minute
-    const interval = setInterval(checkAndRunTop10, 60000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Register notification handler globally for signal tracker
   useEffect(() => {
     setSignalNotificationHandler(notifications);
   }, [notifications]);
+
+  // ── One-time fresh regime reset (clears all tracking history on epoch bump) ──
+  useEffect(() => {
+    runFreshRegimeReset();
+  }, []);
 
   // ── Shared callback: TradesTab scan results flow to all systems ──
   const onTradesScanComplete = useCallback((scanData) => {
@@ -118,6 +86,7 @@ export default function App() {
           rr: pick.rr,
           source: 'advisor',
           sector: pick.sector,
+          firedSignals: pick.firedSignals || [],
         });
 
         // Desktop notification for high-score advisor picks
@@ -230,11 +199,6 @@ export default function App() {
         onAnalyze={handleAIAnalyze}
       />
 
-      <ActiveAgentsPanel
-        portfolio={state.portfolio}
-        onAnalyze={handleAIAnalyze}
-      />
-
       <Tabs activeTab={state.activeTab} onTabChange={state.setActiveTab} />
 
       <div className={`tab-content ${state.activeTab === 'analyze' ? 'active' : ''}`}>
@@ -280,6 +244,10 @@ export default function App() {
           tracker={signalTracker}
           onAnalyze={handleAIAnalyze}
         />
+      </div>
+
+      <div className={`tab-content ${state.activeTab === 'paper' ? 'active' : ''}`}>
+        <PaperTradingPanel paperTrading={paperTrading} paperML={paperML} />
       </div>
 
       <AlertLog alertLog={alertLog} onAnalyze={handleAIAnalyze} advisor={advisor} livePrice={livePrice} portfolio={state.portfolio} />

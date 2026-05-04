@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import SectorHeatmap from '../Heatmap/SectorHeatmap.jsx';
 import { isMarketOpen, isMarketClosedForDay } from '../../hooks/useAIAdvisor.js';
 import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
-import { getSourceHealth, recordSourceSuccess, recordSourceFailure } from '../../utils/fetchEngine.js';
+import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices } from '../../utils/fetchEngine.js';
 import { 
   initTop10Intelligence, 
   dailyTop10Cycle, 
@@ -496,7 +496,22 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       const saved = localStorage.getItem('bist_last_ai_picks');
       if (saved) {
         const d = JSON.parse(saved);
-        if (d?.picks?.length > 0) return d.picks;
+        if (d?.picks?.length > 0) {
+          // Wall Street filter (v20) — mutlak tehlikeli olanlar at, akilli tavan izin ver
+          const safe = d.picks.filter(p => {
+            const tp = Math.max(p.todayPumpReal || 0, p.recentPump || 0, p.change || 0);
+            if (tp >= 12) return false;                      // Gap-up mutlak red
+            if ((p.rsi || 50) > 88) return false;            // RSI 88+ red
+            if ((p.mfi || 50) > 88) return false;            // MFI 88+ red
+            if ((p.cumulativePump || 0) >= 22) return false; // 2 gun kumulatif tavan red
+            // Tavan range (7-12%): continuationProbability >= 38% ise izin ver
+            if (tp >= 7) {
+              return (p.continuationProbability || 0) >= 38;
+            }
+            return true;
+          });
+          return safe;
+        }
       }
     } catch {}
     return [];
@@ -512,31 +527,97 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     return null;
   });
 
-  // Update display picks when live scan completes (top picks mode)
+  // ── SCAN COMPLETE → FRESH displayPicks (v19) ──
+  // lastUpdate degistigi anda (yeni scan bitti) displayPicks'i DAIMA taze veriyle doldur.
+  // Eski davranis: topPicks bosken stale localStorage kalmaya devam ediyordu.
+  // Yeni davranis:
+  //   - topPicks varsa → dogrudan kullan
+  //   - topPicks yoksa (tavan gunu gibi all-filtered) → scanResults'tan best-effort fallback
+  //   - Her iki durumda da eski localStorage cache'i devirip TAZE veri goster
   useEffect(() => {
-    if (topPicks.length > 0) {
-      setDisplayPicks([...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)));
-    }
-  }, [topPicks]);
+    if (lastUpdate === null) return; // Hic scan olmamis — localStorage cache'i koru
 
-  // ULTIMATE FALLBACK: if both topPicks AND cache are empty, but a raw scan
-  // exists, derive top-5 buy candidates from scanResults sorted by score.
-  // This guarantees the panel is never blank after a scan completes.
-  useEffect(() => {
-    if (topPicks.length === 0 && displayPicks.length === 0 && scanResults.length > 0) {
-      const fallback = scanResults
-        .filter(r => r.cls === 'buy' || (r.score || 0) >= 50)
-        .sort((a, b) => (b.score || 0) - (a.score || 0))
+    // ── PANEL-SIDE WALL STREET FILTER (v20 — akilli tavan) ──
+    // Tum displayPicks'leri buradan geciren tek nokta.
+    // v20: tp >= 7% artik MUTLAK red degil — continuationProbability >= 38% ise izin verilir.
+    // (OZATD/OZSUB/HURGZ tipi: guclu kataliz + OBV birikim → dogru tahmin edilmisti)
+    const isUnsafe = (r) => {
+      const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);
+      // Mutlak redler — kataliz bile kurtaramaz
+      if (tp >= 12) return true;                       // Gap-up / devre kesici bolge
+      if ((r.rsi || 50) > 88) return true;             // RSI 88+ tehlikeli asiri alim
+      if ((r.mfi || 50) > 88) return true;             // MFI 88+ asiri overbought
+      if ((r.cumulativePump || 0) >= 22) return true;  // 2 gun kumulatif tavan → yorgun
+      // Akilli tavan (7-12%): backend'in calcContinuationProbability değerini kullan
+      if (tp >= 7) {
+        const prob = r.continuationProbability;
+        // Backend hesaplamis → guven: >= 38% = GOSTER, < 38% = RED
+        // Backend hesaplamamis (eski cache) → konservatiF: red
+        if (prob == null || prob < 38) return true;
+        return false; // Guclu devam sinyali (OZATD/OZSUB/HURGZ tipi)
+      }
+      // Kumulatif yorgunluk (tp < 7% ama 3 gunde +%18+) — kataliz yoksa red
+      if ((r.cumulativePump || 0) >= 18) {
+        const hasCatalyst = r.newsCategories?.some(c =>
+          ['insider_buy', 'buyback', 'fund_inflow', 'contract'].includes(c));
+        if (!hasCatalyst) return true;
+      }
+      return false;
+    };
+
+    if (topPicks.length > 0) {
+      // topPicks zaten backend'de filtrelendi. Panel-side filter ikinci savunma:
+      // tavan picks icin continuationProbability >= 38% kontrolu yapar,
+      // mutlak tehlikeli senaryolar (RSI>88, gap-up) bloklanir.
+      // Non-tavan + yuksek-confidence tavan picks gecer.
+      const safe = [...topPicks]
+        .filter(p => !isUnsafe(p))
+        .sort((a, b) => {
+          // Non-tavan daima tavan'in onunde
+          const aPump = Math.max(a.todayPumpReal || 0, a.recentPump || 0);
+          const bPump = Math.max(b.todayPumpReal || 0, b.recentPump || 0);
+          if (aPump >= 7 && bPump < 7) return 1;
+          if (bPump >= 7 && aPump < 7) return -1;
+          if (aPump >= 7 && bPump >= 7) {
+            return (b.continuationProbability || 0) - (a.continuationProbability || 0);
+          }
+          return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
+        });
+      setDisplayPicks(safe);
+    } else if (scanResults.length > 0) {
+      // Scan calisti ama topPicks bos (strict filtreler her seyi reddetti).
+      // scanResults'tan KALITELI low-pump setup'lari sec — TAVAN ASLA YOK.
+      const freshFallback = scanResults
+        .filter(r => !isUnsafe(r))                    // Wall Street filter
+        .filter(r => (r.score || 0) >= 45)
+        .filter(r => (r.avgVolumeTL || 0) >= 1_000_000) // 1M TL min likidite
+        .sort((a, b) => {
+          // Quality-first: erken birikim varsa once, sonra confidence/score
+          if (a._earlyPick && !b._earlyPick) return -1;
+          if (b._earlyPick && !a._earlyPick) return 1;
+          return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
+        })
         .slice(0, 8)
         .map(r => ({
           symbol: r.symbol, sector: r.sector, price: r.price, change: r.change,
           signal: r.signal, cls: r.cls, score: r.score, rr: r.rr,
           stop: r.stop, target: r.target, stopPct: r.stopPct, targetPct: r.targetPct,
-          holdText: r.holdText, _fallback: true,
+          holdText: r.holdText, atrPct: r.atrPct,
+          recentPump: r.recentPump, cumulativePump: r.cumulativePump,
+          todayPumpReal: r.todayPumpReal, continuationProbability: r.continuationProbability,
+          confidence: r.confidence, grade: r.grade, tier: r.tier,
+          _earlyPick: r._earlyPick, _earlyCount: r._earlyCount,
+          _fallback: true, _warningPick: true,
+          // ML Engine data (preserve if scanResults were ML-scored)
+          mlConfidenceBoost: r.mlConfidenceBoost, mlBestRule: r.mlBestRule,
+          mlMatchedCount: r.mlMatchedCount,
         }));
-      if (fallback.length > 0) setDisplayPicks(fallback);
+      setDisplayPicks(freshFallback);
+    } else {
+      setDisplayPicks([]);
     }
-  }, [scanResults, topPicks.length, displayPicks.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastUpdate]); // Sadece scan bitisinde calis — topPicks/scanResults bunu takip etmesin
 
   // Load fresh meta from localStorage when scan updates it
   useEffect(() => {
@@ -553,10 +634,118 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     return () => window.removeEventListener('advisor-scan-complete', handler);
   }, []);
 
-  const isFromCache = topPicks.length === 0 && displayPicks.length > 0;
+  // isFromCache = panel showing saved localStorage data, not from current session scan.
+  // After a scan (lastUpdate set), data is always fresh — never show OTOMATİK YEDEK badge.
+  const isFromCache = lastUpdate === null && displayPicks.length > 0;
   const meta = cachedMeta;
   const picks = displayPicks.slice(0, 10);
   const hasPicks = picks.length > 0;
+
+  // ── Veri yasi her dakika yenilensin ki "5dk once" → "6dk once" guncellensin.
+  // (NOT: tum hook'lar early return ONCESI cagrilmali — React kurali)
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => forceTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── STALE CACHE OTOMATIK YENILEME ──
+  // Piyasa acikken 15dk, kapaliyken 30dk uzeri cache → otomatik refresh
+  useEffect(() => {
+    if (!meta?.ts || scanning || !advisor.manualScan) return;
+    const ageMs = Date.now() - meta.ts;
+    const threshold = isMarketOpen() ? 15 * 60 * 1000 : 30 * 60 * 1000;
+    if (ageMs > threshold) {
+      try { advisor.manualScan(); } catch {}
+    }
+  }, [meta?.ts, scanning, advisor.manualScan]);
+
+  // ── CANLI FIYAT GUNCELLEME (v20) ──
+  // HEM cache HEM fresh-scan kartlari icin calisir.
+  // Fresh scan: tarama ani fiyat → piyasa hareket edince kart guncel olmalidir.
+  // Cache: localStorage'dan gelen eski fiyat → daha cok sapma olabilir.
+  //
+  // - _livePrice: anlık BigPara fiyatı → kartta PRIMARY gösterim
+  // - _divergencePct: tarama fiyatından sapma yüzdesi
+  // - _isStaleAdverse: AL önerisi -%3+ düştü → kırmızı uyarı
+  // - _divergenceWarn: |sapma| > %6 → turuncu uyarı
+  //
+  // Interval: anlık bir kez çekilir + her 60s güncellenir (piyasa açıkken aktif)
+  useEffect(() => {
+    if (!displayPicks.length) return;
+    let cancelled = false;
+
+    const doLivePriceUpdate = () => {
+      fetchBigParaBatchPrices().then(liveMap => {
+        if (cancelled || !liveMap || Object.keys(liveMap).length === 0) return;
+        setDisplayPicks(prev => {
+          const updated = prev.map(p => {
+            const live = liveMap[p.symbol];
+            if (!live || !(live.price > 0)) return p;
+            const scanPrice = p.price || 0;
+            if (scanPrice <= 0) return p;
+            const divPct = ((live.price - scanPrice) / scanPrice) * 100;
+            const todayChg = live.change || 0;
+            const adverseDrop = (p.cls !== 'sell') && (divPct < -3 || todayChg < -2.5);
+            const adverseRise = (p.cls === 'sell') && (divPct > 3 || todayChg > 2.5);
+            return {
+              ...p,
+              _livePrice:      live.price,
+              _liveChange:     todayChg,
+              _divergencePct:  divPct,
+              _isStaleAdverse: adverseDrop || adverseRise,
+              _divergenceWarn: Math.abs(divPct) > 6,
+            };
+          });
+          // Cache picks: adverse olanlar sona (fresh scan siralama bozmasin)
+          if (!isFromCache) return updated;
+          return updated.sort((a, b) => {
+            if (a._isStaleAdverse && !b._isStaleAdverse) return 1;
+            if (b._isStaleAdverse && !a._isStaleAdverse) return -1;
+            return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
+          });
+        });
+      }).catch(() => {});
+    };
+
+    doLivePriceUpdate();                              // hemen bir kez
+    const iv = setInterval(doLivePriceUpdate, 60_000); // sonra her 60s
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [displayPicks.length, isFromCache]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── ADVERSE COUNT — yarisindan fazlasi bayatsa otomatik yeniden tarama ──
+  useEffect(() => {
+    if (!displayPicks.length || scanning) return;
+    const adverse = displayPicks.filter(p => p._isStaleAdverse).length;
+    if (adverse >= Math.ceil(displayPicks.length / 2) && advisor.manualScan) {
+      try { advisor.manualScan(); } catch {}
+    }
+  }, [displayPicks, scanning, advisor.manualScan]);
+
+  // ── TEKIL ANALIZ SYNC ──
+  // Kullanici Tekil Analiz'de bir hisse analiz ettiginde, sonucu ile picks'i guncelle.
+  // Tekil Analiz sonucu picks'tekiyle celisiyorsa cardi gerceklikle hizala.
+  useEffect(() => {
+    const handler = (e) => {
+      const { symbol, signal, cls, score, price, change } = e.detail || {};
+      if (!symbol) return;
+      setDisplayPicks(prev => prev.map(p => {
+        if (p.symbol !== symbol) return p;
+        const conflicts = (p.cls !== cls) || Math.abs((p.score || 0) - (score || 0)) > 12;
+        return {
+          ...p,
+          _liveSignal: signal,
+          _liveCls: cls,
+          _liveScore: score,
+          _liveAnalysisPrice: price,
+          _liveAnalysisChange: change,
+          _conflictsWithLive: conflicts,
+        };
+      }));
+    };
+    window.addEventListener('analyze-result', handler);
+    return () => window.removeEventListener('analyze-result', handler);
+  }, []);
 
   // Render even when empty — show placeholder/empty state so user sees the panel.
   // Only hide if explicitly dismissed by clicking the X.
@@ -570,47 +759,92 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     return `${Math.floor(mins / 60)}s önce`;
   })() : null;
 
+  // Cache yasli mi (>20 dk)? Kullaniciya isaret veriliyor.
+  const isStale = meta?.ts && (Date.now() - meta.ts) > 20 * 60 * 1000;
+
   const buyCount = picks.filter(p => p.cls !== 'sell').length;
   const sellCount = picks.filter(p => p.cls === 'sell').length;
 
   return (
     <div style={{
       position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 900,
-      background: 'var(--bg1)', borderTop: '2px solid var(--cyan)',
+      background: 'linear-gradient(180deg, #0d1320 0%, #0a0e17 100%)',
+      borderTop: '2px solid transparent',
+      borderImage: 'linear-gradient(90deg, #06b6d4, #8b5cf6, #06b6d4) 1',
       transition: 'max-height 0.28s ease',
-      maxHeight: open ? 200 : 40, overflow: 'hidden',
-      boxShadow: '0 -4px 24px rgba(0,0,0,0.5)',
+      maxHeight: open ? 235 : 40, overflow: 'hidden',
+      boxShadow: '0 -8px 32px rgba(0, 230, 230, 0.12), 0 -4px 24px rgba(0,0,0,0.6)',
     }}>
+      {/* Animated top accent line */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 2,
+        background: 'linear-gradient(90deg, transparent, #06b6d4 30%, #8b5cf6 50%, #06b6d4 70%, transparent)',
+        opacity: 0.6,
+        animation: 'aiShimmer 4s linear infinite',
+      }} />
+      <style>{`
+        @keyframes aiShimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        @keyframes pulseDot {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.3); }
+        }
+        .ai-pick-card { transition: transform .18s ease, box-shadow .18s ease, background .18s ease; }
+        .ai-pick-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0, 230, 230, 0.18); }
+        .ai-pick-top1 { box-shadow: 0 0 0 1px #ffd60044, 0 0 14px #ffd60022 inset; }
+        .ai-pick-top2 { box-shadow: 0 0 0 1px #06b6d433, 0 0 12px #06b6d422 inset; }
+        .ai-pick-top3 { box-shadow: 0 0 0 1px #8b5cf633, 0 0 10px #8b5cf622 inset; }
+      `}</style>
       {/* ── Header bar ── */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 12px', height: 40, background: 'var(--bg2)',
+        padding: '0 14px', height: 40,
+        background: 'linear-gradient(90deg, rgba(6,182,212,0.06), rgba(139,92,246,0.04))',
         borderBottom: open ? '1px solid var(--border)' : 'none',
         userSelect: 'none', boxSizing: 'border-box',
+        backdropFilter: 'blur(10px)',
       }}>
         {/* Left: title + badge */}
         <div
           onClick={() => setOpen(o => !o)}
           style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flex: 1 }}
         >
-          <span style={{ fontWeight: 800, color: 'var(--cyan)', fontSize: 11, letterSpacing: 0.5 }}>
+          <span style={{
+            fontWeight: 800, fontSize: 11, letterSpacing: 0.6,
+            background: 'linear-gradient(90deg, #06b6d4, #8b5cf6)',
+            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+            textShadow: '0 0 12px rgba(6,182,212,0.3)',
+          }}>
             ★ AI EN İYİ FIRSATLAR{hasPicks ? ` (${picks.length})` : ''}
           </span>
+          {scanning && (
+            <span style={{
+              width: 6, height: 6, borderRadius: '50%',
+              background: 'var(--green)', boxShadow: '0 0 8px var(--green)',
+              animation: 'pulseDot 1.4s ease-in-out infinite',
+            }} />
+          )}
           {isFromCache && (
             <span style={{
-              fontSize: 8, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
-              background: '#ffd60022', color: 'var(--yellow)', border: '1px solid #ffd60044',
+              fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 10,
+              background: isStale ? 'rgba(244,63,94,0.2)' : 'rgba(255,214,0,0.18)',
+              color: isStale ? '#ff5470' : '#ffd600',
+              border: `1px solid ${isStale ? 'rgba(244,63,94,0.5)' : 'rgba(255,214,0,0.45)'}`,
+              letterSpacing: 0.4,
             }}>
-              OTOMATİK YEDEK {cacheAge ? `• ${cacheAge}` : ''}
+              {isStale ? '⚠ ESKİ VERİ' : 'OTOMATİK YEDEK'} {cacheAge ? `• ${cacheAge}` : ''}
             </span>
           )}
           {scanning && (
-            <span style={{ fontSize: 9, color: 'var(--orange)', fontWeight: 600 }}>● Taranıyor...</span>
+            <span style={{ fontSize: 11, color: '#ff9a3c', fontWeight: 700 }}>● Taranıyor...</span>
           )}
           {/* AL / SAT counts */}
-          <span style={{ fontSize: 10, color: 'var(--t3)' }}>
-            <span style={{ color: 'var(--green)', fontWeight: 700 }}>{buyCount} AL</span>
-            {sellCount > 0 && <span style={{ color: 'var(--red)', fontWeight: 700 }}> · {sellCount} SAT</span>}
+          <span style={{ fontSize: 12, color: '#a8b3c7', fontWeight: 600 }}>
+            <span style={{ color: '#10e87a', fontWeight: 800 }}>{buyCount} AL</span>
+            {sellCount > 0 && <span style={{ color: '#ff5470', fontWeight: 800 }}> · {sellCount} SAT</span>}
           </span>
           {/* Sentinel symbols preview (collapsed) */}
           {!open && picks.slice(0, 5).map(p => {
@@ -627,8 +861,25 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             );
           })}
         </div>
-        {/* Right: chevron + X */}
+        {/* Right: refresh + chevron + X */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {advisor.manualScan && !scanning && (
+            <button
+              onClick={(e) => { e.stopPropagation(); advisor.manualScan(); }}
+              title="Yeniden tara — tum cache temizlenir"
+              style={{
+                background: isStale ? '#ff5470' : 'rgba(6,182,212,0.12)',
+                color: '#ffffff',
+                border: `1px solid ${isStale ? '#ff5470' : 'rgba(6,182,212,0.55)'}`,
+                borderRadius: 4, padding: '4px 12px', fontSize: 11,
+                cursor: 'pointer', fontWeight: 800, fontFamily: 'inherit',
+                letterSpacing: 0.4,
+                boxShadow: isStale ? '0 0 12px rgba(244,63,94,0.4)' : '0 0 8px rgba(6,182,212,0.2)',
+              }}
+            >
+              ↻ {isStale ? 'YENİLE' : 'TARA'}
+            </button>
+          )}
           <span
             onClick={() => setOpen(o => !o)}
             style={{ color: 'var(--t2)', fontSize: 12, cursor: 'pointer',
@@ -645,7 +896,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       {/* ── Card strip ── */}
       <div style={{
         display: 'flex', gap: 0, overflowX: 'auto', overflowY: 'hidden',
-        height: 160, alignItems: 'stretch', padding: '8px 12px', boxSizing: 'border-box',
+        height: 185, alignItems: 'stretch', padding: '8px 12px', boxSizing: 'border-box',
         scrollbarWidth: 'thin',
       }}>
         {/* Empty / loading state */}
@@ -659,6 +910,32 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--orange)', boxShadow: '0 0 8px var(--orange)' }} />
                 <span>Sistem taranıyor — ilk sonuçlar birazdan görünecek...</span>
               </div>
+            ) : lastUpdate !== null ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexDirection: 'column', textAlign: 'center' }}>
+                  <span style={{ fontSize: 22 }}>🚫</span>
+                  <span style={{ color: '#fbbf24', fontWeight: 700, fontSize: 13 }}>
+                    Bugün kaliteli AL setup'ı bulunamadı
+                  </span>
+                  <span style={{ fontSize: 11, color: '#a8b3c7', maxWidth: 480, lineHeight: 1.5 }}>
+                    Tavan yapan hisseler ertesi gün ~%55-60 ihtimalle geri çekilir. Sistem
+                    BUGÜN tavan yapanları değil, YARIN tavan yapacakları arıyor.
+                    Bu oturumda piyasa çoğunlukla pump'larla doldu — kaliteli giriş yok.
+                  </span>
+                  {advisor.manualScan && (
+                    <button
+                      onClick={() => advisor.manualScan()}
+                      style={{
+                        background: 'linear-gradient(135deg, var(--cyan), var(--blue))',
+                        color: '#fff', border: 'none', borderRadius: 4,
+                        padding: '4px 14px', fontSize: 11, cursor: 'pointer',
+                        marginTop: 6, fontWeight: 700,
+                      }}>
+                      ↻ Yeniden Tara
+                    </button>
+                  )}
+                </div>
+              </>
             ) : (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -698,26 +975,104 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             : p.signal?.includes('SAT') ? 'SAT'
             : 'AL';
 
+          // Guven kirilimi tooltip metni — kullanici hover ile gorebilsin
+          const breakdown = p.confidenceBreakdown;
+          const tooltipLines = [];
+          if (p.hasRecentInsiderBuy) {
+            tooltipLines.push(`👔 İÇERİDEN ALIM — skor: ${p.insiderScore || 0}, net: ${p.insiderNetBuys || 0} alım`);
+          }
+          if (p.hasRecentInsiderSell && !p.hasRecentInsiderBuy) {
+            tooltipLines.push(`👔 İÇERİDEN SATIM — skor: ${p.insiderScore || 0}`);
+          }
+          if (p._earlyPick) {
+            tooltipLines.push(`🔍 ERKEN BIRIKIM (${p._earlyCount || 0}/10 sinyal)`);
+            if (p._earlySignals?.length) {
+              tooltipLines.push('  ' + p._earlySignals.join(' · '));
+            }
+            tooltipLines.push('  Düşük likit ama akıllı para giriyor — patlama öncesi');
+            tooltipLines.push('');
+          }
+          if (p.confidence != null) tooltipLines.push(`Güven: ${p.confidence}/100 (${p.tier || p.grade || '-'})`);
+          if (breakdown) {
+            tooltipLines.push(`  • Teknik: ${breakdown.technical}`);
+            tooltipLines.push(`  • Potansiyel: ${breakdown.potential}`);
+            tooltipLines.push(`  • Sektör: ${breakdown.sector}`);
+            tooltipLines.push(`  • Haber: ${breakdown.news}`);
+            tooltipLines.push(`  • Giriş kalitesi: ${breakdown.entry}`);
+            tooltipLines.push(`  • Likidite: ${breakdown.liquidity}`);
+          }
+          // ML Engine data
+          if (p.mlBestRule && (p.mlMatchedCount || 0) > 0) {
+            tooltipLines.push(`🎯 ML: ${p.mlBestRule.setupName} (%${(p.mlBestRule.winRate || 0).toFixed(1)} win rate)`);
+            tooltipLines.push(`  Güven boost: +${(p.mlConfidenceBoost || 0).toFixed(1)}, ROI ort.: %${(p.mlBestRule.avgRoi || 0).toFixed(2)}`);
+            if (p.mlMatchedCount > 1) tooltipLines.push(`  ${p.mlMatchedCount} kural eşleşti (konfluens bonusu)`);
+          }
+          if (p.avgVolumeTL) {
+            const volM = (p.avgVolumeTL / 1_000_000).toFixed(1);
+            tooltipLines.push(`Ort. günlük hacim: ${volM}M TL`);
+          }
+          if (p.distFromMA20 != null) {
+            tooltipLines.push(`MA20'ye uzaklık: ${p.distFromMA20 > 0 ? '+' : ''}${p.distFromMA20.toFixed(1)}%`);
+          }
+          // Pump uyarisi — kullanici tavan/yorgun hisseyi gormeden almasin
+          const rp = p.recentPump || 0;
+          const cp = p.cumulativePump || 0;
+          if (rp >= 9) {
+            const devamPct = p.continuationProbability;
+            const devamStr = devamPct != null
+              ? `Tahmini devam: %${devamPct} (BIST base ~%30-35)`
+              : `ertesi gün ~%55-60 geri çekilir`;
+            tooltipLines.push(`⚡ TAVAN BÖLGESİ — +${rp.toFixed(1)}% — ${devamStr}`);
+          } else if (rp >= 7) {
+            const devamPct = p.continuationProbability;
+            tooltipLines.push(`⚡ Yüksek pump +${rp.toFixed(1)}%${devamPct != null ? ` — devam tahmini: %${devamPct}` : ''}`);
+          }
+          if (cp >= 15) {
+            tooltipLines.push(`⚠ 3 günde +${cp.toFixed(1)}% — kümülatif momentum yorgun`);
+          }
+          if (p._dataSource) tooltipLines.push(`Veri kaynağı: ${p._dataSource}`);
+
+          // Veri yasi (her pick icin ayri — _scanTs varsa)
+          const pickAge = p._scanTs ? (() => {
+            const mins = Math.floor((Date.now() - p._scanTs) / 60000);
+            if (mins < 1) return null;
+            if (mins < 60) return `${mins}dk`;
+            return `${Math.floor(mins / 60)}s`;
+          })() : null;
+
+          // Top 3 cards get a subtle glow accent
+          const topClass = idx === 0 ? 'ai-pick-top1' : idx === 1 ? 'ai-pick-top2' : idx === 2 ? 'ai-pick-top3' : '';
+          // Premium gradient background based on signal type
+          const cardBg = p._fallback
+            ? 'linear-gradient(180deg, #14192410 0%, #0d111c 100%)'
+            : isSell
+              ? 'linear-gradient(180deg, rgba(244,63,94,0.06) 0%, #0d111c 100%)'
+              : 'linear-gradient(180deg, rgba(16,185,129,0.06) 0%, #0d111c 100%)';
+
           return (
             <div
               key={p.symbol}
+              className={`ai-pick-card ${topClass}`}
               onClick={() => onAnalyze && onAnalyze(p.symbol)}
-              title={p._fallback ? 'Bu hisse katı filtreden geçemedi; en yüksek skorlu alternatif.' : ''}
+              title={tooltipLines.join('\n')}
               style={{
-                flexShrink: 0, width: 210,
-                background: p._fallback ? 'var(--bg2)' : 'var(--bg3)',
-                borderLeft: `3px solid ${accent}`,
-                borderRight: '1px solid var(--border)',
-                padding: '8px 12px', cursor: 'pointer',
+                flexShrink: 0, width: 235,
+                background: cardBg,
+                borderLeft: `4px solid ${accent}`,
+                borderRight: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 5,
+                padding: '11px 13px',
+                marginRight: 7,
+                cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                opacity: p._fallback ? 0.78 : 1,
+                opacity: p._fallback ? 0.82 : 1,
                 position: 'relative',
               }}
             >
-              {/* Row 1: symbol + sector + signal + grade */}
+              {/* Row 1: symbol + sector + signal + grade + early */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--t1)' }}>{p.symbol}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 800, fontSize: 15, color: '#ffffff', letterSpacing: 0.3 }}>{p.symbol}</span>
                   {/* Grade badge — A/B/C/D */}
                   {p.grade && (
                     <span style={{
@@ -728,57 +1083,272 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       {p.grade}
                     </span>
                   )}
-                  <span style={{ fontSize: 8, color: 'var(--t3)', marginLeft: 2 }}>{p.sector}</span>
+                  {/* ERKEN BIRIKIM rozeti — patlama oncesi dusuk likit hisseler */}
+                  {p._earlyPick && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'linear-gradient(90deg, #a855f7, #ec4899)',
+                      color: '#fff', letterSpacing: 0.3,
+                    }} title={`Erken birikim — ${p._earlyCount || 0}/10 sinyal: ${(p._earlySignals || []).join(', ')}`}>
+                      🔍 ERKEN
+                    </span>
+                  )}
+                  {/* INSIDER BUY rozeti — yonetici/ortak alimi tespit edildi */}
+                  {p.hasRecentInsiderBuy && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'linear-gradient(90deg, #059669, #10b981)',
+                      color: '#fff', letterSpacing: 0.3,
+                    }} title={`İçeriden alım: skor ${p.insiderScore || 0}, net ${p.insiderNetBuys || 0} alım (30 gün)`}>
+                      👔 İÇERİDEN ALIM
+                    </span>
+                  )}
+                  {/* INSIDER SELL rozeti — yonetici/ortak satisi */}
+                  {p.hasRecentInsiderSell && !p.hasRecentInsiderBuy && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: '#7f1d1d', color: '#fca5a5', border: '1px solid #ef4444',
+                      letterSpacing: 0.3,
+                    }} title={`İçeriden satım: skor ${p.insiderScore || 0}`}>
+                      👔 İÇERİDEN SATIM
+                    </span>
+                  )}
+                  {/* ML ENGINE MATCH rozeti — self-learning rule discovery match */}
+                  {(p.mlMatchedCount || 0) > 0 && p.mlBestRule && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: p.mlBestRule.winRate >= 75
+                        ? 'linear-gradient(90deg, #ffd700, #ff9d00)'  // Gold — yuksek win rate
+                        : p.mlBestRule.winRate >= 60
+                          ? 'linear-gradient(90deg, #06b6d4, #3b82f6)' // Cyan — orta
+                          : 'linear-gradient(90deg, #6366f1, #8b5cf6)', // Purple — standart
+                      color: p.mlBestRule.winRate >= 75 ? '#000' : '#fff',
+                      letterSpacing: 0.3,
+                      boxShadow: p.mlBestRule.winRate >= 75
+                        ? '0 0 6px rgba(255,215,0,0.4)' : 'none',
+                    }} title={[
+                      `🎯 ML Match: ${p.mlBestRule.setupName}`,
+                      `Win Rate: %${(p.mlBestRule.winRate || 0).toFixed(1)}`,
+                      `Ort. ROI: %${(p.mlBestRule.avgRoi || 0).toFixed(2)}`,
+                      `Güven Boost: +${(p.mlConfidenceBoost || 0).toFixed(1)}`,
+                      p.mlMatchedCount > 1 ? `${p.mlMatchedCount} kural eşleşti (konfluens)` : '',
+                    ].filter(Boolean).join('\n')}>
+                      🎯 %{(p.mlBestRule.winRate || 0).toFixed(0)}
+                    </span>
+                  )}
+                  {/* TAVAN UYARI + DEVAM OLASILIGI rozeti — son bar +%9 uzeri */}
+                  {Math.max(p.todayPumpReal || 0, p.recentPump || 0) >= 9 && (() => {
+                    const cp = p.continuationProbability;
+                    // Devam rengi: > 38% yesil, 27-38% sari, < 27% kirmizi
+                    const cpColor = cp == null ? '#fff'
+                      : cp >= 38 ? '#10e87a'
+                      : cp >= 27 ? '#fbbf24'
+                      : '#ff5470';
+                    const cpBg = cp == null ? 'rgba(244,63,94,0.25)'
+                      : cp >= 38 ? 'rgba(16,232,122,0.15)'
+                      : cp >= 27 ? 'rgba(251,191,36,0.15)'
+                      : 'rgba(244,63,94,0.25)';
+                    const cpBorder = cp == null ? 'rgba(244,63,94,0.5)'
+                      : cp >= 38 ? 'rgba(16,232,122,0.5)'
+                      : cp >= 27 ? 'rgba(251,191,36,0.5)'
+                      : 'rgba(244,63,94,0.5)';
+                    return (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                        background: cpBg, color: cpColor,
+                        border: `1px solid ${cpBorder}`, letterSpacing: 0.3,
+                        display: 'inline-flex', alignItems: 'center', gap: 2,
+                      }} title={
+                        cp != null
+                          ? `Tavan bölgesi (+${(p.recentPump || 0).toFixed(1)}%) — tahmini devam olasılığı: %${cp} (BIST base: ~%30-35)`
+                          : `Tavan bölgesi (+${(p.recentPump || 0).toFixed(1)}%) — ertesi gün ~%55-60 ihtimalle geri çekilir`
+                      }>
+                        ⚡{cp != null ? ` %${cp} DEVAM` : ' TAVAN'}
+                      </span>
+                    );
+                  })()}
+                  {/* ORTA PUMP rozeti — %7-9 arasi, tavan degil ama yuksek */}
+                  {Math.max(p.todayPumpReal || 0, p.recentPump || 0) >= 7 && Math.max(p.todayPumpReal || 0, p.recentPump || 0) < 9 && p.continuationProbability != null && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(245,158,11,0.15)', color: '#f59e0b',
+                      border: '1px solid rgba(245,158,11,0.4)', letterSpacing: 0.3,
+                    }} title={`Yüksek pump +${(p.recentPump || 0).toFixed(1)}% — devam tahmini: %${p.continuationProbability}`}>
+                      ⚡ %{p.continuationProbability} DEVAM
+                    </span>
+                  )}
+                  {/* YORGUN rozeti — 3 gun kumulatif +%15 ustu (tavan degil) */}
+                  {(p.cumulativePump || 0) >= 15 && (p.recentPump || 0) < 9 && p.continuationProbability == null && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(249,115,22,0.15)', color: '#f97316',
+                      border: '1px solid rgba(249,115,22,0.4)', letterSpacing: 0.3,
+                    }} title={`3 günde +${(p.cumulativePump || 0).toFixed(1)}% — momentum yorgun`}>
+                      ⚠ YORGUN
+                    </span>
+                  )}
+                  <span style={{ fontSize: 10, color: '#a8b3c7', fontWeight: 600, marginLeft: 2 }}>{p.sector}</span>
                 </div>
                 <span style={{
-                  fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
-                  background: accentDim, color: accent, border: `1px solid ${accent}44`,
-                  whiteSpace: 'nowrap',
+                  fontSize: 10, fontWeight: 800, padding: '3px 7px', borderRadius: 3,
+                  background: accentDim, color: accent, border: `1px solid ${accent}66`,
+                  whiteSpace: 'nowrap', letterSpacing: 0.4,
+                  textShadow: `0 0 8px ${accent}33`,
                 }}>
                   {signalLabel}
                 </span>
               </div>
 
-              {/* Row 2: price + change + R/R + score */}
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 10, marginTop: 5 }}>
-                <span style={{ fontWeight: 600, color: 'var(--t1)' }}>{(p.price || 0).toFixed(2)} TL</span>
-                <span style={{ color: (p.change || 0) >= 0 ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                  {(p.change || 0) >= 0 ? '+' : ''}{(p.change || 0).toFixed(1)}%
-                </span>
-                <span style={{ color: 'var(--t3)', fontSize: 9 }}>R/O 1:{(p.rr || 0).toFixed(1)}</span>
-                <span style={{ color: 'var(--cyan)', fontWeight: 700, fontSize: 10, marginLeft: 'auto' }}>
-                  Skor: {(p.score || 0).toFixed(1)}
-                </span>
-              </div>
+              {/* Row 2: price (CANLI PRIMARY) + change + R/R + score */}
+              {(() => {
+                // _livePrice her zaman primary — scan fiyatı sadece referans
+                const displayPrice = p._livePrice || p.price || 0;
+                const scanPrice    = p.price || 0;
+                const hasLive      = p._livePrice != null && p._livePrice > 0;
+                const priceDrifted = hasLive && Math.abs(p._livePrice - scanPrice) / (scanPrice || 1) > 0.002;
+                const liveChg      = p._liveChange ?? p.change ?? 0;
+                return (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, marginTop: 6 }}>
+                    {/* Ana fiyat: live fiyat (bold beyaz) */}
+                    <span style={{ fontWeight: 800, color: '#ffffff', letterSpacing: 0.2 }}>
+                      {displayPrice.toFixed(2)} TL
+                    </span>
+                    {/* Scan fiyatı küçük referans — sadece fark varsa göster */}
+                    {priceDrifted && (
+                      <span style={{
+                        fontSize: 9, color: '#6b7280', fontWeight: 600,
+                        textDecoration: 'line-through',
+                      }} title={`Tarama anı: ${scanPrice.toFixed(2)} TL`}>
+                        {scanPrice.toFixed(2)}
+                      </span>
+                    )}
+                    {/* Canlı güncelleme indikatörü — live fiyat var ama scan ile aynı */}
+                    {hasLive && !priceDrifted && (
+                      <span style={{ fontSize: 8, color: '#10e87a', fontWeight: 700 }} title="Fiyat güncel">●</span>
+                    )}
+                    <span style={{
+                      color: liveChg >= 0 ? '#10e87a' : '#ff5470',
+                      fontWeight: 800, fontSize: 12,
+                    }}>
+                      {liveChg >= 0 ? '+' : ''}{liveChg.toFixed(1)}%
+                    </span>
+                    <span style={{ color: '#b0bccd', fontSize: 11, fontWeight: 600 }}>R/O 1:{(p.rr || 0).toFixed(1)}</span>
+                    <span style={{
+                      color: '#06d6f0', fontWeight: 800, fontSize: 12, marginLeft: 'auto',
+                      textShadow: '0 0 6px rgba(6,214,240,0.4)',
+                    }}>
+                      Skor: {(p.score || 0).toFixed(1)}
+                    </span>
+                  </div>
+                );
+              })()}
+              {/* STALE / CONFLICT WARNING — hisse cache'tekiyle celisiyor */}
+              {(p._isStaleAdverse || p._conflictsWithLive) && (
+                <div style={{
+                  fontSize: 10, color: '#ff5470', fontWeight: 800,
+                  marginTop: 4, padding: '3px 6px',
+                  background: 'rgba(244,63,94,0.18)', borderRadius: 3,
+                  border: '1px solid rgba(244,63,94,0.45)',
+                  letterSpacing: 0.3,
+                }} title="Cache'deki sinyal canli fiyatla uyumsuz — yeniden tarama oneriliyor">
+                  ⚠ {p._isStaleAdverse ? `BAYAT (${p._divergencePct?.toFixed(1)}%)` : `ÇELİŞKİ: ${p._liveSignal || 'TUT'}`}
+                </div>
+              )}
+              {p._divergenceWarn && !p._isStaleAdverse && !p._conflictsWithLive && (
+                <div style={{
+                  fontSize: 10, color: '#ff9a3c', fontWeight: 800,
+                  marginTop: 4, padding: '3px 6px',
+                  background: 'rgba(255,145,0,0.18)', borderRadius: 3,
+                  border: '1px solid rgba(255,145,0,0.4)',
+                  letterSpacing: 0.3,
+                }} title="Cache fiyati canli fiyattan farkli — yeniden tara">
+                  ⚠ FİYAT KAYDI (Δ{p._divergencePct?.toFixed(1)}%)
+                </div>
+              )}
 
               {/* Row 3: stop + target */}
-              <div style={{ display: 'flex', gap: 8, fontSize: 9, marginTop: 4 }}>
+              <div style={{ display: 'flex', gap: 10, fontSize: 11, marginTop: 6 }}>
                 <span>
-                  <span style={{ color: 'var(--red)', fontWeight: 600 }}>
+                  <span style={{ color: '#ff5470', fontWeight: 700 }}>
                     Stop: {p.stop ? p.stop.toFixed(2) : '-'}
                   </span>
-                  {stopPctAbs > 0 && <span style={{ color: 'var(--t3)' }}> ({stopPctAbs.toFixed(1)}%)</span>}
+                  {stopPctAbs > 0 && <span style={{ color: '#b0bccd', fontWeight: 600 }}> ({stopPctAbs.toFixed(1)}%)</span>}
                 </span>
                 <span>
-                  <span style={{ color: accent, fontWeight: 600 }}>
+                  <span style={{ color: accent, fontWeight: 700 }}>
                     Hedef: {p.target ? p.target.toFixed(2) : '-'}
                   </span>
-                  {targetPctAbs > 0 && <span style={{ color: 'var(--t3)' }}> ({isSell ? '-' : '+'}{targetPctAbs.toFixed(1)}%)</span>}
+                  {targetPctAbs > 0 && <span style={{ color: '#b0bccd', fontWeight: 600 }}> ({isSell ? '-' : '+'}{targetPctAbs.toFixed(1)}%)</span>}
                 </span>
               </div>
 
+              {/* Row 3.5: ML Engine Match — discovered rule display */}
+              {p.mlBestRule && (p.mlMatchedCount || 0) > 0 && (
+                <div style={{
+                  fontSize: 10, fontWeight: 700, marginTop: 4, padding: '3px 6px',
+                  background: p.mlBestRule.winRate >= 75
+                    ? 'rgba(255,215,0,0.08)' : 'rgba(6,182,212,0.08)',
+                  borderRadius: 3,
+                  border: `1px solid ${p.mlBestRule.winRate >= 75 ? 'rgba(255,215,0,0.25)' : 'rgba(6,182,212,0.25)'}`,
+                  color: p.mlBestRule.winRate >= 75 ? '#ffd700' : '#06d6f0',
+                  display: 'flex', alignItems: 'center', gap: 4,
+                  letterSpacing: 0.2,
+                }}>
+                  <span>🎯</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {p.mlBestRule.setupName}
+                  </span>
+                  <span style={{
+                    fontWeight: 900, fontSize: 11,
+                    color: p.mlBestRule.winRate >= 75 ? '#ffd700' : p.mlBestRule.winRate >= 60 ? '#10e87a' : '#06d6f0',
+                  }}>
+                    %{(p.mlBestRule.winRate || 0).toFixed(0)}
+                  </span>
+                  {p.mlMatchedCount > 1 && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '0 3px',
+                      background: 'rgba(255,255,255,0.08)', borderRadius: 2,
+                      color: '#a8b3c7',
+                    }}>
+                      +{p.mlMatchedCount - 1}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Row 4: hold text */}
-              <div style={{ fontSize: 8, color: 'var(--t3)', marginTop: 3 }}>
+              <div style={{ fontSize: 10, color: '#a8b3c7', fontWeight: 600, marginTop: 5, letterSpacing: 0.2 }}>
                 {p.holdText || (isSell ? 'Kısa pozisyon' : '1-3 gün (kısa vade)')}
-                {p._alreadyHolding && <span style={{ color: 'var(--orange)', marginLeft: 4 }}>●portföy</span>}
+                {p._alreadyHolding && <span style={{ color: '#ff9a3c', marginLeft: 5, fontWeight: 800 }}>●portföy</span>}
               </div>
 
-              {/* Rank pill */}
+              {/* Rank + veri yasi pill */}
               <div style={{
                 position: 'absolute', top: 4, right: 4,
-                fontSize: 7, color: 'var(--t3)', fontWeight: 700,
-                background: 'var(--bg1)', padding: '1px 4px', borderRadius: 3,
-              }}>#{idx + 1}</div>
+                display: 'flex', gap: 3, alignItems: 'center',
+              }}>
+                {pickAge && (
+                  <span style={{
+                    fontSize: 9, color: pickAge.includes('s') ? '#ff9a3c' : '#b0bccd',
+                    fontWeight: 700, background: 'rgba(0,0,0,0.55)',
+                    padding: '2px 5px', borderRadius: 3,
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }} title={`${pickAge} önce taranmış`}>
+                    {pickAge}
+                  </span>
+                )}
+                <span style={{
+                  fontSize: 10, fontWeight: 900,
+                  background: idx === 0 ? 'linear-gradient(135deg, #ffd700, #ff9d00)'
+                    : idx === 1 ? 'linear-gradient(135deg, #c0c0c0, #808080)'
+                    : idx === 2 ? 'linear-gradient(135deg, #cd7f32, #8b4513)'
+                    : 'rgba(0,0,0,0.4)',
+                  color: idx <= 2 ? '#000' : 'var(--t3)',
+                  padding: '1px 5px', borderRadius: 3,
+                  border: idx <= 2 ? 'none' : '1px solid rgba(255,255,255,0.05)',
+                  boxShadow: idx <= 2 ? '0 1px 3px rgba(0,0,0,0.4)' : 'none',
+                }}>#{idx + 1}</span>
+              </div>
             </div>
           );
         })}
@@ -786,17 +1356,23 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         {/* Trailing info card */}
         {hasPicks && meta && (
           <div style={{
-            flexShrink: 0, width: 140,
-            background: 'var(--bg2)', borderLeft: '1px solid var(--border)',
-            padding: '8px 12px', display: 'flex', flexDirection: 'column',
-            justifyContent: 'center', gap: 5, color: 'var(--t3)', fontSize: 9,
+            flexShrink: 0, width: 165,
+            background: 'linear-gradient(180deg, rgba(6,182,212,0.04), rgba(13,17,28,1))',
+            borderLeft: '1px solid rgba(6,182,212,0.2)',
+            padding: '11px 13px', display: 'flex', flexDirection: 'column',
+            justifyContent: 'center', gap: 7, color: '#b0bccd', fontSize: 11,
+            borderRadius: 5,
           }}>
-            <div style={{ color: 'var(--cyan)', fontWeight: 700, fontSize: 10 }}>{meta.sentiment}</div>
-            <div><span style={{ color: 'var(--green)' }}>{meta.buys} AL</span> · <span style={{ color: 'var(--red)' }}>{meta.sells} SAT</span></div>
-            <div>{meta.scanned} tarandı</div>
-            {cacheAge && <div>{cacheAge}</div>}
-            <div style={{ marginTop: 4, fontSize: 8, color: '#ffffff22' }}>
-              * Bu veriler yeni bir tarama tamamlanana kadar güncel kalır. Yeni tarama bittiğinde otomatik güncellenir.
+            <div style={{ color: '#06d6f0', fontWeight: 800, fontSize: 12, letterSpacing: 0.4 }}>{meta.sentiment}</div>
+            <div style={{ fontSize: 11, fontWeight: 700 }}>
+              <span style={{ color: '#10e87a' }}>{meta.buys} AL</span>
+              <span style={{ color: '#7d8a9e', margin: '0 4px' }}>·</span>
+              <span style={{ color: '#ff5470' }}>{meta.sells} SAT</span>
+            </div>
+            <div style={{ fontSize: 11, color: '#a8b3c7', fontWeight: 600 }}>{meta.scanned} sembol tarandı</div>
+            {cacheAge && <div style={{ fontSize: 10, color: '#7d8a9e', fontWeight: 600 }}>⏱ {cacheAge}</div>}
+            <div style={{ marginTop: 4, fontSize: 9, color: '#5d6877', fontStyle: 'italic', lineHeight: 1.3 }}>
+              * Yeni tarama bittiğinde otomatik güncellenir.
             </div>
           </div>
         )}

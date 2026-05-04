@@ -21,6 +21,102 @@ export function setSignalReliabilityHints(hints) {
   if (hints && typeof hints === 'object') Object.assign(_reliabilityHints, hints);
 }
 
+// ══════════════════════════════════════════════════════════════════
+// SIGNAL ATTRIBUTION — extractFiredSignals
+// Hangi teknik/smart-money sinyalleri bu bar'da ateslendigini
+// saf fonksiyon olarak dondurur. usePaperTrading + useSignalTracker
+// bu listeyi trade'e ekler; kapaninca bySignalType win-rate guncellenir.
+// ══════════════════════════════════════════════════════════════════
+export function extractFiredSignals(ind, prices = []) {
+  if (!ind) return [];
+  const fired = [];
+  const p = ind.lastClose || 0;
+
+  // ── Momentum ──────────────────────────────────────────────────
+  if (ind.lastRSI != null) {
+    if (ind.lastRSI < 32) fired.push('RSI_OVERSOLD');
+    else if (ind.lastRSI > 70) fired.push('RSI_OVERBOUGHT');
+  }
+  if (ind.lastMACDHist != null) {
+    const h = ind.macd?.histogram || [];
+    const n = h.length;
+    if (n >= 2 && h[n - 2] != null && h[n - 1] != null) {
+      if (h[n - 2] < 0 && h[n - 1] > 0) fired.push('MACD_BULL_CROSS');
+      else if (h[n - 2] > 0 && h[n - 1] < 0) fired.push('MACD_BEAR_CROSS');
+    }
+    if (ind.lastMACDHist > 0) fired.push('MACD_HIST_POS');
+  }
+  if (ind.ttmSqueeze?.firing && (ind.ttmSqueeze.squeezeCount || 0) >= 5)
+    fired.push('TTM_FIRE');
+  if (ind.ttmSqueeze?.squeezeRelease) fired.push('TTM_RELEASE');
+  if (ind.ttmSqueeze?.squeezeOn) fired.push('TTM_SQUEEZE_ON');
+
+  // ── Smart money ────────────────────────────────────────────────
+  if (ind.obvTrend === 'accumulation') fired.push('OBV_ACC');
+  if (ind.obvTrend === 'distribution') fired.push('OBV_DIST');
+  if (ind.cmf != null) {
+    if (ind.cmf > 0.08) fired.push('CMF_STRONG');
+    else if (ind.cmf < -0.08) fired.push('CMF_NEG');
+  }
+  if (ind.mfi != null) {
+    if (ind.mfi < 30) fired.push('MFI_OVERSOLD');
+    else if (ind.mfi > 70) fired.push('MFI_OVERBOUGHT');
+  }
+
+  // ── Wyckoff ────────────────────────────────────────────────────
+  if (ind.wyckoffPhase === 'accumulation') fired.push('WYCKOFF_ACC');
+  if (ind.wyckoffPhase === 'distribution') fired.push('WYCKOFF_DIST');
+  if (ind.wyckoffPhase === 'markup') fired.push('WYCKOFF_MARKUP');
+  if (ind.wyckoffSpring === true) fired.push('WYCKOFF_SPRING');
+
+  // ── Structure / MA ─────────────────────────────────────────────
+  if (ind.lastMA20 && p > 0) {
+    if (p > ind.lastMA20) fired.push('ABOVE_MA20');
+    else fired.push('BELOW_MA20');
+  }
+  if (ind.lastMA50 && p > 0) {
+    if (p > ind.lastMA50) fired.push('ABOVE_MA50');
+  }
+  if (ind.lastMA200 && p > 0) {
+    if (p > ind.lastMA200) fired.push('ABOVE_MA200');
+  }
+  if (ind.lastMA20 && ind.lastMA50) {
+    if (ind.lastMA20 > ind.lastMA50) fired.push('GOLDEN_CROSS');
+    else fired.push('DEATH_CROSS');
+  }
+
+  // ── Supertrend / Ichimoku ──────────────────────────────────────
+  if (ind.supertrend?.trend === 'UP') fired.push('SUPERTREND_UP');
+  if (ind.supertrend?.trend === 'DOWN') fired.push('SUPERTREND_DOWN');
+  if (ind.supertrend?.flip === true) {
+    fired.push(ind.supertrend.trend === 'UP' ? 'SUPERTREND_FLIP_UP' : 'SUPERTREND_FLIP_DOWN');
+  }
+
+  // ── Bollinger ──────────────────────────────────────────────────
+  if (ind.lastBU && ind.lastBL && ind.lastBM) {
+    const bw = (ind.lastBU - ind.lastBL) / ind.lastBM;
+    if (bw < 0.04) fired.push('BB_SQUEEZE');
+    if (p > ind.lastBU) fired.push('BB_ABOVE_UPPER');
+    if (p < ind.lastBL) fired.push('BB_BELOW_LOWER');
+  }
+
+  // ── Volume ─────────────────────────────────────────────────────
+  if (ind.volRatio != null) {
+    if (ind.volRatio > 2.5) fired.push('VOL_EXPLOSIVE');
+    else if (ind.volRatio > 1.5) fired.push('VOL_HIGH');
+  }
+
+  // ── Pattern detectors (safe wrappers) ─────────────────────────
+  if (prices.length >= 30) {
+    try { const r = detectBreakout(prices, ind); if (r) fired.push(r.type); } catch {}
+    try { const r = detectChartPattern(prices, ind); if (r) fired.push(r.type); } catch {}
+    try { const r = detectMomentumShift(prices, ind); if (r) fired.push(r.type); } catch {}
+    try { const sm = detectSmartMoney(ind); sm.forEach(s => fired.push(s.type)); } catch {}
+  }
+
+  return [...new Set(fired)]; // deduplicate
+}
+
 // ============================================================
 // ADVANCED PATTERN DETECTION ENGINE (UNIFIED)
 // ============================================================
@@ -641,21 +737,6 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     }
   }
 
-  // ── CONSECUTIVE CANDLE ANALYSIS (momentum exhaustion/continuation) ──
-  if (prices && prices.length >= 5) {
-    const last5 = prices.slice(-5);
-    const greenCount = last5.filter(b => b.close > b.open).length;
-    const redCount = last5.filter(b => b.close < b.open).length;
-    // 4+ consecutive green bars at overbought = exhaustion risk ONLY IF volume is low
-    if (greenCount >= 4 && ind.lastRSI > 70 && ind.volRatio < 1.2) {
-      score -= 1; reasons.push({ t: 'TUKENIS RISKI: 4+ yukselis + RSI yuksek + Dusuk hacim', c: 'bearish' });
-    }
-    // 4+ consecutive red bars at oversold = bounce potential
-    if (redCount >= 4 && ind.lastRSI < 35) {
-      score += 1; reasons.push({ t: 'SICRAMA POTANSIYELI: 4+ dusus + RSI dusuk — tepki yukselisi yakin', c: 'bullish' });
-    }
-  }
-
   // ── GAP ANALYSIS (price gaps as S/R) ──
   if (prices && prices.length >= 3) {
     const prev = prices[prices.length - 2];
@@ -672,21 +753,100 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
 
   // ── WEAK CLOSE & PIN BAR PENALTY (After-Hours Fall Protection) ──
   if (ind.dayHighLowRange !== undefined) {
-    if (ind.dayHighLowRange < 0.3) {
-      score -= 2.5; 
+    if (ind.dayHighLowRange < 0.2) {
+      score -= 3.5;
+      reasons.push({ t: 'COK ZAYIF KAPANIS: Zirveden %80+ geri verildi — agir satis baskisi', c: 'bearish' });
+    } else if (ind.dayHighLowRange < 0.3) {
+      score -= 2.5;
       reasons.push({ t: 'ZAYIF KAPANIS: Zirveden sert satis yedi (Tuzak riski)', c: 'bearish' });
+    } else if (ind.dayHighLowRange < 0.4) {
+      score -= 1.0;
+      reasons.push({ t: 'ORTA-ZAYIF KAPANIS: Gun icinde saticilar aktif', c: 'bearish' });
     }
     const today = prices && prices.length > 0 ? prices[prices.length - 1] : null;
     if (today && today.high > today.low) {
       const bodyTop = Math.max(today.open, today.close);
       const bodyBottom = Math.min(today.open, today.close);
       const upperShadow = today.high - bodyTop;
-      const bodySize = bodyTop - bodyBottom;
+      const lowerShadow = bodyBottom - today.low;
+      const bodySize = bodyTop - bodyBottom || 0.01;
+      // Shooting star: uzun ust golge + kucuk govde = reddedilme
       if (upperShadow > bodySize * 2 && ind.dayHighLowRange < 0.4) {
         score -= 2.0;
         reasons.push({ t: 'SHOOTING STAR / PIN BAR: Yukaridan reddedildi', c: 'bearish' });
       }
+      // Gravestone doji: neredeyse tum range ust golgede
+      if (upperShadow > bodySize * 4 && bodySize / (today.high - today.low) < 0.1) {
+        score -= 2.5;
+        reasons.push({ t: 'GRAVESTONE DOJI: Guc tukenmesi — ertesi gun dusus riski cok yuksek', c: 'bearish' });
+      }
+      // Hammer (bullish): uzun alt golge + kucuk govde = dip red
+      if (lowerShadow > bodySize * 2.5 && upperShadow < bodySize * 0.5 && ind.lastRSI < 40) {
+        score += 1.5;
+        reasons.push({ t: 'HAMMER: Dipten guclu reddedilme — tersine donus sinyali', c: 'bullish' });
+      }
     }
+  }
+
+  // ── EXHAUSTION / TUKENIS PATTERN (Enhanced — World-Class Detection) ──
+  // Ust uste yukselis + bariz momentum kaybı = yarın düşüş olasılığı yüksek
+  if (prices && prices.length >= 5) {
+    const last5 = prices.slice(-5);
+    const last3 = prices.slice(-3);
+
+    // 3 gun ust uste yukselis + son bar'da hacim dusuk = tukenis
+    const rising3 = last3.every((b, i) => i === 0 || b.close > last3[i-1].close);
+    const totalRise3 = last3.length >= 2 ? ((last3[last3.length-1].close - last3[0].open) / last3[0].open * 100) : 0;
+
+    if (rising3 && totalRise3 > 6 && ind.volRatio < 1.0) {
+      score -= 2.5;
+      reasons.push({ t: `TUKENIS PATTERNI: 3 gun +%${totalRise3.toFixed(1)} yukselis ama hacim dusuyor — akilli para almıyor`, c: 'bearish' });
+    } else if (rising3 && totalRise3 > 4 && ind.volRatio < 0.8) {
+      score -= 1.5;
+      reasons.push({ t: `ZAYIF RALLI: 3 gunde +%${totalRise3.toFixed(1)} ama hacim kuruyor`, c: 'bearish' });
+    }
+
+    // Daralan govde = momentum kaybı (ust uste kuculen mumlar)
+    if (last3.length >= 3) {
+      const body0 = Math.abs(last3[0].close - last3[0].open);
+      const body1 = Math.abs(last3[1].close - last3[1].open);
+      const body2 = Math.abs(last3[2].close - last3[2].open);
+      if (body0 > body1 && body1 > body2 && body2 > 0 && rising3) {
+        score -= 1.5;
+        reasons.push({ t: 'DARALAN GOVDE: Her gun daha kucuk yukselis — momentum tukeniyor', c: 'bearish' });
+      }
+    }
+
+    // 5 bar analizi: extended rally detection
+    const greenCount = last5.filter(b => b.close > b.open).length;
+    const redCount = last5.filter(b => b.close < b.open).length;
+    // 4+ consecutive green bars at overbought = exhaustion risk
+    if (greenCount >= 4 && (ind.lastRSI || 50) > 65) {
+      const volPenalty = ind.volRatio < 1.0 ? 2.5 : ind.volRatio < 1.2 ? 1.5 : 1.0;
+      score -= volPenalty;
+      reasons.push({ t: `UZAMIS RALLI: ${greenCount}/5 yesil mum + RSI ${(ind.lastRSI||50).toFixed(0)} — duzeltme olasılığı yuksek`, c: 'bearish' });
+    }
+    // 4+ consecutive red bars at oversold = bounce potential
+    if (redCount >= 4 && (ind.lastRSI || 50) < 35) {
+      score += 1.5;
+      reasons.push({ t: 'SICRAMA POTANSIYELI: 4+ dusus + RSI dusuk — tepki yukselisi yakin', c: 'bullish' });
+    }
+  }
+
+  // ── SMART MONEY DIVERGENCE: Rising price + Distribution = TUZAK ──
+  // Bu OZSUB/BVSAN'in yakalanmasi gereken en onemli sinyal
+  if (ind.obvTrend === 'distribution' && ind.changePct > 0 && (ind.lastRSI || 50) > 55) {
+    score -= 2.5;
+    reasons.push({ t: 'AKILLI PARA TUZAGI: Fiyat yukselirken OBV dagilim — buyukler satiyor, KACINIZ', c: 'bearish' });
+  }
+  if ((ind.cmf || 0) < -0.08 && ind.changePct > 0.5) {
+    score -= 1.5;
+    reasons.push({ t: 'CMF UYARISI: Fiyat artisi + para cikisi — sahte yukselis', c: 'bearish' });
+  }
+  // MFI overbought + recent pump = sert dusus olasiligi
+  if ((ind.mfi || 50) > 75 && ind.changePct > 2) {
+    score -= 2.0;
+    reasons.push({ t: `MFI ASIRI ALIM (${(ind.mfi||50).toFixed(0)}): Yukselis + asiri MFI = kar realizasyonu yakın`, c: 'bearish' });
   }
 
   // ── MOMENTUM QUALITY: Volume confirms price direction ──
@@ -701,11 +861,16 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
       score += 2.0; reasons.push({ t: 'MOMENTUM KALITESI: ASIRI GUCLU kurumsal momentum', c: 'bullish' });
     }
     if (priceDown && ind.volRatio > 1.5) {
-      score -= 0.5; reasons.push({ t: 'MOMENTUM KALITESI: Dusus hacimle teyit ediliyor', c: 'bearish' });
+      score -= 1.5; reasons.push({ t: 'MOMENTUM KALITESI: Dusus hacimle teyit — satis baskisi agir', c: 'bearish' });
     }
-    // Rising price on falling volume = weak rally
+    if (priceDown && ind.volRatio > 2.5) {
+      score -= 2.0; reasons.push({ t: 'KURUMSAL SATIS: Agir hacimli dusus — panik modu', c: 'bearish' });
+    }
+    // Rising price on falling volume = weak rally — ENHANCED PENALTY
     if (priceUp && ind.volRatio < 0.7) {
-      score -= 0.5; reasons.push({ t: 'ZAYIF RALLI: Yukselis dusuk hacimle — susdurulabilir', c: 'bearish' });
+      score -= 1.5; reasons.push({ t: 'ZAYIF RALLI: Yukselis dusuk hacimle — susdurulabilir (cok tehlikeli)', c: 'bearish' });
+    } else if (priceUp && ind.volRatio < 1.0) {
+      score -= 0.5; reasons.push({ t: 'DUSUK HACIM RALLISI: Yukselis ortalamanin altinda hacimle', c: 'bearish' });
     }
   }
 
@@ -1047,22 +1212,31 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
       conf = Math.min(95, conf * 1.10);
     }
   }
+  // v24: Volume threshold relaxed — BIST ortalama volRatio ~0.8-1.0, strict >1.1 %85 hisseyi eliyordu
   const hasVolConfirm = ind.volRatio > 1.1;
+  const hasVolSoft = ind.volRatio > 0.8;         // Yumusak hacim — dusuk degil yeterli
   const hasSmartMoneyBuy = ind.obvTrend === 'accumulation' || (ind.cmf != null && ind.cmf > 0.05) || (ind.mfi != null && ind.mfi < 35);
   const hasSmartMoneySell = ind.obvTrend === 'distribution' || (ind.cmf != null && ind.cmf < -0.05) || (ind.mfi != null && ind.mfi > 75);
 
-  // Require minimum 4 independent bullish indicator types for BUY (upgraded from 3)
+  // v24: bullishTypes esigi: GUCLU AL=5, AL=4, ZAYIF AL=3
   const minBullTypes = bullishTypes.size >= 4;
+  const softBullTypes = bullishTypes.size >= 3;   // 3 bagimsiz teyit = makul sinyal
   const minBearTypes = bearishTypes.size >= 4;
+  const softBearTypes = bearishTypes.size >= 3;
 
   // GUCLU AL: score100 >= 75 AND volume AND smart money AND 5+ indicator types
   if (score100 >= 75 && hasVolConfirm && hasSmartMoneyBuy && bullishTypes.size >= 5) { signal = 'GUCLU AL'; cls = 'buy'; }
   // AL: score100 >= 65 AND volume AND 4+ indicator types
   else if (score100 >= 65 && hasVolConfirm && minBullTypes) { signal = 'AL'; cls = 'buy'; }
+  // v24 ZAYIF AL: score100 >= 57 AND soft volume AND 3+ types AND smart money teyidi
+  // BIST'te volRatio 0.8-1.1 arasi cok yaygin; bunlar guclu setup olabilir
+  else if (score100 >= 57 && hasVolSoft && softBullTypes && hasSmartMoneyBuy) { signal = 'AL'; cls = 'buy'; }
   // GUCLU SAT: score100 <= 25 AND volume AND smart money selling AND 5+ types
   else if (score100 <= 25 && hasVolConfirm && hasSmartMoneySell && bearishTypes.size >= 5) { signal = 'GUCLU SAT'; cls = 'sell'; }
   // SAT: score100 <= 35 AND 4+ indicator types
   else if (score100 <= 35 && minBearTypes) { signal = 'SAT'; cls = 'sell'; }
+  // v24 ZAYIF SAT: score100 <= 42 AND soft bear types AND smart money selling
+  else if (score100 <= 42 && softBearTypes && hasSmartMoneySell) { signal = 'SAT'; cls = 'sell'; }
   else { signal = 'TUT'; cls = 'hold'; }
 
   // ========== ENTRY / STOP / TARGETS (ADVANCED) ==========
@@ -1195,32 +1369,34 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   const rr2 = risk > 0 ? (t2 - entry) / risk : 0;
   const rrQuality = rr >= 2.5 ? 'excellent' : rr >= 1.8 ? 'good' : rr >= 1.2 ? 'fair' : 'poor';
 
-  // ── R/R QUALITY GATE: Downgrade signals with poor R/R ──
-  // Loosened for extreme momentum: if volume is huge and score is high, we can accept a bit more risk
-  const minRR = (ind.volRatio > 2.5 && score100 >= 70) ? 0.5 : 1.0;
-  if (rr < 1.0 && cls === 'buy') {
-    if (rr < minRR) {
-      signal = 'TUT'; cls = 'hold';
-      reasons.push({ t: 'R/R FILTRESI: Risk/Odul 1:' + rr.toFixed(1) + ' yetersiz (Eşik: ' + minRR + ') — sinyal iptal', c: 'bearish' });
-    } else {
-      reasons.push({ t: 'R/R UYARISI: Risk/Odul 1:' + rr.toFixed(1) + ' dusuk — momentum ile tolere edilebilir', c: 'neutral' });
-    }
+  // ── R/R QUALITY GATE (v24 — yumusatildi) ──
+  // ONCEKI SORUN: rr<1.0 → cls='hold' → useAIAdvisor'da ikinci kez score gate → cift ceza
+  // YENI: rr<0.5 = gercekten kotu → hold; rr 0.5-1.0 = uyari ama sinyal korunur
+  // useAIAdvisor zaten composite confidence ile R/R'yi degerlendiriyor
+  const minRR = (ind.volRatio > 2.0 && score100 >= 65) ? 0.3 : 0.5;
+  if (rr < minRR && cls === 'buy') {
+    signal = 'TUT'; cls = 'hold';
+    reasons.push({ t: 'R/R FILTRESI: Risk/Odul 1:' + rr.toFixed(1) + ' yetersiz (Eşik: ' + minRR + ') — sinyal iptal', c: 'bearish' });
+  } else if (rr < 1.0 && cls === 'buy') {
+    // Uyar ama sinyal KORUNSUN — useAIAdvisor composite confidence ile degerlendirsin
+    conf = Math.max(15, conf * 0.90);
+    reasons.push({ t: 'R/R UYARISI: Risk/Odul 1:' + rr.toFixed(1) + ' dusuk — diger faktorlerle dengelenecek', c: 'neutral' });
   }
 
   // ── VOLUME-PRICE DIVERGENCE PENALTY: Rising price + falling volume ──
   if (cls === 'buy' && ind.volRatio < 0.7 && ind.changePct > 0.5) {
-    conf = Math.max(10, conf * 0.85);
+    conf = Math.max(10, conf * 0.90);
     reasons.push({ t: 'HACIM UYARISI: Yukselis dusuk hacimle — guvenilirlik azaltildi', c: 'neutral' });
   }
 
-  // ── MULTI-TEYIT KALITE SKORU: minimum independent indicator type count ──
+  // ── MULTI-TEYIT: az teyitte confidence dusur ama sinyal KORUNSUN ──
   if (cls === 'buy' && bullishTypes.size < 3) {
-    conf = Math.max(10, conf * 0.80);
-    reasons.push({ t: 'TEYIT EKSIK: Sadece ' + bullishTypes.size + ' bagimsiz yukselis teyidi — daha fazla gerekli', c: 'neutral' });
+    conf = Math.max(15, conf * 0.85);
+    reasons.push({ t: 'TEYIT NOTU: ' + bullishTypes.size + ' bagimsiz yukselis teyidi — ek teyit aranmali', c: 'neutral' });
   }
   if (cls === 'sell' && bearishTypes.size < 3) {
-    conf = Math.max(10, conf * 0.80);
-    reasons.push({ t: 'TEYIT EKSIK: Sadece ' + bearishTypes.size + ' bagimsiz dusus teyidi', c: 'neutral' });
+    conf = Math.max(15, conf * 0.85);
+    reasons.push({ t: 'TEYIT NOTU: ' + bearishTypes.size + ' bagimsiz dusus teyidi', c: 'neutral' });
   }
 
   // Hold duration estimate (short-term based on T1)
@@ -1328,7 +1504,7 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     baseSig.edge = 50;
   }
 
-  // ── RELIABILITY FEEDBACK ──
+  // ── RELIABILITY FEEDBACK (cls-level) ──
   // useSignalTracker, her 10 dakikalik fiyat kontrol dongusunden sonra
   // kazanma oranini buraya push eder. Sistem surekli kaybediyorsa guveni duser;
   // surekli kazaniyorsa guveni hafifce artar. Min 15 ornek sart.
@@ -1349,6 +1525,44 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
           c: 'bullish',
         });
       }
+    }
+  }
+
+  // ── SIGNAL ATTRIBUTION FEEDBACK (per-signal-type) ──
+  // Her fired sinyal tipi icin gecmis win-rate'i hesapla.
+  // Yeterli ornegi olan (>=8) ve cok basarili/basarisiz tipleri
+  // score100'e kucuk bir delta olarak yansit (±2 max).
+  {
+    const stHints = _reliabilityHints.bySignalType;
+    if (stHints) {
+      try {
+        const firedNow = extractFiredSignals(ind, prices);
+        let totalDelta = 0, counted = 0;
+        for (const sigType of firedNow) {
+          const sh = stHints[sigType];
+          if (!sh || sh.sampleSize < 8) continue;
+          // winRate 0-1 arasi; 0.5 etrafinda merkezle, [-1,+1] araligina scale et
+          const delta = (sh.winRate - 0.5) * 2; // -1..+1
+          totalDelta += delta;
+          counted++;
+        }
+        if (counted > 0) {
+          const avgDelta = totalDelta / counted;
+          const scoreBump = Math.max(-2, Math.min(2, avgDelta * 2));
+          if (Math.abs(scoreBump) >= 0.3) {
+            baseSig.score = Math.max(0, Math.min(10, baseSig.score + scoreBump));
+            baseSig.attributionDelta = Math.round(scoreBump * 10) / 10;
+            baseSig.reasons.push({
+              t: `SINYAL ATRIBU: ${counted} tip gecmisi (${scoreBump > 0 ? '+' : ''}${scoreBump.toFixed(1)} skor)`,
+              c: scoreBump > 0 ? 'bullish' : 'neutral',
+            });
+          }
+        }
+        baseSig.firedSignals = firedNow;
+      } catch {}
+    } else {
+      // bySignalType henuz yok — sadece firedSignals'i ekle, skoru degistirme
+      try { baseSig.firedSignals = extractFiredSignals(ind, prices); } catch {}
     }
   }
 

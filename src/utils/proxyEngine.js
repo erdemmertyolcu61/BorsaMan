@@ -42,7 +42,8 @@ export function trackSource(source, success, duration) {
 
 export async function getDataViaProxies(url, options = {}) {
   try {
-    const response = await fetch(url, options);
+    const fetchOptions = options && typeof options === 'object' ? options : {};
+    const response = await fetch(url, fetchOptions);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return await response.json();
   } catch (error) {
