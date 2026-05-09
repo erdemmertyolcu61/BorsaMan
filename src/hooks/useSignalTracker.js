@@ -284,6 +284,62 @@ export function useSignalTracker() {
     }
   }, []);
 
+  // ── Auto-ingest AI Advisor scan results ──
+  useEffect(() => {
+    const handler = (e) => {
+      const { topPicks } = e.detail || {};
+      if (!Array.isArray(topPicks) || topPicks.length === 0) {
+        console.warn('[SignalTracker] advisor-scan-complete had no topPicks');
+        return;
+      }
+      const tradable = topPicks.filter(p =>
+        p && (p.cls === 'buy' || p.cls === 'sell') && p.symbol
+      );
+      console.log(`[SignalTracker] Ingesting ${tradable.length} advisor picks (of ${topPicks.length} total)`);
+      for (const pick of tradable) {
+        recordSignal({
+          symbol:     pick.symbol,
+          cls:        pick.cls,
+          signal:     pick.signal,
+          price:      pick.price || pick.entry || pick.currentPrice,
+          entry:      pick.entry || pick.price,
+          stop:       pick.stop,
+          target:     pick.target || pick.t1,
+          rr:         pick.rr,
+          score:      pick.score,
+          score100:   pick.score,
+          confidence: pick.confidence,
+          grade:      pick.grade,
+          tier:       pick.tier,
+          sector:     pick.sector,
+          source:     'advisor',
+          firedSignals:      pick.firedSignals,
+          mlConfidenceBoost: pick.mlConfidenceBoost,
+          mlMatchedCount:    pick.mlMatchedCount,
+          mlBestRule:        pick.mlBestRule,
+        });
+      }
+    };
+    window.addEventListener('advisor-scan-complete', handler);
+    return () => window.removeEventListener('advisor-scan-complete', handler);
+  }, [recordSignal]);
+
+  // ── Auto-ingest single-stock analyze results ──
+  useEffect(() => {
+    const handler = (e) => {
+      const r = e.detail || {};
+      if (!r.symbol || (r.cls !== 'buy' && r.cls !== 'sell')) return;
+      console.log(`[SignalTracker] Ingesting analyze-result: ${r.symbol} ${r.cls}`);
+      recordSignal({
+        symbol: r.symbol, cls: r.cls, signal: r.signal,
+        price: r.price, entry: r.price, score: r.score, score100: r.score,
+        source: 'analyze',
+      });
+    };
+    window.addEventListener('analyze-result', handler);
+    return () => window.removeEventListener('analyze-result', handler);
+  }, [recordSignal]);
+
   const updateSignal = useCallback((signalId, updates) => {
     setSignals(prev => prev.map(sig => (sig.id === signalId ? { ...sig, ...updates } : sig)));
   }, []);

@@ -169,33 +169,58 @@ export class PaperTradeEngine {
   // ── Process Scan Results (TOP 3 ML picks) ──
 
   async processScanResults(picks) {
-    if (!this._initialized) await this.init();
-    if (!picks?.length) return;
+    if (!this._initialized) {
+      console.log('[PaperTrade] Engine not initialized — initializing now...');
+      await this.init();
+    }
+    console.log('[PaperTrade] Received picks:', picks?.length || 0);
+    if (!picks?.length) {
+      console.warn('[PaperTrade] ABORT — picks array empty');
+      return;
+    }
 
     const s = this._state;
     const existingSymbols = new Set(s.openTrades.map(t => t.symbol));
+    console.log('[PaperTrade] State: cash=', s.cash, '| openTrades=', s.openTrades.length, '| existingSymbols=', [...existingSymbols]);
 
     // All buy-eligible picks not already held
     const eligible = picks.filter(p =>
       p.cls === 'buy' && !existingSymbols.has(p.symbol)
     );
+    console.log('[PaperTrade] Buy-eligible picks (cls=buy, not held):', eligible.length, eligible.map(p => p.symbol));
+
+    if (!eligible.length) {
+      console.warn('[PaperTrade] ABORT — no buy-eligible picks. Sample cls values:',
+        picks.slice(0, 5).map(p => ({ sym: p.symbol, cls: p.cls })));
+      return;
+    }
 
     // Priority 1: ML-matched picks, sorted by ML confidence boost descending
     const mlPicks = eligible
       .filter(p => (p.mlMatchedCount || 0) > 0 && (p.mlConfidenceBoost || 0) > MIN_ML_BOOST)
       .sort((a, b) => (b.mlConfidenceBoost || 0) - (a.mlConfidenceBoost || 0));
+    console.log('[PaperTrade] ML-matched picks:', mlPicks.length,
+      mlPicks.map(p => ({ sym: p.symbol, boost: p.mlConfidenceBoost, matched: p.mlMatchedCount })));
 
     // Priority 2: If no ML matches, fallback to top SMC score picks
     const fallbackPicks = mlPicks.length > 0
       ? []
       : eligible
-          .filter(p => (p.score || 0) >= 55) // minimum quality gate
+          .filter(p => (p.score || 0) >= 55)
           .sort((a, b) => (b.score || 0) - (a.score || 0));
+    console.log('[PaperTrade] SMC fallback picks (score>=55):', fallbackPicks.length,
+      fallbackPicks.map(p => ({ sym: p.symbol, score: p.score })));
 
-    // Merge: ML picks first, then fallback — take TOP 3 within available slots
+    // ML picks first, then fallback — take TOP 3 within available slots
     const slotsAvailable = MAX_POSITIONS - s.openTrades.length;
-    const candidates = [...mlPicks, ...fallbackPicks];
-    const toOpen = candidates.slice(0, Math.min(3, slotsAvailable));
+    const queue = [...mlPicks, ...fallbackPicks];
+    const toOpen = queue.slice(0, Math.min(3, slotsAvailable));
+    console.log('[PaperTrade] Queue:', queue.map(p => p.symbol), '| slots=', slotsAvailable, '| willOpen=', toOpen.map(p => p.symbol));
+
+    if (!toOpen.length) {
+      console.warn('[PaperTrade] ABORT — no candidates after filtering or no slots (slotsAvailable=', slotsAvailable, ')');
+      return;
+    }
 
     for (const pick of toOpen) {
       await this._openTrade(pick);
@@ -204,6 +229,7 @@ export class PaperTradeEngine {
     if (toOpen.length > 0) {
       this._persist();
       this._emit();
+      console.log('[PaperTrade] Done. New openTrades count:', this._state.openTrades.length);
     }
   }
 
@@ -211,17 +237,50 @@ export class PaperTradeEngine {
 
   async _openTrade(pick) {
     const s = this._state;
-    const entry = pick.price || pick.entry;
-    if (!entry || entry <= 0) return;
+
+    // Robust price extraction with multiple fallbacks
+    const lastBarClose = (pick.data && Array.isArray(pick.data) && pick.data.length > 0)
+      ? pick.data[pick.data.length - 1]?.close
+      : null;
+    const price = pick.currentPrice
+               || pick.price
+               || pick.entry
+               || pick.close
+               || pick.lastClose
+               || lastBarClose
+               || null;
+
+    // Strict validation — log and skip on invalid price (no silent crash)
+    if (!price || price <= 0 || !Number.isFinite(price)) {
+      console.warn('[PaperTrade] SKIPPING', pick.symbol, '- Invalid price:', price,
+        '| candidates:', {
+          currentPrice: pick.currentPrice,
+          price: pick.price,
+          entry: pick.entry,
+          close: pick.close,
+          lastClose: pick.lastClose,
+          lastBarClose,
+        });
+      return;
+    }
+
+    const currentPrice = price;
+    const entry = currentPrice;
 
     // 33% max capital allocation
     const sizeTl = Math.min(s.cash * MAX_POS_PCT, s.cash);
-    if (sizeTl < MIN_ENTRY_TL) return;
+    if (sizeTl < MIN_ENTRY_TL) {
+      console.warn('[PaperTrade] ABORTING trade for', pick.symbol, '- Position size too small:',
+        sizeTl, 'TL (min:', MIN_ENTRY_TL, ', cash:', s.cash, ')');
+      return;
+    }
 
     // Strict -3% stop-loss
     const stopPrice = Math.round(entry * (1 + STOP_LOSS_PCT) * 100) / 100;
     const targetPrice = pick.target || pick.t1 || entry * 1.10;
     const lots = Math.floor(sizeTl / entry);
+    console.log('[PaperTrade] Opening trade for', pick.symbol, 'at', currentPrice,
+      '| stop=', stopPrice, '| target=', targetPrice, '| sizeTL=', sizeTl, '| lots=', lots);
 
     const trade = {
       symbol:       pick.symbol,
@@ -250,9 +309,17 @@ export class PaperTradeEngine {
         : `SMC score: ${(pick.score || 0).toFixed(0)} | Fallback (no ML match)`,
     };
 
+    console.log('[PaperTrade] isElectron =', this._isElectron, '| _api available =', !!this._api);
+
     if (this._isElectron) {
-      const id = await this._api.openTrade(trade);
-      trade.id = id;
+      try {
+        const id = await this._api.openTrade(trade);
+        trade.id = id;
+        console.log('[PaperTrade] SQLite insert OK — tradeId=', id);
+      } catch (err) {
+        console.error('[PaperTrade] SQLite insert FAILED:', err?.message, err);
+        return;
+      }
     } else {
       trade.id = Date.now() + Math.random();
       trade.status = 'OPEN';
@@ -267,14 +334,14 @@ export class PaperTradeEngine {
     }
 
     s.cash -= trade.sizeTl;
-    s.openTrades.push(this._isElectron ? await this._api.getOpenTrades().then(t => t.find(x => x.id === trade.id) || trade) : trade);
 
-    // Reload open trades from DB to stay consistent
     if (this._isElectron) {
-      s.openTrades = await this._api.getOpenTrades();
-      const portfolio = await this._api.getPortfolio();
-      // Update DB cash
+      // Reload from DB — single source of truth, no redundant push
       await this._api.updatePortfolio({ cash: s.cash });
+      s.openTrades = await this._api.getOpenTrades();
+    } else {
+      // localStorage mode: push directly
+      s.openTrades.push(trade);
     }
 
     console.log(`[PaperML] Opened: ${trade.symbol} @ ${entry} | ML boost: ${trade.mlConfidence} | Size: ${trade.sizeTl} TL`);

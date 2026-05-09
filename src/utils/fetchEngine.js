@@ -88,7 +88,8 @@ const _sourceHealth = {
   'foreks': { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'online' },
   'borsajs': { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'unknown' },
   'biquote': { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'unknown' },
-  'self-proxy': { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'unknown' }
+  'self-proxy': { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'unknown' },
+  'electron-direct': { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'online' }
 };
 
 export function recordSourceSuccess(source, latency) {
@@ -172,6 +173,31 @@ export function getSourcePriority() {
 }
 
 // Track which source provided data last (for analytics) — uses original trackSource at line ~219
+
+// ═══ ELECTRON-FIRST UNIVERSAL FETCH HELPER ═══
+// Tek satirlik veri cekme: once Electron IPC, sonra getDataViaProxies fallback.
+// Tum data source fonksiyonlarinin (BigPara/Yahoo/IsYatirim/KAP/News) ortak girisi.
+// Returns text body (string) on success, null on total failure.
+export async function smartFetch(targetUrl, ms = 9000) {
+  // Electron fast path
+  if (typeof window !== 'undefined' && window.electronAPI?.remoteFetch) {
+    try {
+      const ipc = window.electronAPI.remoteFetch(targetUrl, { method: 'GET' });
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('ipc-timeout')), ms));
+      const res = await Promise.race([ipc, timeout]);
+      if (res?.success && res?.text && res.text.length >= 20) {
+        const t = res.text;
+        // HTML guard
+        if (!t.startsWith('<') && !t.includes('<!DOCTYPE') && !t.includes('<html')) {
+          return t;
+        }
+      }
+    } catch { /* fall through */ }
+  }
+  // Browser/web fallback: proxy zinciri
+  return await getDataViaProxies(targetUrl, ms);
+}
+
 // ═══ BATCH BIGPARA PRICE FETCH (Scanner Optimization) ═══
 let _batchPriceCache = { ts: 0, data: {} };
 const BATCH_CACHE_TTL = 60000; // 1 minute
@@ -305,6 +331,27 @@ export function isBistWeekend(d) {
   return dow === 0 || dow === 6;
 }
 
+/**
+ * isBistOpenNow — true if BIST market is currently in active trading.
+ * BIST continuous session: 09:55–18:10 TRT (Europe/Istanbul), Mon–Fri.
+ * Uses Intl.DateTimeFormat to resolve the correct offset regardless of host TZ.
+ */
+export function isBistOpenNow() {
+  try {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Istanbul',
+      weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+    }).formatToParts(now);
+    const get = (t) => parseInt(parts.find(p => p.type === t)?.value ?? '0', 10);
+    const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const dow = dayMap[parts.find(p => p.type === 'weekday')?.value] ?? -1;
+    if (dow < 1 || dow > 5) return false;        // weekend
+    const t = get('hour') * 60 + get('minute');
+    return t >= 595 && t < 1090;                 // 09:55 – 18:10
+  } catch { return false; }
+}
+
 function parseTurkishDate(str) {
   if (!str) return new Date();
   try {
@@ -428,18 +475,76 @@ export async function tryProxy(url, ms = 10000) {
 }
 
 // ── Parallel race pattern (Promise.any) ────────────────────────────────────
-// All candidates (self-hosted proxy + public CORS proxies) fire SIMULTANEOUSLY.
-// Each racer has a STRICT 5-second per-request timeout (default). The fastest
-// successful non-empty response wins; slow probes are abandoned immediately.
-// Result: 100-ticker scans finish in ~seconds instead of stalling on a single
-// slow public proxy.
+// PRIORITY 1: Electron IPC direct fetch (NO CORS, no rate limit) — instant
+// PRIORITY 2: Self-hosted Vercel proxy (if configured) — reliable + cached
+// PRIORITY 3: Public CORS proxies (LAST RESORT — heavily rate-limited)
 //
-// Contract: resolves with text payload, OR null if every racer fails within 5.5s.
-const RACE_PER_REQUEST_MS = 7000;   // per-probe timeout (was 5s — increased to reduce false negatives)
+// In Electron, racers[0] is electron-direct which always wins because the main
+// process fetches directly with full Node.js networking — no CORS, no proxy.
+// Public proxies only used in browser/web mode where Electron IPC is unavailable.
+//
+// Contract: resolves with text payload, OR null if every racer fails.
+const RACE_PER_REQUEST_MS = 7000;   // per-probe timeout
 const RACE_CEILING_MS     = 7500;   // absolute resolve-or-null bound
+const ELECTRON_FAST_MS    = 6000;   // Electron-direct gets shorter timeout (faster fail to fallback)
+
+// Electron-direct fast path — bypasses ALL CORS proxies in desktop mode.
+// Returns { text, source } on success, null on failure.
+async function _electronDirectFetch(targetUrl, ms = ELECTRON_FAST_MS) {
+  if (typeof window === 'undefined' || !window.electronAPI?.remoteFetch) return null;
+  try {
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timeoutHandle = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
+
+    // Race the IPC call against an explicit timeout — IPC itself doesn't honor signals
+    const ipcPromise = window.electronAPI.remoteFetch(targetUrl, { method: 'GET' });
+    const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error('electron-timeout')), ms + 500));
+    const res = await Promise.race([ipcPromise, timeoutPromise]);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+
+    if (res?.success && res?.text && res.text.length >= 20) {
+      // Check for HTML error pages
+      const t = res.text;
+      if (t.startsWith('<') || t.includes('<!DOCTYPE') || t.includes('<html')) {
+        _recordFailure('electron-direct');
+        return null;
+      }
+      _recordSuccess('electron-direct');
+      return { text: t, source: 'electron-direct' };
+    }
+    _recordFailure('electron-direct');
+    return null;
+  } catch {
+    _recordFailure('electron-direct');
+    return null;
+  }
+}
 
 export function getDataViaProxies(targetUrl, ms = RACE_PER_REQUEST_MS) {
   _proxyStats.total++;
+
+  // ── ELECTRON FAST PATH ──
+  // In desktop mode, main process fetches directly. Skip ALL CORS proxies.
+  // Only fall back to proxies if Electron-direct fails (rare — usually network/server side).
+  const isElectron = typeof window !== 'undefined' && !!window.electronAPI?.remoteFetch;
+  if (isElectron && !_isCircuitOpen('electron-direct')) {
+    return _electronDirectFetch(targetUrl, Math.min(ms, ELECTRON_FAST_MS))
+      .then((result) => {
+        if (result?.text) {
+          _proxyStats.ok++;
+          trackSource(result.source);
+          return result.text;
+        }
+        // Electron-direct failed — fall back to proxies (rare)
+        return _raceProxies(targetUrl, ms);
+      })
+      .catch(() => _raceProxies(targetUrl, ms));
+  }
+
+  return _raceProxies(targetUrl, ms);
+}
+
+function _raceProxies(targetUrl, ms = RACE_PER_REQUEST_MS) {
   const perProbe = Math.min(ms, RACE_PER_REQUEST_MS);
   const racers = _buildRacers(targetUrl, perProbe);
   if (racers.length === 0) return Promise.resolve(null);
@@ -474,7 +579,7 @@ export function getDataViaProxies(targetUrl, ms = RACE_PER_REQUEST_MS) {
 
 function _buildRacers(targetUrl, ms) {
   const racers = [];
-  // Gate self-proxy with circuit breaker
+  // Self-hosted Vercel proxy — ONCE öncelikli (rate limit yok, edge cache var)
   if (PROXY_BASE_URL && !_isCircuitOpen('self-proxy')) {
     racers.push({
       label: 'self-proxy',
@@ -483,15 +588,19 @@ function _buildRacers(targetUrl, ms) {
     });
   }
 
-  // Public proxies: 3 fastest/most-reliable only — corsproxy.org and codetabs
-  // removed (high latency / rate-limited, slowed BIST50 scan by ~40%).
+  // Public CORS proxies — son çare (sıkça rate-limited)
+  // 7 farklı sağlayıcı paralel: birinin çalışma şansı yüksek, ayrıca yükü dağıtır.
   const publicProxies = [
-    { label: 'allorigins-get', url: 'https://api.allorigins.win/get?url=' + encodeURIComponent(targetUrl), timeout: ms },
-    { label: 'corsproxy.io',   url: 'https://corsproxy.io/?' + encodeURIComponent(targetUrl),            timeout: ms },
-    { label: 'allorigins-raw', url: 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), timeout: ms },
+    { label: 'allorigins-raw', url: 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl) },
+    { label: 'corsproxy.io',   url: 'https://corsproxy.io/?' + encodeURIComponent(targetUrl) },
+    { label: 'codetabs',       url: 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl) },
+    { label: 'allorigins-get', url: 'https://api.allorigins.win/get?url=' + encodeURIComponent(targetUrl) },
+    { label: 'thingproxy',     url: 'https://thingproxy.freeboard.io/fetch/' + targetUrl },
+    { label: 'corsproxy.org',  url: 'https://proxy.cors.sh/' + targetUrl },
+    { label: 'cors.lol',       url: 'https://api.cors.lol/?url=' + encodeURIComponent(targetUrl) },
   ];
   for (const p of publicProxies) {
-    if (!_isCircuitOpen(p.label)) racers.push({ ...p, label: p.label });
+    if (!_isCircuitOpen(p.label)) racers.push({ ...p, timeout: ms });
   }
   return racers;
 }
@@ -1368,18 +1477,25 @@ export async function applyLiveOverlay(r, symbol) {
       // Newer Istanbul day — append a fresh bar ONLY if we have real OHLC data.
       // A raw quote with no open/high/low (H=L=C) creates a zero-range candle that
       // distorts ATR, Bollinger Bands, and can generate false buy signals.
-      // "Yeni gun mumunu sadece veri cektiginde goster." — User requirement.
       if (!isBistWeekend(live.date)) {
+        const marketOpen = isBistOpenNow();
         const hasRealOpen = live.open > 0;
         const hasRealHL = live.high > 0 && live.low > 0 && live.high > live.low;
-        // Only append if BigPara returned genuine intraday OHLC (market is open and trading)
-        if (hasRealOpen && hasRealHL) {
-          // DUPLICATE GUARD: if last bar is already a forming bar for today, UPDATE it
-          // instead of appending another one. Prevents multiple hollow candles.
+
+        // ── KRITIK: Gece/kapali piyasada APPEND YAPMA ──
+        // Market kapaliysa (09:30 oncesi, 12:30-14:00 arasi mola, 17:30 sonrasi, weekend)
+        // BigPara hala "today's close" donduruyor — fakat bu mum HENUZ olusmus degil,
+        // historical fetch henuz yayinlamamis. Append edersek "fake forming candle" gozukur.
+        // Sadece market AKTIFKEN forming bar olustur — kapaliyken historical fetch'i bekle.
+        if (!marketOpen) {
+          // Market kapali → live quote'u sadece divergence olcumu icin tut, append etme.
+          // Historical fetch sonraki refresh'te today's gercek bar'i getirecek.
+          r.lastPriceSource = 'BigPara+ClosedMarket';
+        } else if (hasRealOpen && hasRealHL) {
+          // Market AKTIF + BigPara gercek OHLC donduruyor → forming bar olustur/guncelle
           const prevLast = r.prices[r.prices.length - 1];
           const prevKey = prevLast ? istanbulDayKey(prevLast.date) : null;
           if (prevLast?._isForming && prevKey === liveKey) {
-            // Update existing forming bar in place
             prevLast.close = live.price;
             if (live.high > prevLast.high) prevLast.high = live.high;
             if (live.low < prevLast.low) prevLast.low = live.low;
@@ -1399,8 +1515,6 @@ export async function applyLiveOverlay(r, symbol) {
             r.lastPriceSource = 'BigPara+New';
           }
         }
-        // If OHLC not available (before market opens, stale quote): skip append.
-        // Historical data fetch will include today's bar once exchange publishes it.
       }
     }
     if (delta > 5 && liveKey >= lastKey) r.dataConfidence = 'low';

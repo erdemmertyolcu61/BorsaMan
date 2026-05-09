@@ -1,16 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import SectorHeatmap from '../Heatmap/SectorHeatmap.jsx';
 import { isMarketOpen, isMarketClosedForDay } from '../../hooks/useAIAdvisor.js';
 import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
 import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices } from '../../utils/fetchEngine.js';
-import { 
-  initTop10Intelligence, 
-  dailyTop10Cycle, 
-  predictTomorrowTop10, 
-  getSystemPerformance,
-  getTopRules 
-} from '../../utils/top10Intelligence.js';
-import { getRecentTopGainers } from '../../utils/topGainersEngine.js';
 
 function DataFreshnessBadge() {
   const [freshness, setFreshness] = useState(null);
@@ -131,88 +123,6 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
     scanResults = [],
   } = advisor;
   const [intradayCount, setIntradayCount] = useState(0);
-  
-  // Top10 Intelligence State
-  const [top10Open, setTop10Open] = useState(false);
-  const [top10Loading, setTop10Loading] = useState(false);
-  const [todayTop10, setTodayTop10] = useState([]);
-  const [predictions, setPredictions] = useState([]);
-  const [top10Stats, setTop10Stats] = useState(null);
-  const [dbInitialized, setDbInitialized] = useState(false);
-  const [processLog, setProcessLog] = useState([]); // For UI feedback
-  
-  const addLog = (msg, type = 'info') => {
-    setProcessLog(prev => [{ msg, type, ts: new Date() }, ...prev].slice(0, 10));
-  };
-  
-  const loadTop10Data = useCallback(async () => {
-    if (!dbInitialized) {
-      await initTop10Intelligence();
-      setDbInitialized(true);
-      addLog('Veritabanı başlatıldı', 'ok');
-    }
-    
-    setTop10Loading(true);
-    addLog('Veri yükleniyor...', 'loading');
-    try {
-      const [recent, preds, stats] = await Promise.all([
-        getRecentTopGainers(5),
-        predictTomorrowTop10(),
-        getSystemPerformance()
-      ]);
-      
-      if (recent.length > 0) {
-        setTodayTop10(recent[0].stocks || []);
-        addLog(`${recent[0].stocks?.length || 0} hisse yüklendi`, 'ok');
-      }
-      setPredictions(preds.slice(0, 5));
-      setTop10Stats(stats);
-      addLog('Tahminler hazır', 'ok');
-    } catch (e) {
-      console.warn('[Top10Panel] Load failed:', e);
-      addLog(`Hata: ${e.message}`, 'error');
-    } finally {
-      setTop10Loading(false);
-    }
-  }, [dbInitialized]);
-  
-  const runDailyCycle = useCallback(async () => {
-    if (!dbInitialized) {
-      await initTop10Intelligence();
-      setDbInitialized(true);
-      addLog('Veritabanı başlatıldı', 'ok');
-    }
-    
-    setTop10Loading(true);
-    try {
-      // Step 1: Fetch Top10
-      addLog('1/4: Top10 verileri çekiliyor...', 'loading');
-      const top10Result = await dailyTop10Cycle();
-      
-      if (!top10Result) {
-        addLog('Top10 verisi çekilemedi - tekrar deniyorum', 'warn');
-        // Retry once
-        await new Promise(r => setTimeout(r, 2000));
-        const retryResult = await dailyTop10Cycle();
-        if (!retryResult) {
-          throw new Error('Top10 verisi çekilemedi');
-        }
-      } else {
-        addLog(`Top10 kaydedildi: ${top10Result.top10?.stocks?.length || 0} hisse`, 'ok');
-      }
-      
-      // Step 2: Load data
-      await loadTop10Data();
-      
-      // Success
-      addLog('Güncelleme tamamlandı!', 'ok');
-    } catch (e) {
-      console.warn('[Top10Panel] Daily cycle failed:', e);
-      addLog(`Hata: ${e.message}`, 'error');
-    } finally {
-      setTop10Loading(false);
-    }
-  }, [dbInitialized, loadTop10Data]);
 
   // Listen for TradesTab scan completion
   useEffect(() => {
@@ -328,148 +238,6 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
         {scanning ? 'TARANIYOR...' : 'TARA'}
       </button>
       
-      {/* Top10 Intelligence Button */}
-      <div style={{ position: 'relative' }}>
-        <button onClick={() => { if (!top10Open) loadTop10Data(); setTop10Open(!top10Open); }} style={{
-          background: top10Open ? 'var(--green)' : 'var(--bg3)',
-          color: top10Open ? '#fff' : 'var(--green)', border: '1px solid var(--green)', borderRadius: 5,
-          padding: '6px 12px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600,
-          marginLeft: 8, display: 'flex', alignItems: 'center', gap: 4
-        }}>
-          <span>📈</span>
-          <span>TAHMİN TOP10</span>
-          {top10Stats && top10Stats.validRules > 0 && (
-            <span style={{ background: 'var(--green)', color: '#000', borderRadius: 10, padding: '1px 6px', fontSize: 9 }}>
-              {top10Stats.validRules}
-            </span>
-          )}
-        </button>
-        
-        {/* Top10 Dropdown Panel */}
-        {top10Open && (
-          <div style={{
-            position: 'absolute', top: '100%', right: 0, marginTop: 8, width: 380, maxHeight: 450,
-            background: 'var(--bg1)', border: '1px solid var(--green)', borderRadius: 8, 
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)', zIndex: 1000, overflow: 'hidden'
-          }}>
-            {/* Header */}
-            <div style={{ 
-              padding: '10px 14px', background: 'var(--bg2)', borderBottom: '1px solid var(--border)',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-            }}>
-              <span style={{ fontWeight: 700, color: 'var(--green)', fontSize: 12 }}>📈 TOP10 TAHMİN SİSTEMİ</span>
-              <button onClick={runDailyCycle} disabled={top10Loading} style={{
-                background: top10Loading ? 'var(--bg3)' : 'var(--green)', color: top10Loading ? 'var(--t3)' : '#000',
-                border: 'none', borderRadius: 4, padding: '4px 10px', fontSize: 10, cursor: top10Loading ? 'default' : 'pointer',
-                fontWeight: 600
-              }}>
-                {top10Loading ? 'YÜKLENİYOR...' : 'GÜNCELLE'}
-              </button>
-            </div>
-            
-            {/* Stats Bar */}
-            {top10Stats && (
-              <div style={{ 
-                padding: '8px 14px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)',
-                display: 'flex', gap: 16, fontSize: 10
-              }}>
-                <span><span style={{ color: 'var(--t3)' }}>Gün:</span> <span style={{ color: 'var(--green)', fontWeight: 600 }}>{top10Stats.top10Days}</span></span>
-                <span><span style={{ color: 'var(--t3)' }}>Kural:</span> <span style={{ color: 'var(--cyan)', fontWeight: 600 }}>{top10Stats.validRules}</span></span>
-                <span><span style={{ color: 'var(--t3)' }}>Ort. %:</span> <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>{top10Stats.avgTop10Change}%</span></span>
-                {top10Stats.bestRule && (
-                  <span><span style={{ color: 'var(--t3)' }}>En İyi:</span> <span style={{ color: 'var(--green)', fontWeight: 600 }}>{top10Stats.bestRule.name}</span></span>
-                )}
-              </div>
-            )}
-            
-            {/* Process Log Bar */}
-            {processLog.length > 0 && (
-              <div style={{ 
-                padding: '8px 14px', background: 'var(--bg2)', borderBottom: '1px solid var(--border)',
-                display: 'flex', flexDirection: 'column', gap: 4, fontSize: 10, maxHeight: 80, overflow: 'auto'
-              }}>
-                {processLog.map((log, i) => (
-                  <div key={i} style={{ 
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    color: log.type === 'error' ? 'var(--red)' : log.type === 'ok' ? 'var(--green)' : log.type === 'warn' ? 'var(--yellow)' : log.type === 'loading' ? 'var(--cyan)' : 'var(--t3)'
-                  }}>
-                    <span style={{ fontSize: 9 }}>{log.ts?.toLocaleTimeString('tr-TR')}</span>
-                    <span>{log.msg}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            
-            {/* Today's Top 10 */}
-            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', marginBottom: 8, textTransform: 'uppercase' }}>
-                {isMarketClosedForDay() ? 'Bugünün BIST Top 10 (Kesinleşen)' : 'Dünün BIST Top 10'}
-              </div>
-              {top10Loading ? (
-                <div style={{ color: 'var(--t3)', fontSize: 11 }}>Yükleniyor...</div>
-              ) : todayTop10.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {todayTop10.map((s, i) => (
-                    <button key={s.symbol} onClick={() => onAnalyze && onAnalyze(s.symbol)} style={{
-                      background: 'var(--bg2)', color: s.change > 0 ? 'var(--green)' : 'var(--red)',
-                      border: '1px solid var(--border)', borderRadius: 4, padding: '4px 8px', 
-                      fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600
-                    }}>
-                      {i+1}. {s.symbol} {s.change > 0 ? '+' : ''}{s.change?.toFixed(1)}%
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ color: 'var(--t3)', fontSize: 11 }}>Veri yok. "Güncelle" butonuna basın.</div>
-              )}
-            </div>
-            
-            {/* Predictions for Tomorrow */}
-            <div style={{ padding: '10px 14px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', marginBottom: 8, textTransform: 'uppercase' }}>
-                Yarın İçin Tahmin (Sistem Önerisi)
-              </div>
-              {top10Loading ? (
-                <div style={{ color: 'var(--t3)', fontSize: 11 }}>Yükleniyor...</div>
-              ) : predictions.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {predictions.map((p, i) => (
-                    <div key={p.symbol} style={{ 
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      background: 'var(--bg2)', padding: '6px 10px', borderRadius: 4,
-                      border: parseInt(p.confidence) > 60 ? '1px solid var(--green)' : '1px solid var(--border)'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ color: 'var(--t3)', fontSize: 10 }}>#{i+1}</span>
-                        <button onClick={() => onAnalyze && onAnalyze(p.symbol)} style={{
-                          background: 'transparent', color: 'var(--green)', border: 'none', 
-                          cursor: 'pointer', fontWeight: 700, fontSize: 12, fontFamily: 'inherit'
-                        }}>
-                          {p.symbol}
-                        </button>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ color: 'var(--cyan)', fontSize: 10 }}>Skor: {p.score}</span>
-                        <span style={{ 
-                          background: parseInt(p.confidence) > 60 ? 'var(--green)' : 'var(--yellow)',
-                          color: parseInt(p.confidence) > 60 ? '#000' : '#000',
-                          borderRadius: 10, padding: '2px 8px', fontSize: 9, fontWeight: 600
-                        }}>
-                          %{p.confidence}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ color: 'var(--t3)', fontSize: 11 }}>
-                  Tahmin yok. Önce "Güncelle" butonuna basarak veri çekin.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -649,16 +417,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     return () => clearInterval(id);
   }, []);
 
-  // ── STALE CACHE OTOMATIK YENILEME ──
-  // Piyasa acikken 15dk, kapaliyken 30dk uzeri cache → otomatik refresh
-  useEffect(() => {
-    if (!meta?.ts || scanning || !advisor.manualScan) return;
-    const ageMs = Date.now() - meta.ts;
-    const threshold = isMarketOpen() ? 15 * 60 * 1000 : 30 * 60 * 1000;
-    if (ageMs > threshold) {
-      try { advisor.manualScan(); } catch {}
-    }
-  }, [meta?.ts, scanning, advisor.manualScan]);
+  // ── STALE CACHE OTOMATIK YENILEME — DEVRE DISI ──
+  // Otomatik tarama kaldirildi. Kullanici "↻ TARA" butonuna basarak manuel tarama yapar.
 
   // ── CANLI FIYAT GUNCELLEME (v20) ──
   // HEM cache HEM fresh-scan kartlari icin calisir.
@@ -713,14 +473,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     return () => { cancelled = true; clearInterval(iv); };
   }, [displayPicks.length, isFromCache]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── ADVERSE COUNT — yarisindan fazlasi bayatsa otomatik yeniden tarama ──
-  useEffect(() => {
-    if (!displayPicks.length || scanning) return;
-    const adverse = displayPicks.filter(p => p._isStaleAdverse).length;
-    if (adverse >= Math.ceil(displayPicks.length / 2) && advisor.manualScan) {
-      try { advisor.manualScan(); } catch {}
-    }
-  }, [displayPicks, scanning, advisor.manualScan]);
+  // ── ADVERSE COUNT — OTOMATIK TARAMA DEVRE DISI ──
+  // Onceden: kartlarin yarisi adverse oldugunda otomatik manualScan() tetikleniyordu.
+  // Kullanici talepte bulundu: otomatik tarama yok, sadece manuel buton.
 
   // ── TEKIL ANALIZ SYNC ──
   // Kullanici Tekil Analiz'de bir hisse analiz ettiginde, sonucu ile picks'i guncelle.
@@ -893,6 +648,20 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         </div>
       </div>
 
+      {/* v26: YARIN UMUT BANDI — tüm picks emergency ise */}
+      {hasPicks && displayPicks.every(p => p._emergencyPick) && (
+        <div style={{
+          padding: '6px 12px', fontSize: 11, color: '#fbbf24',
+          background: 'linear-gradient(90deg, rgba(249,115,22,0.12), rgba(234,179,8,0.06))',
+          borderTop: '1px solid rgba(249,115,22,0.3)',
+          borderBottom: '1px solid rgba(249,115,22,0.2)',
+          display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600,
+        }}>
+          <span>⚡</span>
+          <span>Bugün kaliteli AL setup'ı yok ama yarın %4-5 artma potansiyeli olan hisseler var. Sistem onları gösteriyor — risk daha yüksek, dikkatli işlem yap.</span>
+        </div>
+      )}
+
       {/* ── Card strip ── */}
       <div style={{
         display: 'flex', gap: 0, overflowX: 'auto', overflowY: 'hidden',
@@ -984,6 +753,12 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           if (p.hasRecentInsiderSell && !p.hasRecentInsiderBuy) {
             tooltipLines.push(`👔 İÇERİDEN SATIM — skor: ${p.insiderScore || 0}`);
           }
+          if (p._nearBreakoutPick) {
+            tooltipLines.push(`🚀 PATLAMA YAKIN (${p._nearBreakoutCount || 0}/10 sinyal)`);
+            if (p._nearBreakoutSignals?.length) {
+              tooltipLines.push('  ' + p._nearBreakoutSignals.join(' · '));
+            }
+          }
           if (p._earlyPick) {
             tooltipLines.push(`🔍 ERKEN BIRIKIM (${p._earlyCount || 0}/10 sinyal)`);
             if (p._earlySignals?.length) {
@@ -1013,6 +788,18 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           }
           if (p.distFromMA20 != null) {
             tooltipLines.push(`MA20'ye uzaklık: ${p.distFromMA20 > 0 ? '+' : ''}${p.distFromMA20.toFixed(1)}%`);
+          }
+          // HTF bağlamı
+          if (p.htfTrend || p.htfWeeklyTrend) {
+            const trendTr = (t) => ({ bull: '📈 YUKARI', weak_bull: '↗ zayıf yukari', neutral: '→ nötr', neutral_bull: '→ nötr/yukari', neutral_bear: '→ nötr/asagi', weak_bear: '↘ zayıf asagi', bear: '📉 ASAGI' })[t] || t;
+            tooltipLines.push(`Günlük trend: ${trendTr(p.htfTrend)} | Haftalık: ${trendTr(p.htfWeeklyTrend)}`);
+          }
+          // Giriş zamanlaması
+          if (p.entryTimingScore != null && p.cls === 'buy') {
+            tooltipLines.push(`Giriş zamanlaması: ${p.entryTimingLabel} (${p.entryTimingScore > 0 ? '+' : ''}${p.entryTimingScore})`);
+            if (p.entryTimingReasons?.length) {
+              tooltipLines.push('  ' + p.entryTimingReasons.join(' | '));
+            }
           }
           // Pump uyarisi — kullanici tavan/yorgun hisseyi gormeden almasin
           const rp = p.recentPump || 0;
@@ -1091,6 +878,38 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       color: '#fff', letterSpacing: 0.3,
                     }} title={`Erken birikim — ${p._earlyCount || 0}/10 sinyal: ${(p._earlySignals || []).join(', ')}`}>
                       🔍 ERKEN
+                    </span>
+                  )}
+                  {/* v25: ACIL YEDEK rozeti — kaliteli setup yok ama "en iyi alternatif" */}
+                  {p._emergencyPick && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'linear-gradient(90deg, #f97316, #eab308)',
+                      color: '#fff', letterSpacing: 0.3,
+                    }} title="Bugün kaliteli setup yok — ama bu hisse yarın %4-5 artma potansiyeli taşıyor. Sistem taramadan seçtiği en iyi seçenek.">
+                      ⚡ YARIN UMUT
+                    </span>
+                  )}
+                  {/* v25: NEAR-BREAKOUT rozeti — coil + breakout-ready (yarinki patlama) */}
+                  {p._nearBreakoutPick && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'linear-gradient(90deg, #f59e0b, #ef4444)',
+                      color: '#fff', letterSpacing: 0.3,
+                      animation: 'pulse 2s ease-in-out infinite',
+                    }} title={`Patlama hazirligi — ${p._nearBreakoutCount || 0}/10 sinyal: ${(p._nearBreakoutSignals || []).join(', ')}`}>
+                      🚀 PATLAMA YAKIN
+                    </span>
+                  )}
+                  {/* v25: TAVAN AMA DEVAM ROZETI — yuksek devam ihtimali (>=50%) */}
+                  {p.cls === 'buy' && (p.todayPumpReal || p.recentPump || 0) >= 7 &&
+                   p.continuationProbability != null && p.continuationProbability >= 50 && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'linear-gradient(90deg, #10b981, #059669)',
+                      color: '#fff', letterSpacing: 0.3,
+                    }} title={`Tavan/yüksek pump ama devam ihtimali yüksek (%${p.continuationProbability})`}>
+                      ⚡ DEVAM %{p.continuationProbability}
                     </span>
                   )}
                   {/* INSIDER BUY rozeti — yonetici/ortak alimi tespit edildi */}
@@ -1185,6 +1004,77 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       border: '1px solid rgba(249,115,22,0.4)', letterSpacing: 0.3,
                     }} title={`3 günde +${(p.cumulativePump || 0).toFixed(1)}% — momentum yorgun`}>
                       ⚠ YORGUN
+                    </span>
+                  )}
+                  {/* TARİHİ PUMP badge: recentPump (son 4 gün max) > todayPumpReal'den belirgin yüksekse
+                      "bu hisse son günlerde büyük hareket yaptı, bu yüzden sıralamada geride kalabilir" uyarısı */}
+                  {(() => {
+                    const todayP = p.todayPumpReal || 0;
+                    const histP  = p.recentPump    || 0;
+                    // Sadece bugün düz/az (+%3 alti) ama tarihsel max belirgin yüksekse göster
+                    if (histP > todayP + 4 && histP >= 6 && todayP < 3) {
+                      return (
+                        <span style={{
+                          fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 2,
+                          background: 'rgba(139,92,246,0.12)', color: '#a78bfa',
+                          border: '1px solid rgba(139,92,246,0.3)', letterSpacing: 0.3,
+                        }} title={`Son 4 günde max +${histP.toFixed(1)}% yaptı (bugün +${todayP.toFixed(1)}%) — geçmiş yüksek hareket sıralamayı etkiliyor`}>
+                          📊 +{histP.toFixed(1)}% geçmiş
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
+                  {/* GİRİŞ ZAMANLAMA rozeti — doğru hisse + doğru an */}
+                  {p.entryTimingScore != null && p.cls === 'buy' && (() => {
+                    const ts = p.entryTimingScore;
+                    const lbl = p.entryTimingLabel;
+                    if (ts >= 55) return (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                        background: 'rgba(16,185,129,0.18)', color: '#10b981',
+                        border: '1px solid rgba(16,185,129,0.4)', letterSpacing: 0.3,
+                      }} title={(p.entryTimingReasons || []).join(' | ')}>
+                        ✅ {lbl}
+                      </span>
+                    );
+                    if (ts >= 30) return (
+                      <span style={{
+                        fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 2,
+                        background: 'rgba(6,182,212,0.12)', color: '#06b6d4',
+                        border: '1px solid rgba(6,182,212,0.3)', letterSpacing: 0.3,
+                      }} title={(p.entryTimingReasons || []).join(' | ')}>
+                        🕐 {lbl}
+                      </span>
+                    );
+                    if (ts <= -30) return (
+                      <span style={{
+                        fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 2,
+                        background: 'rgba(239,68,68,0.12)', color: '#ef4444',
+                        border: '1px solid rgba(239,68,68,0.3)', letterSpacing: 0.3,
+                      }} title={(p.entryTimingReasons || []).join(' | ')}>
+                        ⏳ BEKLE
+                      </span>
+                    );
+                    return null;
+                  })()}
+                  {/* HTF TREND UYARISI — haftalık düşüş var ama günlük AL diyor */}
+                  {p.htfWeeklyTrend === 'bear' && p.cls === 'buy' && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(245,158,11,0.12)', color: '#f59e0b',
+                      border: '1px solid rgba(245,158,11,0.3)', letterSpacing: 0.3,
+                    }} title="Haftalık trend hala düşüş yönünde — günlük sinyale ek dikkat">
+                      📉 HAFTALIKtan dikkat
+                    </span>
+                  )}
+                  {p.htfWeeklyTrend === 'bull' && p.htfTrend === 'bull' && p.cls === 'buy' && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(16,185,129,0.1)', color: '#6ee7b7',
+                      border: '1px solid rgba(16,185,129,0.25)', letterSpacing: 0.3,
+                    }} title="Haftalık + günlük trend uyumlu — güçlü confluens">
+                      📈 HTF UYUM
                     </span>
                   )}
                   <span style={{ fontSize: 10, color: '#a8b3c7', fontWeight: 600, marginLeft: 2 }}>{p.sector}</span>

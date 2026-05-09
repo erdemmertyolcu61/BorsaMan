@@ -212,29 +212,67 @@ ipcMain.handle('notification:isSupported', async () => {
   return Notification.isSupported();
 });
 
-ipcMain.handle('remote:fetch', async (event, { url, options = {} }) => {
+// URL-aware referer/origin: each upstream rejects requests with the wrong Referer.
+// BigPara → Hurriyet, Yahoo → finance.yahoo.com, IsYatirim → kendi domain'i, vb.
+function _refererFor(url) {
   try {
-    // Merge standard browser headers to bypass strict firewalls (BigPara/Yahoo)
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Referer': 'https://bigpara.hurriyet.com.tr/',
-      ...options.headers
-    };
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (host.includes('yahoo'))               return 'https://finance.yahoo.com/';
+    if (host.includes('bigpara'))             return 'https://bigpara.hurriyet.com.tr/';
+    if (host.includes('isyatirim'))           return 'https://www.isyatirim.com.tr/';
+    if (host.includes('kap.org'))             return 'https://www.kap.org.tr/';
+    if (host.includes('borsa') || host.includes('borsajs')) return 'https://www.borsajs.com/';
+    if (host.includes('foreks'))              return 'https://www.foreks.com/';
+    if (host.includes('mynet'))               return 'https://finans.mynet.com/';
+    if (host.includes('bloomberght'))         return 'https://www.bloomberght.com/';
+    if (host.includes('tcmb') || host.includes('evds')) return 'https://www.tcmb.gov.tr/';
+    return u.origin + '/';
+  } catch { return undefined; }
+}
 
-    const response = await fetch(url, { ...options, headers });
-    const text = await response.text();
-    
-    return {
-      success: response.ok,
-      status: response.status,
-      text: text,
-    };
-  } catch (error) {
-    console.error('[Electron Main] Remote fetch error:', error);
-    return { success: false, error: error.message };
-  }
+const FETCH_TIMEOUT_MS = 9000;
+
+ipcMain.handle('remote:fetch', async (event, { url, options = {} }) => {
+  // Tek deneme + 1 retry (geçici network glitchlerine karşı)
+  const attempt = async (attemptNo = 1) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        ...((_refererFor(url) ? { 'Referer': _refererFor(url) } : {})),
+        ...options.headers
+      };
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        signal: ctrl.signal,
+        redirect: 'follow',
+      });
+      const text = await response.text();
+      return {
+        success: response.ok,
+        status: response.status,
+        text,
+      };
+    } catch (error) {
+      // 429/timeout/network hatasi -> 1x retry (300ms backoff)
+      if (attemptNo < 2 && (error.name === 'AbortError' || /network|fetch|timeout|socket/i.test(error.message || ''))) {
+        await new Promise(r => setTimeout(r, 300));
+        return attempt(attemptNo + 1);
+      }
+      return { success: false, error: error.message };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  return attempt();
 });
 
 // ── Signal Notification Presets ──

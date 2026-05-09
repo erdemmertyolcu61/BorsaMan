@@ -9,37 +9,188 @@ import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 
 /**
- * isMarketOpen - Check if BIST market is currently open
+ * _istanbulParts — returns { day, h, m } in Europe/Istanbul regardless of host TZ.
  */
-export function isMarketOpen() {
+function _istanbulParts() {
   const now = new Date();
-  const hour = now.getHours();
-  const minute = now.getMinutes();
-  const day = now.getDay();
-  const timeMinutes = hour * 60 + minute;
-  const isWeekday = day >= 1 && day <= 5;
-  // BIST: 09:30-12:30 (morning session) + 14:00-17:30 (afternoon session)
-  const isMorningSession = timeMinutes >= 570 && timeMinutes < 750;  // 09:30 - 12:30
-  const isAfternoonSession = timeMinutes >= 840 && timeMinutes < 1050; // 14:00 - 17:30
-  return isWeekday && (isMorningSession || isAfternoonSession);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Istanbul',
+    weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+  }).formatToParts(now);
+  const get = (t) => parseInt(parts.find(p => p.type === t)?.value ?? '0', 10);
+  const weekdayStr = parts.find(p => p.type === 'weekday')?.value; // 'Mon'…'Sun'
+  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { day: dayMap[weekdayStr] ?? -1, h: get('hour'), m: get('minute') };
 }
 
 /**
- * isMarketClosedForDay — returns true after 17:30 on a weekday,
- * meaning the session has ended and end-of-day data is final.
+ * isMarketOpen — BIST continuous session 09:55–18:10 TRT, Mon–Fri.
+ */
+export function isMarketOpen() {
+  const { day, h, m } = _istanbulParts();
+  if (day < 1 || day > 5) return false;          // weekend
+  const t = h * 60 + m;
+  return t >= 595 && t < 1090;                   // 09:55 – 18:10
+}
+
+/**
+ * isMarketClosedForDay — true after 18:10 TRT on a weekday (session ended).
  */
 export function isMarketClosedForDay() {
-  const now = new Date();
-  const day = now.getDay();
-  if (day === 0 || day === 6) return true; // weekend
-  const timeMinutes = now.getHours() * 60 + now.getMinutes();
-  return timeMinutes >= 1050; // past 17:30
+  const { day, h, m } = _istanbulParts();
+  if (day === 0 || day === 6) return true;
+  return h * 60 + m >= 1090;                     // >= 18:10
 }
 
 const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market open
 const SCAN_CONCURRENCY = 20;                    // parallel workers per chunk (701/20=36 chunk, was 14→51 chunk)
 const CHUNK_DELAY_MS = 60;                      // 60ms inter-chunk delay (was 150ms — 51×90ms=4.6s tasarruf)
 const SCAN_UNIVERSE = 'bistall';                // full universe ~648 symbols
+
+// ── HTF CONTEXT DERIVATION (sıfır ek fetch — mevcut günlük barlardan) ──────
+// Her 5 günlük bar = 1 haftalık bar proxy.
+// Haftalık trend + günlük trend hizalaması → genSignal'e bağlam sağlar.
+// Bu sayede: günlük AL sinyali + haftalık DÜŞÜŞ → sinyal zayıflar veya filtre düşer.
+function _deriveHTFContext(calcPrices, ind) {
+  if (!calcPrices || calcPrices.length < 50) return null;
+  const n = calcPrices.length;
+
+  // ── Günlük trend: MA hizalaması ──
+  const price = ind.lastClose || 0;
+  const ma20  = ind.lastMA20  || 0;
+  const ma50  = ind.lastMA50  || 0;
+  const ma200 = ind.lastMA200 || 0;
+  let trend = 'neutral';
+  if (ma50 > ma200 * 1.005 && price > ma50) {
+    trend = 'bull';
+  } else if (ma50 < ma200 * 0.995 && price < ma50) {
+    trend = 'bear';
+  } else if (price > ma200 && ma20 > ma50) {
+    trend = 'weak_bull';
+  } else if (price < ma200 && ma20 < ma50) {
+    trend = 'weak_bear';
+  }
+
+  // ── Haftalık proxy: her 5 bar bir hafta ──
+  const weeklyCloses = [];
+  for (let i = n - 1; i >= 0 && weeklyCloses.length < 16; i -= 5) {
+    weeklyCloses.unshift(calcPrices[i].close);
+  }
+  let weeklyTrend = 'neutral';
+  if (weeklyCloses.length >= 5) {
+    const wn = weeklyCloses.length;
+    const wLast  = weeklyCloses[wn - 1];
+    const w4ago  = weeklyCloses[Math.max(0, wn - 5)];
+    const wChg   = w4ago > 0 ? ((wLast - w4ago) / w4ago) * 100 : 0;
+    // Haftalık MA4 eğimi (kısa dönem haftalık momentum)
+    const wSlice = weeklyCloses.slice(-4);
+    const wma4   = wSlice.reduce((s, v) => s + v, 0) / wSlice.length;
+    const wPrev  = weeklyCloses.slice(-8, -4);
+    const wma4p  = wPrev.length ? wPrev.reduce((s, v) => s + v, 0) / wPrev.length : wma4;
+    const wSlope = wma4 > wma4p * 1.005 ? 'up' : wma4 < wma4p * 0.995 ? 'down' : 'flat';
+    if      (wChg >  4 && wSlope === 'up')   weeklyTrend = 'bull';
+    else if (wChg >  1.5)                    weeklyTrend = 'weak_bull';
+    else if (wChg < -4 && wSlope === 'down') weeklyTrend = 'bear';
+    else if (wChg < -1.5)                    weeklyTrend = 'weak_bear';
+  }
+
+  return {
+    trend,
+    weeklyTrend,
+    rsi:        ind.lastRSI   || 50,
+    adx:        ind.adx       || 15,
+    ma200Above: price > ma200 && ma200 > 0,
+  };
+}
+
+// ── GİRİŞ ZAMANLAMA SKORU (entry timing quality) ──────────────────────────
+// Doğru hisse + doğru an kombinasyonu: en iyi giriş bölgesini puanlar.
+// Returns: { score: -100..+100, label, reasons[] }
+// +100 = mükemmel giriş anı  |  0 = nötr  |  -100 = sakın girme
+function _scoreEntryTiming(ind, calcPrices) {
+  let score = 0;
+  const reasons = [];
+  const n = calcPrices.length;
+  if (!ind || n < 20) return { score: 0, label: 'NÖTR', reasons };
+
+  const price   = ind.lastClose;
+  const ma20    = ind.lastMA20  || price;
+  const ma50    = ind.lastMA50  || price;
+  const rsi     = ind.lastRSI   || 50;
+  const bPct    = ind.lastBU && ind.lastBL
+    ? (price - ind.lastBL) / (ind.lastBU - ind.lastBL) * 100
+    : 50;
+  const volRatio = ind.volRatio || 1;
+
+  // 1. MA20 DESTEK BÖLGESİ: fiyat MA20'nin %3'ü içindeyse ideal giriş
+  const distMa20Pct = ma20 > 0 ? ((price - ma20) / ma20) * 100 : 0;
+  if (distMa20Pct >= -1.5 && distMa20Pct <= 2.0) {
+    score += 25;
+    reasons.push('MA20 destek bölgesinde (' + distMa20Pct.toFixed(1) + '%)');
+  } else if (distMa20Pct > 6) {
+    score -= 20;
+    reasons.push('MA20\'den uzak (' + distMa20Pct.toFixed(1) + '%) — geç kalma riski');
+  } else if (distMa20Pct < -6) {
+    score -= 15;
+    reasons.push('MA20 altında (' + distMa20Pct.toFixed(1) + '%) — trend zayıf');
+  }
+
+  // 2. RSI SWEET SPOT: 40-58 = en iyi giriş aralığı (aşırı alım/satım dışı)
+  if (rsi >= 40 && rsi <= 58) {
+    score += 20;
+    reasons.push('RSI giriş bölgesi (' + rsi.toFixed(0) + ')');
+  } else if (rsi < 30) {
+    score += 10; // aşırı satım — dip potansiyeli var ama henüz toparlanma onayı yok
+    reasons.push('RSI aşırı satım (' + rsi.toFixed(0) + ') — dip yakın');
+  } else if (rsi > 68) {
+    score -= 25;
+    reasons.push('RSI aşırı alım (' + rsi.toFixed(0) + ') — geç kalmak');
+  }
+
+  // 3. BOLLİNGER BANDI KONUMU: alt %20-50 = toparlanma bölgesi
+  if (bPct >= 15 && bPct <= 45) {
+    score += 20;
+    reasons.push('Bollinger alt yarısında (' + bPct.toFixed(0) + '%) — dip destek');
+  } else if (bPct > 75) {
+    score -= 20;
+    reasons.push('Bollinger üst bölgede (' + bPct.toFixed(0) + '%) — yüksekte girme');
+  }
+
+  // 4. HACİM PATERNİ: son 3 günde azalan hacim (sessiz çekilme = sağlıklı pullback)
+  if (n >= 5) {
+    const vol3 = calcPrices.slice(-3).map(b => b.volume || 0);
+    const volAvg = calcPrices.slice(-20).reduce((s, b) => s + (b.volume || 0), 0) / 20;
+    const vol3avg = vol3.reduce((s, v) => s + v, 0) / 3;
+    const isQuietPullback = vol3avg < volAvg * 0.8 &&
+      calcPrices[n - 1].close < calcPrices[n - 3].close; // fiyat çekilmiş, hacim azalmış
+    const isVolSurgeUp = volRatio >= 1.5 && ind.changePct > 0.5; // hacimli yükseliş
+    if (isQuietPullback) {
+      score += 20;
+      reasons.push('Sessiz çekilme: düşük hacim + fiyat destek arar');
+    } else if (isVolSurgeUp && rsi < 60) {
+      score += 15;
+      reasons.push('Hacimli kırılım başlangıcı');
+    } else if (volRatio > 2.5 && ind.changePct < -1) {
+      score -= 20;
+      reasons.push('Panik satış hacmi — bekle');
+    }
+  }
+
+  // 5. MA50 ÜSTÜ İKEN MA20'YE ÇEKILME: en güvenli giriş setup'ı
+  const aboveMa50 = price > ma50 && ma50 > 0;
+  if (aboveMa50 && distMa20Pct >= -3 && distMa20Pct <= 1) {
+    score += 15;
+    reasons.push('MA50 üstü MA20 geri çekilme — klasik swing giriş');
+  }
+
+  const label = score >= 55 ? 'MÜKEMMEL AN' :
+                score >= 30 ? 'İYİ AN' :
+                score >= 10 ? 'MAKUL' :
+                score >= -10 ? 'NÖTR' :
+                score >= -30 ? 'ERKEN/GEÇ' : 'SAKINCA';
+
+  return { score: Math.max(-100, Math.min(100, score)), label, reasons };
+}
 
 // ── Tomorrow Potential Score: rank stocks by next-day opportunity ──
 // Pure function — no React state dependency, safe to define at module level
@@ -449,6 +600,9 @@ export function useAIAdvisor(portfolio) {
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0 });
   const [lastUpdate, setLastUpdate] = useState(null);
   const runningRef = useRef(false);
+  // Önceki taramadan kalan sektör güç haritası — mevcut taramada sinyal skorunu besler.
+  // { 'Teknoloji': 72, 'Banka': 58, ... }
+  const prevSectorMapRef = useRef({});
 
   const pushLog = useCallback((entry) => {
     setAdvisorLog(prev => [{ time: new Date(), ...entry }, ...prev].slice(0, 100));
@@ -578,7 +732,23 @@ export function useAIAdvisor(portfolio) {
                 : data.prices;
 
               const ind = calcAll(calcPrices);
-              const sig = genSignal(ind, calcPrices);
+
+              // ── HTF BAĞLAMI (sıfır ek fetch — mevcut barlardan türetilir) ──
+              // Haftalık trend + günlük MA hizalaması → genSignal'e geçilir.
+              // genSignal: haftalık DÜŞÜŞ + günlük AL → skoru %15-25 keser.
+              //             haftalık+günlük YUKSELIŞ uyumu → +2.5 bonus.
+              const htfCtx = _deriveHTFContext(calcPrices, ind);
+
+              // ── SEKTÖR GÜCÜ (önceki tarama sonucu) ──
+              // Güçlü sektördeki ortalama hisse, zayıf sektördeki güçlü hisseden
+              // daha iyi performans gösterir — sektör momentumu skora yansır.
+              const sectorName = SECTORS[sym] || 'Diger';
+              const sectorStrengthVal = prevSectorMapRef.current[sectorName] || 0;
+
+              const sig = genSignal(ind, calcPrices, {
+                htfContext:      htfCtx,
+                sectorStrength:  sectorStrengthVal,
+              });
               const last = lastRaw;
               // ── PREV BAR FIX (v19) ──
               // Forming bar varsa: calcPrices'ın SON elemanı dünkü kapanış (last completed)
@@ -747,6 +917,20 @@ export function useAIAdvisor(portfolio) {
                 distFromMA20,        // MA20'den % mesafe (entry quality)
                 _scanTs: Date.now(), // Bu kayit ne zaman tarandi (panel yas gostergesi)
                 _dataSource: data.source || 'unknown', // hangi kaynaktan geldi
+                // ── GİRİŞ ZAMANLAMA SKORU (entry timing) ──
+                // Doğru hisse + doğru an: MA20 destek, RSI sweet spot, sessiz çekilme
+                // UI'da "MÜKEMMEL AN / İYİ AN / NÖTR / SAKINCA" etiketi gösterir.
+                ...(() => {
+                  const timing = _scoreEntryTiming(ind, calcPrices);
+                  return {
+                    entryTimingScore:  timing.score,
+                    entryTimingLabel:  timing.label,
+                    entryTimingReasons: timing.reasons,
+                  };
+                })(),
+                // ── HTF bağlamı özeti (UI tooltip + Claude prompt için) ──
+                htfTrend:       htfCtx?.trend       || 'neutral',
+                htfWeeklyTrend: htfCtx?.weeklyTrend || 'neutral',
                 // ── Signal Attribution ──
                 // Hangi teknik sinyaller bu tarama aninda atesleniyordu?
                 // Paper trade/sinyal kaydi kapaninca bu liste bySignalType win-rate'ini gunceller.
@@ -865,28 +1049,43 @@ export function useAIAdvisor(portfolio) {
         const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);
         const cp = r.cumulativePump || tp;
 
-        // ── MUTLAK REDLER ─────────────────────────────────────────────────────
-        if (tp >= 12) return true;             // Gap-up / devre kesici bolge
-        if ((r.rsi || 50) > 88) return true;   // RSI 88+ tehlikeli
-        if ((r.mfi || 50) > 88) return true;   // MFI 88+ asiri overbought
-        if (cp >= 22) return true;             // 2 gun kumulatif tavan → kesinlikle yorgun
+        // ── MUTLAK REDLER (teknik tükenmişlik — devam ihtimali yok) ───────────
+        // v25: tp >= 12% mutlak red KALDIRILDI — devam ihtimali >= 50% ise tavan
+        // hisse de gosterilir. Sadece teknik exhaustion (RSI/MFI 90+) mutlak red.
+        if ((r.rsi || 50) > 90) return true;   // RSI 90+ extreme exhaustion
+        if ((r.mfi || 50) > 92) return true;   // MFI 92+ extreme overbought
 
-        // ── AKILLI TAVAN (7-12%): devam olasılığı belirler ───────────────────
+        // ── AKILLI TAVAN/PUMP (>= 7%): devam olasılığı belirler ───────────────
+        // tp 7-12%: continuation prob >= 38% gerekli
+        // tp 12%+: continuation prob >= 50% gerekli (daha katı çünkü extreme zone)
+        // tp 15%+: continuation prob >= 58% gerekli
         if (tp >= 7) {
-          // calcContinuationProbability module-level fonksiyon — OBV/CMF/haber/Wyckoff/TTM
-          // hesaplar; BIST base rate ~%30-35'i kataliz sinyalleriyle yukari/asagi iter.
           const prob = calcContinuationProbability(r);
-          // >= 38%: guclu devam sinyali (OZATD/OZSUB/HURGZ tipi — kataliz + akilli para)
-          // < 38%: zayif / negatif sinyal — FOMO pump riski, red
-          if (prob == null || prob < 38) return true;
-          return false; // Yüksek güven → göster (ama sort'ta non-tavan picks önce gelir)
+          if (prob == null) return true;
+
+          let requiredProb;
+          if (tp >= 15) requiredProb = 58;       // Devre kesici bolgesi: çok yüksek devam gereksin
+          else if (tp >= 12) requiredProb = 50;  // Gap-up bolgesi: yüksek devam gereksin
+          else requiredProb = 38;                // 7-12%: standart eşik
+
+          if (prob < requiredProb) return true;
+          return false; // Yüksek devam ihtimali → tavan bile olsa göster
         }
 
-        // ── KUMULATIF YORGUNLUK (tekli gun pump degil ama 3 gunde +%18+) ─────
+        // ── KUMULATIF YORGUNLUK (cp >= 22): yorgunluk belirgin ───────────────
+        // v25: cp >= 22% mutlak red KALDIRILDI — 2 gun ust uste tavan bile olsa
+        // continuation prob >= 55% ise (haber + akilli para + fundamental) gosterilir.
+        if (cp >= 22) {
+          const prob = calcContinuationProbability(r);
+          if (prob == null || prob < 55) return true; // 55%+ olmazsa red
+          return false;
+        }
+
+        // ── ORTA KUMULATIF (cp 18-22): kataliz haberi yeter ──────────────────
         if (cp >= 18) {
           const hasCatalyst = r.newsCategories?.some(c =>
             ['insider_buy', 'buyback', 'fund_inflow', 'contract'].includes(c));
-          if (!hasCatalyst) return true; // Haber yoksa red
+          if (!hasCatalyst) return true;
         }
 
         return false;
@@ -906,10 +1105,11 @@ export function useAIAdvisor(portfolio) {
       // Hisse henuz patlamamis ama akilli para giriyor mu? 8 sinyal kontrol eder.
       // 4+ sinyal varsa "early accumulation" kabul edilir.
       const detectEarlyAccumulation = (r) => {
-        // ZORUNLU: fiyat henuz hareket etmemis olmali (chasing'e giremeyiz)
-        // Ground truth: BigPara live'a dayanan todayPumpReal
+        // ZORUNLU: fiyat henuz BUYUK hareket etmemis olmali (chasing'e giremeyiz)
+        // v25: 3% → 5% gevsetildi — CCOLA gibi hisseler patlamadan once 3-4% hareket
+        // edebiliyor, bunlari early accumulation aramasinda kacirmamak icin.
         const recentPump = Math.max(r.todayPumpReal || 0, r.recentPump || 0);
-        if (recentPump > 3) return { isEarly: false, count: 0, signals: [] };
+        if (recentPump > 5) return { isEarly: false, count: 0, signals: [] };
         // ZORUNLU: ATR makul (zaten ucmus hisseler dahil edilmesin)
         if ((r.atrPct || 0) > 5) return { isEarly: false, count: 0, signals: [] };
 
@@ -925,24 +1125,71 @@ export function useAIAdvisor(portfolio) {
         // 5. Hacim artis kademeli (1.3x-2.5x — pump degil, gradual)
         const vr = r.volRatio || 0;
         if (vr >= 1.3 && vr <= 2.5) signals.push('Hacim ısınıyor');
-        // 6. MA20 etrafinda konsolide (chasing yok)
+        // 6. MA20 etrafinda konsolide (chasing yok) — daha esnek aralik
         const ma20D = r.distFromMA20;
-        if (ma20D != null && ma20D >= -3 && ma20D <= 2) signals.push('MA20 konsolidasyon');
-        // 7. MFI nötr-pozitif (asiri alim degil, panik degil)
-        if (r.mfi != null && r.mfi >= 35 && r.mfi < 55) signals.push('MFI tarafsiz');
-        // 8. Bollinger orta band (sikismis)
-        if (r.bollPct != null && r.bollPct >= 25 && r.bollPct <= 65) signals.push('Boll orta');
+        if (ma20D != null && ma20D >= -3 && ma20D <= 4) signals.push('MA20 konsolidasyon');
+        // 7. MFI nötr-pozitif (asiri alim degil, panik degil) — yukari aralik genisledi
+        if (r.mfi != null && r.mfi >= 35 && r.mfi < 62) signals.push('MFI tarafsiz');
+        // 8. Bollinger orta-uzeri band (kirilim hazirligi)
+        if (r.bollPct != null && r.bollPct >= 25 && r.bollPct <= 70) signals.push('Boll orta');
         // 9. Pozitif kataliz haberi (bonus)
         if (r.newsCategories?.some(c =>
           ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c))) {
           signals.push('Kataliz haberi');
         }
-        // 10. RSI sweet spot (40-55 — momentum baslamak uzere)
-        if (r.rsi != null && r.rsi >= 40 && r.rsi <= 55) signals.push('RSI sweet spot');
+        // 10. RSI sweet spot (40-58 — momentum baslamak uzere)
+        if (r.rsi != null && r.rsi >= 40 && r.rsi <= 58) signals.push('RSI sweet spot');
+        // 11. v25: Supertrend yukari donus — trend baslangic onayi
+        if (r.supertrend?.flip && r.supertrend?.trend === 'UP') signals.push('Supertrend YUKARI');
+        // 12. v25: Pozitif sektor momentumu — sektor lideri olabilir
+        if ((r.sectorStrength || 0) > 65) signals.push('Sektor guclu');
+        // 13. v25: Insider net alim (kurumsal sinyal)
+        if (r.insiderScore != null && r.insiderScore > 3) signals.push('Insider alim');
 
         const count = signals.length;
         // Erken giris icin 4+ sinyal sart — daha az → dusuk likit + sinyalsiz = riskli
         return { isEarly: count >= 4, count, signals };
+      };
+
+      // ── v25: NEAR-BREAKOUT TESPITI ──
+      // "Coil + breakout-ready" hisseler: yarinki patlamayi BUGUN tespit eder.
+      // Direnc seviyesinin %2'sine yaklasmis + hacim artiyor + sikisma var.
+      // Bu setup cok kuvvetli — early accumulation'dan farkli olarak fiyat
+      // direnci kirmaya hazir konumda.
+      const detectNearBreakout = (r) => {
+        if (!r) return { isNear: false, count: 0, signals: [] };
+        // ZORUNLU: bugun zaten patlamamis (geç kalmamak icin)
+        const recentPump = Math.max(r.todayPumpReal || 0, r.recentPump || 0);
+        if (recentPump > 4) return { isNear: false, count: 0, signals: [] };
+
+        const signals = [];
+        // 1. Bollinger ust banda yakin (>%70 ama %95'in altinda — patlamamis ama hazir)
+        if (r.bollPct != null && r.bollPct >= 70 && r.bollPct < 95) signals.push('Bollinger üst banda yakın');
+        // 2. ATR daralmis (sikisma)
+        if ((r.atrPct || 0) < 3) signals.push('ATR daralmış (sıkışma)');
+        // 3. Hacim isiniyor (1.5x+, ama tavan degil)
+        if ((r.volRatio || 0) >= 1.5 && (r.volRatio || 0) < 3) signals.push('Hacim ısınıyor');
+        // 4. RSI bullish (50-70 arasi — momentum var ama overbought degil)
+        if (r.rsi != null && r.rsi >= 50 && r.rsi <= 70) signals.push('RSI yükseliş bölgesi');
+        // 5. OBV birikim
+        if (r.obvTrend === 'accumulation') signals.push('OBV birikim');
+        // 6. CMF kuvvetli pozitif
+        if ((r.cmf || 0) > 0.10) signals.push('CMF güçlü');
+        // 7. Supertrend yukari + ichimoku bulutu üzerinde
+        if (r.supertrend?.trend === 'UP' && r.ichimoku?.cloudPosition === 'above')
+          signals.push('Trend onayı (Supertrend + Ichimoku)');
+        // 8. TTM Squeeze release (sikisma yeni acildi — patlama enerjisi)
+        if (r.ttmSqueeze?.squeezeRelease) signals.push('TTM Squeeze RELEASE');
+        // 9. MFI > 55 ama < 78 (para girisi var ama overbought degil)
+        if (r.mfi != null && r.mfi >= 55 && r.mfi < 78) signals.push('MFI para girişi');
+        // 10. Pozitif kataliz haberi
+        if (r.newsCategories?.some(c =>
+          ['fund_inflow', 'buyback', 'insider_buy', 'contract', 'upgrade'].includes(c))) {
+          signals.push('Kataliz haberi');
+        }
+
+        const count = signals.length;
+        return { isNear: count >= 5, count, signals };
       };
 
       // ── BUY PICKS ──
@@ -977,6 +1224,11 @@ export function useAIAdvisor(portfolio) {
           {
             const liqEarly = detectEarlyAccumulation(r);
             if (liqEarly.isEarly) r._earlyAccumulation = liqEarly;
+            // v25: NEAR-BREAKOUT tespiti — coil + breakout ready
+            // Bu setup detectEarlyAccumulation'dan farkli: fiyat direnc seviyesinde,
+            // hacim isiniyor, sikisma var. Yarinki patlama bugün tespit edilebilir.
+            const nearBreak = detectNearBreakout(r);
+            if (nearBreak.isNear) r._nearBreakout = nearBreak;
           }
 
           // ── YAPI SAGLIGI KONTROLU (Structural Health Guard) ──
@@ -1083,20 +1335,50 @@ export function useAIAdvisor(portfolio) {
           _earlyPick: r._earlyAccumulation?.isEarly || false,
           _earlySignals: r._earlyAccumulation?.signals || null,
           _earlyCount: r._earlyAccumulation?.count || 0,
+          // v25: Near-breakout (coil + breakout-ready) — yarinki patlama tespiti
+          _nearBreakoutPick: r._nearBreakout?.isNear || false,
+          _nearBreakoutSignals: r._nearBreakout?.signals || null,
+          _nearBreakoutCount: r._nearBreakout?.count || 0,
         }))
         .sort((a, b) => {
           if (isAfterHours) {
-            // Erken birikim picks'lerine BUYUK bonus (14 puan) — pre-pump on plana
-            const aBonus = a._earlyPick ? 14 : 0;
-            const bBonus = b._earlyPick ? 14 : 0;
+            // v25: 3 katmanli bonus sistemi
+            //   _nearBreakoutPick (coil + breakout-ready): EN YUKSEK +20 bonus
+            //   _earlyPick (early accumulation): +14 bonus (orijinal)
+            //   normal pick: 0 bonus
+            const aBonus = (a._nearBreakoutPick ? 20 : 0) + (a._earlyPick ? 14 : 0);
+            const bBonus = (b._nearBreakoutPick ? 20 : 0) + (b._earlyPick ? 14 : 0);
             return ((b.tomorrowPotential || 0) + bBonus) - ((a.tomorrowPotential || 0) + aBonus);
           }
-          const pumpPenaltyA = Math.min(20, (a.recentPump || 0) * 2);
-          const pumpPenaltyB = Math.min(20, (b.recentPump || 0) * 2);
+          // ── Healthy Momentum Bonus (v25) ──
+          // Bugun yukselen + hacim + OBV teyitli hisselere BONUS ver.
+          // Sadece tavan/exhausted hisselere (rp >= 9) ceza ver.
+          // Boylece "bugun en cok kazandiranlardan" 1-2 tane top 5'e girer.
+          const calcMomentumAdj = (r) => {
+            const rp = Math.max(r.todayPumpReal || 0, r.recentPump || 0);
+            const volOk = (r.volRatio || 1) >= 1.0;
+            const obvOk = r.obvTrend === 'accumulation';
+            const cmfOk = (r.cmf || 0) > 0.05;
+            const techConfirm = (volOk ? 1 : 0) + (obvOk ? 1 : 0) + (cmfOk ? 1 : 0);
+            // Tavan zone (>=9): ceza devam (ertesi gun geri cekilir)
+            if (rp >= 9) return -Math.min(20, rp * 2);
+            // 7-9 zone: hafif ceza, teyit varsa noter
+            if (rp >= 7) return techConfirm >= 2 ? -3 : -10;
+            // SAGLIKLI MOMENTUM 4-7%: TEYITLI ise +6, teyitsiz -2
+            if (rp >= 4) return techConfirm >= 2 ? +6 : -2;
+            // SAGLIKLI MOMENTUM 2-4%: teyitli +4
+            if (rp >= 2) return techConfirm >= 1 ? +4 : 0;
+            return 0; // <2% notr
+          };
+          const momAdjA = calcMomentumAdj(a);
+          const momAdjB = calcMomentumAdj(b);
           const earlyBonusA = a._earlyPick ? 12 : 0;
           const earlyBonusB = b._earlyPick ? 12 : 0;
-          const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) - pumpPenaltyA + earlyBonusA;
-          const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) - pumpPenaltyB + earlyBonusB;
+          // v25: Near-breakout (coil + breakout-ready) — canlida da +18 bonus
+          const nearBonusA = a._nearBreakoutPick ? 18 : 0;
+          const nearBonusB = b._nearBreakoutPick ? 18 : 0;
+          const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) + momAdjA + earlyBonusA + nearBonusA;
+          const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) + momAdjB + earlyBonusB + nearBonusB;
           return scoreB - scoreA;
         })
         .slice(0, 8);
@@ -1159,6 +1441,9 @@ export function useAIAdvisor(portfolio) {
             _earlyPick: r._earlyAccumulation?.isEarly || false,
             _earlySignals: r._earlyAccumulation?.signals || null,
             _earlyCount: r._earlyAccumulation?.count || 0,
+            _nearBreakoutPick: r._nearBreakout?.isNear || false,
+            _nearBreakoutSignals: r._nearBreakout?.signals || null,
+            _nearBreakoutCount: r._nearBreakout?.count || 0,
           }));
         picks = [...picks, ...fallbackBuys];
       }
@@ -1236,8 +1521,121 @@ export function useAIAdvisor(portfolio) {
           _earlyPick: r._earlyAccumulation?.isEarly || false,
           _earlySignals: r._earlyAccumulation?.signals || null,
           _earlyCount: r._earlyAccumulation?.count || 0,
+          _nearBreakoutPick: r._nearBreakout?.isNear || false,
+          _nearBreakoutSignals: r._nearBreakout?.signals || null,
+          _nearBreakoutCount: r._nearBreakout?.count || 0,
         }));
         picks = [...picks, ...lastResort];
+      }
+
+      // ══════════════════════════════════════════════════════════════════════
+      // ── ACIL YEDEK (v26 — ENHANCED) — HEMEN 5 HISSE GOSTER ─────────────────
+      // ══════════════════════════════════════════════════════════════════════
+      // Tavan günü gibi tüm filtrelerin elediği oturumlarda bile "yarın +%4-5"
+      // yapma potansiyeli yüksek hisseler vardır — kullanıcıya boş ekran gösterme.
+      // Hisse yok ise: AGRESIF TARAMA
+      //   TIER 1: 200K+ TL hacim + atrPct>=0.4 (daha ucuz hisseler bile kabul)
+      //   TIER 2: 100K+ TL hacim (son çare — likit değil ama hareketli)
+      // Tavan/bearish filtrelerini BYPASS et, ⚠ "⚡ YARIN UMUT" rozetiyle göster
+      // v26: picks boş ise DAIMA emergency fallback çalıştır
+      if (picks.length === 0) {
+        const existingSyms3 = new Set(picks.map(p => p.symbol));
+        const need = 5 - picks.length;
+
+        // TIER 1: daha makul hacim + volatilite
+        let emergencyPool = results
+          .filter(r => {
+            if (existingSyms3.has(r.symbol)) return false;
+            if ((r.avgVolumeTL || 0) < 200_000) return false; // 200K TL min (eski 500K)
+            if ((r.atrPct || 0) < 0.4) return false; // Yarın hareket edemeyecek hisseyi al (eski 0.6)
+            if (r.cls === 'sell') return false; // SAT diyene zaten girme
+            // RSI > 92 / MFI > 92 hala bypass — gerçek ekstrem overbought
+            if ((r.rsi || 50) > 92) return false;
+            if ((r.mfi || 50) > 92) return false;
+            return true;
+          })
+          .map(r => {
+            // Acil yedek skor: YARINDA +%4-5 YAPMA İHTİMALİ PRİMER
+            const rp = Math.max(r.todayPumpReal || 0, r.recentPump || 0);
+            const tomorrowP = calcTomorrowPotential(r);
+            // v26: tomorrowPotential %50'ye çıkartıldı (eski %30)
+            let emergScore = (r.score || 0) * 0.25 + (r.confidence || 50) * 0.25 + tomorrowP * 0.50;
+            // Bonus: trend onayı varsa
+            if (r.supertrend?.trend === 'UP') emergScore += 8;
+            if (r.obvTrend === 'accumulation') emergScore += 6;
+            if ((r.cmf || 0) > 0.10) emergScore += 5;
+            // Bonus: RSI sweet spot (35-55) = yarın başarılı trade ihtimali yüksek
+            const rsi = r.rsi || 50;
+            if (rsi >= 35 && rsi <= 55) emergScore += 7;
+            // Bonus: pump bölgesinde devam ihtimali yüksekse
+            if (rp >= 7) {
+              const cprob = calcContinuationProbability(r);
+              if (cprob && cprob >= 50) emergScore += 12;
+              else if (cprob && cprob >= 38) emergScore += 6;
+            }
+            // Bonus: mevcut buy sinyali / momentum
+            if (r.cls === 'buy') emergScore += 10;
+            // Bonus: pozitif teknik konfluens
+            const confCount = (r.obvTrend === 'accumulation' ? 1 : 0) + ((r.cmf || 0) > 0.05 ? 1 : 0) + (r.supertrend?.trend === 'UP' ? 1 : 0);
+            if (confCount >= 2) emergScore += 6;
+            return { ...r, _emergencyScore: emergScore };
+          })
+          .sort((a, b) => b._emergencyScore - a._emergencyScore);
+
+        // TIER 1 ne kadar yeterli?
+        const tier1 = emergencyPool.slice(0, need);
+        let finalEmergency = tier1;
+
+        // TIER 2: 100K+ TL hacim ise hala kiraç — son çare (hile değil, gerçek fırsat)
+        if (finalEmergency.length < need) {
+          const need2 = need - finalEmergency.length;
+          const tier2 = results
+            .filter(r => {
+              if (existingSyms3.has(r.symbol)) return false;
+              if (finalEmergency.some(e => e.symbol === r.symbol)) return false;
+              if ((r.avgVolumeTL || 0) < 100_000) return false; // 100K TL min (son çare)
+              if ((r.atrPct || 0) < 0.3) return false;
+              if (r.cls === 'sell') return false;
+              if ((r.rsi || 50) > 92 || (r.mfi || 50) > 92) return false;
+              return true;
+            })
+            .map(r => {
+              const rp = Math.max(r.todayPumpReal || 0, r.recentPump || 0);
+              const tomorrowP = calcTomorrowPotential(r);
+              let emergScore = (r.score || 0) * 0.20 + (r.confidence || 50) * 0.20 + tomorrowP * 0.60;
+              if (r.supertrend?.trend === 'UP') emergScore += 6;
+              if (r.obvTrend === 'accumulation') emergScore += 4;
+              if ((r.cmf || 0) > 0.10) emergScore += 3;
+              const rsi = r.rsi || 50;
+              if (rsi >= 35 && rsi <= 55) emergScore += 5;
+              if (rp >= 7) {
+                const cprob = calcContinuationProbability(r);
+                if (cprob && cprob >= 50) emergScore += 8;
+              }
+              if (r.cls === 'buy') emergScore += 8;
+              return { ...r, _emergencyScore: emergScore };
+            })
+            .sort((a, b) => b._emergencyScore - a._emergencyScore)
+            .slice(0, need2);
+          finalEmergency = [...tier1, ...tier2];
+        }
+
+        const emergency = finalEmergency.map(r => normalizeStopTarget({
+          ...r,
+          tomorrowPotential: isAfterHours ? calcTomorrowPotential(r) : 0,
+          _alreadyHolding: bullishPortfolio.includes(r.symbol),
+          _scanMode: isAfterHours ? 'afterHours' : 'intraday',
+          _fallback: true,
+          _emergencyPick: true,  // ⚡ "YARIN UMUT" rozeti (not just warning)
+          _warningPick: false,   // v26: warning değil, fırsat!
+          _earlyPick: r._earlyAccumulation?.isEarly || false,
+          _earlySignals: r._earlyAccumulation?.signals || null,
+          _earlyCount: r._earlyAccumulation?.count || 0,
+          _nearBreakoutPick: r._nearBreakout?.isNear || false,
+          _nearBreakoutSignals: r._nearBreakout?.signals || null,
+          _nearBreakoutCount: r._nearBreakout?.count || 0,
+        }));
+        picks = [...picks, ...emergency];
       }
 
       // ══════════════════════════════════════════════════════════════════════
@@ -1464,6 +1862,23 @@ export function useAIAdvisor(portfolio) {
         console.warn('[AI Advisor] ML scoring skipped:', mlErr?.message);
       }
 
+      // ── Apply Unified Decision (same logic as Single Stock Analysis) ──
+      // When ML rules match, override cls/signal so AI Advisor and AnalyzeTab
+      // produce IDENTICAL labels for the same stock.
+      try {
+        const { getUnifiedDecision } = await import('../utils/unifiedDecision.js');
+        picks = picks.map(p => {
+          const u = getUnifiedDecision(p.score, p.mlConfidenceBoost, {
+            mlMatchedCount: p.mlMatchedCount,
+            baseSignal: p.signal,
+            baseCls: p.cls,
+          });
+          return { ...p, cls: u.cls, signal: u.signal, unifiedSource: u.source, unifiedOverride: u.override };
+        });
+      } catch (uErr) {
+        console.warn('[AI Advisor] Unified decision skipped:', uErr?.message);
+      }
+
       // Sector diversification: max 2 buy picks per sector
       const MAX_PER_SECTOR = 2;
       const sectorCount = {};
@@ -1484,36 +1899,56 @@ export function useAIAdvisor(portfolio) {
       const sellsInPicks = picks.filter(x => x.cls === 'sell');
       picks = [...diversifiedBuys, ...overflowBuys, ...sellsInPicks];
 
-      // ── FINAL SORT (v19) ──
-      // Oncelik sirasi:
-      // 1. Sell picks: her zaman en sona
-      // 2. Non-pump buy picks: composite confidence'a gore (coil, dip bounce, erken birikim)
-      // 3. Mid-pump (5-7%): non-tavan grubuyla beraber, ama duzgun pump cezasi confidence'da
-      // 4. Tavan/yuksek-pump buy picks (>= 7%): continuation probability ile sort, en sona
-      //    → Non-tavan picks her ZAMAN tavan picks'in ONUNE gelir
+      // ── FINAL SORT (v25) ──
+      // 3 Bucket sistemi:
+      //   1. Sells → her zaman en sona
+      //   2. NORMAL picks (tp < 9%) → confidence sort
+      //   3. PUMP picks (tp >= 9%) → 2 alt-bucket:
+      //      a. Yuksek devam (prob >= 50%) → confidence ile NORMAL picks arasinda yer alir
+      //         (hibrit skor: confidence * (prob/50) ile boost)
+      //      b. Dusuk devam (prob < 50%) → en sona
+      //
+      // KRITIK v25 degisiklik: Yuksek devam ihtimali olan pump picks artik
+      // confidence skoruna gore NORMAL picks ile beraber siralanir. Boylece
+      // CCOLA gibi tavan + kataliz + akilli para hisseleri top 5'e girebilir.
       picks.sort((a, b) => {
         // Sells: her zaman en sona
         if (a.cls === 'sell' && b.cls !== 'sell') return 1;
         if (b.cls === 'sell' && a.cls !== 'sell') return -1;
 
-        // Tavan tespiti: todayPumpReal ground truth (BigPara live + dunku kapanis)
-        // recentPump fallback olarak kalir
-        const aPump = Math.max(a.todayPumpReal || 0, a.recentPump || 0);
-        const bPump = Math.max(b.todayPumpReal || 0, b.recentPump || 0);
-        const aIsTavan = aPump >= 7;  // 7%+ pump = arkaya
-        const bIsTavan = bPump >= 7;
+        const aPump = a.todayPumpReal || 0;
+        const bPump = b.todayPumpReal || 0;
+        const aIsHighPump = aPump >= 9;
+        const bIsHighPump = bPump >= 9;
 
-        // Non-tavan picks tavan picks'in onune gecer (her zaman)
-        if (aIsTavan && !bIsTavan) return 1;
-        if (bIsTavan && !aIsTavan) return -1;
+        // Devam ihtimali yuksek olan pump pick: confidence'a +%30 bonus uygula
+        // (effective confidence ile NORMAL picks ile rekabet eder)
+        const effConf = (pick) => {
+          const baseConf = pick.confidence || 0;
+          const pump = pick.todayPumpReal || 0;
+          const prob = pick.continuationProbability;
+          if (pump < 9 || prob == null) return baseConf;
+          // Yuksek devam (>=50%): boost = %30 (top tier)
+          // Orta devam (38-50%): boost = %15 (mid tier)
+          // Dusuk devam (<38%): boost = -%30 (en sonda kalsin)
+          if (prob >= 50) return baseConf * 1.30;
+          if (prob >= 38) return baseConf * 1.15;
+          return baseConf * 0.70;
+        };
 
-        // Iki pick de tavan: continuation probability ile sort (yuksek ihtimal once)
-        if (aIsTavan && bIsTavan) {
+        // Cok dusuk devam (prob < 38) hala arkaya it
+        const aIsWeakPump = aIsHighPump && (a.continuationProbability || 0) < 38;
+        const bIsWeakPump = bIsHighPump && (b.continuationProbability || 0) < 38;
+        if (aIsWeakPump && !bIsWeakPump) return 1;
+        if (bIsWeakPump && !aIsWeakPump) return -1;
+        // Iki pick de zayif pump: continuation prob ile sirala
+        if (aIsWeakPump && bIsWeakPump) {
           return (b.continuationProbability || 0) - (a.continuationProbability || 0);
         }
 
-        // Normal picks: composite confidence ile sort
-        return (b.confidence || 0) - (a.confidence || 0);
+        // Normal yarisma: effective confidence ile sirala
+        // (yuksek devamlı pump picks normal picks ile yarisir)
+        return effConf(b) - effConf(a);
       });
 
       // Cap final picks at 10
@@ -1585,8 +2020,26 @@ export function useAIAdvisor(portfolio) {
       setSectorHeatmap(sectorMetrics);
       setLastUpdate(new Date());
 
-      // Persist top picks to localStorage so the bottom panel survives page reload
-      if (picks.length > 0) {
+      // Sektör güç haritasını bir sonraki tarama için kaydet.
+      // Sonraki taramada her sembolün genSignal'ı sektör gücünü görür ve skora yansır.
+      // `strength` kullan: 0-100 composite (avgScore değil — o sadece ~40-60 arası).
+      // genSignal eşikleri: >=80 → +1.5, >=70 → +1.0, <=20 → -1.5, <=30 → -1.0
+      try {
+        const newSectorMap = {};
+        for (const sm of rankSectors(sectorMetrics)) {
+          // strength: calcSectorMetrics'in 0-100 composite skoru
+          // avgScore: genSignal sinyal ortalaması (genellikle 40-65 arası, genSignal'a uygun)
+          // Her ikisini normalize ederek genSignal'ın 0-100 beklentisine uyarla:
+          const strengthVal = sm.strength != null ? sm.strength : (sm.avgScore || 0);
+          newSectorMap[sm.sector] = strengthVal;
+        }
+        prevSectorMapRef.current = newSectorMap;
+      } catch { /* ignore */ }
+
+      // Persist top picks to localStorage so the bottom panel survives page reload.
+      // ALSO persist a compact verdict map for ALL scanned symbols — so Tekil Analiz
+      // for ANY symbol (not just top-10) can inherit the advisor's cls/signal/score.
+      if (picks.length > 0 || results.length > 0) {
         try {
           localStorage.setItem('bist_last_ai_picks', JSON.stringify({
             picks: picks.slice(0, 10).map(p => ({
@@ -1603,19 +2056,43 @@ export function useAIAdvisor(portfolio) {
               _scanTs: p._scanTs, _dataSource: p._dataSource,
               _fallback: p._fallback, _warningPick: p._warningPick,
               _earlyPick: p._earlyPick, _earlySignals: p._earlySignals, _earlyCount: p._earlyCount,
+              _nearBreakoutPick: p._nearBreakoutPick, _nearBreakoutSignals: p._nearBreakoutSignals, _nearBreakoutCount: p._nearBreakoutCount,
+              _emergencyPick: p._emergencyPick,
               recentPump: p.recentPump, cumulativePump: p.cumulativePump,
               todayPumpReal: p.todayPumpReal,
               continuationProbability: p.continuationProbability,
-              // Frontend safety filter icin gerekli teknik degerler
               rsi: p.rsi, mfi: p.mfi, cmf: p.cmf, volRatio: p.volRatio,
               obvTrend: p.obvTrend, supertrend: p.supertrend,
-              // Insider trading data (v22)
               insiderScore: p.insiderScore, insiderNetBuys: p.insiderNetBuys,
               hasRecentInsiderBuy: p.hasRecentInsiderBuy, hasRecentInsiderSell: p.hasRecentInsiderSell,
-              // ML Engine data (v24)
               mlConfidenceBoost: p.mlConfidenceBoost, mlBestRule: p.mlBestRule,
               mlMatchedCount: p.mlMatchedCount,
             })),
+            // ── COMPACT VERDICT MAP — ALL scanned symbols ──
+            // Tekil Analiz icin kullanilir: herhangi bir hisse ne karar aldi?
+            // Sadece minimal alanlar — quota patlamasin.
+            allVerdicts: results.reduce((acc, r) => {
+              if (r?.symbol) {
+                acc[r.symbol] = {
+                  cls: r.cls,
+                  signal: r.signal,
+                  score: r.score,
+                  confidence: r.confidence,
+                  rr: r.rr,
+                  stop: r.stop,
+                  target: r.target,
+                  mlConfidenceBoost: r.mlConfidenceBoost,
+                  mlMatchedCount: r.mlMatchedCount,
+                  mlBestRule: r.mlBestRule,
+                  // HTF + timing — tekil analizde göster
+                  htfTrend: r.htfTrend,
+                  htfWeeklyTrend: r.htfWeeklyTrend,
+                  entryTimingScore: r.entryTimingScore,
+                  entryTimingLabel: r.entryTimingLabel,
+                };
+              }
+              return acc;
+            }, {}),
             sentiment: sentimentObj.sentiment,
             scanned: results.length,
             buys: sentimentObj.buys,
@@ -1628,11 +2105,52 @@ export function useAIAdvisor(portfolio) {
       const modeLabel = isAfterHours ? 'Kapanis Sonrasi (Yarin Icin)' : 'Canli';
       pushLog({ type: 'ok', msg: `${modeLabel} tarama: ${results.length} hisse, ${buyPicks.length} AL / ${sellPicks.length} SAT firsat` });
 
-      // Dispatch event for other systems (AlertLog, ChatPanel, notifications)
+      // ── Strict event dispatch for ALL downstream systems ──
+      // Subscribers: useSignalTracker, usePaperTrading, usePaperTradeML,
+      //              AIAdvisorPanel, TradesTab, AlertLog, ChatPanel
+      //
+      // Multi-source fallback chain (prevents empty payloads when late-stage
+      // filters drop all picks):
+      //   1. `picks` — the same array fed to setTopPicks() (PREFERRED)
+      //   2. [...buyPicks, ...sellPicks] — pre-diversification tradable list
+      //   3. results.filter(buy|sell) — raw scan output
+      let finalPicks = [];
+      if (Array.isArray(picks) && picks.length > 0) {
+        finalPicks = picks;
+      } else if ((Array.isArray(buyPicks) && buyPicks.length) ||
+                 (Array.isArray(sellPicks) && sellPicks.length)) {
+        finalPicks = [...(buyPicks || []), ...(sellPicks || [])].slice(0, 10);
+        console.warn('[AI Advisor] picks[] was empty — falling back to buyPicks+sellPicks');
+      } else if (Array.isArray(results) && results.length > 0) {
+        finalPicks = results
+          .filter(r => r?.cls === 'buy' || r?.cls === 'sell')
+          .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+          .slice(0, 10);
+        console.warn('[AI Advisor] picks[] AND buyPicks/sellPicks empty — derived from results');
+      }
+
+      const allResults = Array.isArray(results) ? results : [];
+      console.log('[AI Advisor] Dispatch payload sizes:', {
+        finalPicks: finalPicks.length,
+        rawPicks: Array.isArray(picks) ? picks.length : -1,
+        buyPicks: Array.isArray(buyPicks) ? buyPicks.length : -1,
+        sellPicks: Array.isArray(sellPicks) ? sellPicks.length : -1,
+        results: allResults.length,
+      });
+      if (finalPicks.length > 0) {
+        console.log('[AI Advisor] First topPick:', {
+          symbol: finalPicks[0].symbol,
+          cls: finalPicks[0].cls,
+          signal: finalPicks[0].signal,
+          score: finalPicks[0].score,
+          price: finalPicks[0].price,
+        });
+      }
+
       window.dispatchEvent(new CustomEvent('advisor-scan-complete', {
         detail: {
-          results,
-          topPicks: picks,
+          topPicks: finalPicks,
+          results: allResults,
           marketContext: sentimentObj,
           sectorRotation,
           riskAlerts,
@@ -1653,35 +2171,20 @@ export function useAIAdvisor(portfolio) {
     runScan({ universe: SCAN_UNIVERSE });
   }, [runScan]);
 
-
-  // Auto-scan loop — dual mode: market open vs after hours
+  // ── AUTO-SCAN LOOP — Market açıkken 15 dakika, kapalıyken one-time ──
+  // v26: Market kapalıyken (afterHours) de tarama yap, yarn predictions göster
   useEffect(() => {
-    let timer = null;
-    let mounted = true;
-    const tick = () => {
-      if (!mounted) return;
-      const marketOpen = isMarketOpen();
-      
-      if (!runningRef.current) {
-        if (marketOpen) {
-          // Market open: standard 15-min scan with intraday momentum boost
-          runScan({ universe: SCAN_UNIVERSE }).catch(() => {});
-        } else {
-          // After hours: run "Tomorrow Picks" scan with end-of-day analysis
-          runScan({ universe: SCAN_UNIVERSE, afterHours: true }).catch(() => {});
-        }
-      }
-      
-      // Scan interval: 15 min during market, 30 min after hours
-      const interval = marketOpen ? AUTO_SCAN_INTERVAL_MS : AUTO_SCAN_INTERVAL_MS * 2;
-      timer = setTimeout(tick, interval);
-    };
-    // Kick off delayed first scan (5s) so app has time to mount
-    timer = setTimeout(tick, 5000);
-    return () => {
-      mounted = false;
-      if (timer) clearTimeout(timer);
-    };
+    // ONE-TIME scan at mount (afterHours mode)
+    const isAfterHours = !isMarketOpen();
+    runScan({ universe: SCAN_UNIVERSE, afterHours: isAfterHours });
+
+    // Regular interval ONLY if market is open
+    if (isMarketOpen()) {
+      const iv = setInterval(() => {
+        if (!runningRef.current) runScan({ universe: SCAN_UNIVERSE });
+      }, AUTO_SCAN_INTERVAL_MS);
+      return () => clearInterval(iv);
+    }
   }, [runScan]);
 
   return {

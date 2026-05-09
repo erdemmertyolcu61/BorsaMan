@@ -30,9 +30,19 @@ export function usePaperTradeML() {
       setSnapshot(snap);
     });
 
-    engine.init().catch(err => {
-      console.warn('[PaperML] Init failed:', err?.message);
-    });
+    engine.init()
+      .then(() => {
+        const state = engine.getState();
+        console.log('[PaperML] Engine initialized. State:', {
+          cash: state?.cash,
+          openTrades: state?.openTrades?.length,
+          closedTrades: state?.closedTrades?.length,
+          isElectron: engine._isElectron,
+        });
+      })
+      .catch(err => {
+        console.warn('[PaperML] Init failed:', err?.message);
+      });
 
     return () => unsub();
   }, []);
@@ -44,18 +54,57 @@ export function usePaperTradeML() {
 
   // ── Listen to advisor scan results ──
   useEffect(() => {
-    if (!autoTrade) return;
+    console.log('[PaperTrade] Scan listener attached. autoTrade =', autoTrade);
+    if (!autoTrade) {
+      console.warn('[PaperTrade] AutoTrade is OFF — scan events will be ignored');
+      return;
+    }
 
     const handler = (e) => {
-      const { topPicks, results } = e.detail || {};
-      const picks = topPicks || results || [];
-      if (!picks?.length) return;
+      const scanData = e.detail || {};
+
+      // ML Forward Test pool stratejisi:
+      // 1. Oncelik: topPicks (advisor'in onayli ilk 10'u) icerisinde mlMatchedCount > 0 olanlar
+      // 2. Eger topPicks'te 3'ten az ML eslesmesi varsa: results (tum 600+ sembol) icerisinden
+      //    ek ML eslesmesi olanlar eklenir — ML Forward Test BUTUN evrende en iyi ML kurali
+      //    esleseni arar, sadece top-10'la sinirli kalmaz.
+      const topPicks  = scanData.topPicks  || [];
+      const allResults = scanData.results  || [];
+
+      const mlInTop = topPicks.filter(p => (p.mlMatchedCount || 0) > 0);
+      let picks = [...topPicks];
+
+      if (mlInTop.length < 3 && allResults.length > 0) {
+        const topSyms = new Set(topPicks.map(p => p.symbol));
+        const extraML = allResults.filter(r =>
+          r?.symbol && !topSyms.has(r.symbol) && (r.mlMatchedCount || 0) > 0
+        );
+        if (extraML.length) {
+          picks = [...topPicks, ...extraML];
+          console.log('[PaperTrade] ML pool genisledildi: topPicks =', topPicks.length,
+            '| results ML eslesmesi =', extraML.length,
+            '| ekstra:', extraML.map(r => r.symbol));
+        }
+      }
+
+      console.log('[PaperTrade] Scan event — pool:', picks.length,
+        'mlMatched in pool:', picks.filter(p => (p.mlMatchedCount||0) > 0).length);
+
+      if (!picks?.length) {
+        console.warn('[PaperTrade] ABORT — no picks in scan event');
+        return;
+      }
 
       const engine = engineRef.current;
-      if (!engine) return;
+      if (!engine) {
+        console.warn('[PaperTrade] ABORT — engine not initialized');
+        return;
+      }
 
+      console.log('[PaperTrade] Forwarding', picks.length, 'picks to engine.processScanResults()',
+        picks.filter(p=>(p.mlMatchedCount||0)>0).map(p => `${p.symbol}(ML+${(p.mlConfidenceBoost||0).toFixed(1)})`));
       engine.processScanResults(picks).catch(err => {
-        console.warn('[PaperML] processScanResults error:', err?.message);
+        console.warn('[PaperML] processScanResults error:', err?.message, err);
       });
     };
 

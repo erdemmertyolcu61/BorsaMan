@@ -212,23 +212,40 @@ function MLForwardTestPanel({ paperML }) {
           color={openTrades.length > 0 ? '#ffd700' : 'var(--t3)'} />
       </div>
 
-      {/* ML Performance Buckets */}
-      {mlBuckets?.length > 0 && (
-        <div style={{
-          display: 'flex', gap: 8, padding: '0 0 14px', flexWrap: 'wrap',
-        }}>
-          {mlBuckets.map(b => (
-            <div key={b.ml_tier} style={{
-              padding: '6px 12px', borderRadius: 6,
-              background: 'rgba(255,215,0,0.06)', border: '1px solid rgba(255,215,0,0.15)',
-              fontSize: 9, color: '#ffd700',
-            }}>
-              <b>{b.ml_tier}</b>: {b.cnt} islem · WR %{b.wins && b.cnt ? ((b.wins / b.cnt) * 100).toFixed(0) : '0'}
-              {b.avg_pnl != null && ` · avg ${b.avg_pnl > 0 ? '+' : ''}${b.avg_pnl.toFixed(2)}%`}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* ML / SMC Mode indicator */}
+      <div style={{ padding: '0 0 12px' }}>
+        {mlBuckets?.length > 0 ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{
+              padding: '4px 10px', borderRadius: 5, fontSize: 9, fontWeight: 700,
+              background: 'rgba(255,215,0,0.12)', border: '1px solid rgba(255,215,0,0.3)',
+              color: '#ffd700',
+            }}>🎯 ML KURALLARI AKTİF</div>
+            {mlBuckets.map(b => (
+              <div key={b.ml_tier} style={{
+                padding: '4px 10px', borderRadius: 5,
+                background: 'rgba(255,215,0,0.06)', border: '1px solid rgba(255,215,0,0.15)',
+                fontSize: 9, color: '#ffd700',
+              }}>
+                <b>{b.ml_tier}</b>: {b.cnt} islem · WR %{b.wins && b.cnt ? ((b.wins / b.cnt) * 100).toFixed(0) : '0'}
+                {b.avg_pnl != null && ` · avg ${b.avg_pnl > 0 ? '+' : ''}${b.avg_pnl.toFixed(2)}%`}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{
+            padding: '6px 12px', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 8,
+            background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)',
+            fontSize: 9, color: '#06b6d4',
+          }}>
+            <span>📊 SMC FALLBACK MODU</span>
+            <span style={{ color: 'var(--t3)' }}>ML kurallari egitilmemis — score≥55 en iyi hisseler seciliyor</span>
+            <span style={{ color: '#fbbf24', marginLeft: 4 }}>
+              (ML aktiflesturmek icin: Portfoy sekmesi → Ayarlar → ML Egitimi)
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* TAB NAV */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: 8 }}>
@@ -259,10 +276,19 @@ function MLForwardTestPanel({ paperML }) {
             <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--t3)', fontSize: 12 }}>
               <div style={{ fontSize: 28, marginBottom: 10 }}>{'🧠'}</div>
               <div>ML acik pozisyon yok.</div>
-              <div style={{ fontSize: 10, marginTop: 6 }}>
-                {autoTrade ? 'ML Auto aktif — sonraki taramada mlConfidenceBoost > 0 pick girilecek'
-                  : 'ML Auto Trade\'i aktifle'}
-              </div>
+              {!autoTrade ? (
+                <div style={{
+                  marginTop: 12, padding: '10px 18px', borderRadius: 8, display: 'inline-block',
+                  background: 'rgba(255,215,0,0.12)', border: '1px solid rgba(255,215,0,0.4)',
+                  color: '#ffd700', fontSize: 11, fontWeight: 700,
+                }}>
+                  ⚡ Yukaridaki &ldquo;ML AUTO OFF&rdquo; butonuna tikla — tarama bittikce otomatik giris yapilir
+                </div>
+              ) : (
+                <div style={{ fontSize: 10, marginTop: 6 }}>
+                  ML Auto aktif — sonraki AI Advisor taramasinda en iyi 3 pick girilecek
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>

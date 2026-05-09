@@ -308,30 +308,28 @@ export function usePaperTrading() {
     return () => clearInterval(interval);
   }, [closePosition]);
 
-  // ── Advisor scan tamamlandiginda auto-trade ──
+  // ── Advisor scan tamamlandiginda TOP 5'i otomatik al ──
+  // v25: User talep — "ilk 5 hisseyi direkt alarak islemleri denesin"
+  // Confidence filter kaldirildi (sadece cls='buy' yeterli) ve limit 2 → 5 yapildi.
   useEffect(() => {
     const handler = (e) => {
-      // advisor-scan-complete: { topPicks, results, ... }
-      const { topPicks, results } = e.detail || {};
-      const picks = topPicks || results || [];
+      // topPicks = UI'da gosterilen hisseler, advisor sirasiyla.
+      // results (ham tarama verisi) KULLANMA — bu 600+ sembol icerir, UI goruntusunu yansiitmaz.
+      const picks = (e.detail || {}).topPicks || [];
       if (!picks?.length) return;
 
-      const { autoTrade, config } = stateRef.current;
+      const { autoTrade } = stateRef.current;
       if (!autoTrade) return;
 
-      const minConf = config?.minConfidence ?? MIN_CONFIDENCE;
       const existingSyms = new Set(stateRef.current.positions.map(p => p.symbol));
 
-      const eligible = picks
-        .filter(p =>
-          p.cls === 'buy' &&
-          (p.confidence || 0) >= minConf &&
-          !existingSyms.has(p.symbol)
-        )
-        .sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+      // Advisor'in gosterdigi sirayi koru — ilk 5 buy pick'i sirayla al
+      const eligible = picks.filter(p => p && p.cls === 'buy' && p.symbol && !existingSyms.has(p.symbol));
+      const topFive = eligible.slice(0, 5);
+      console.log(`[PaperTrading] Auto-trading TOP 5 (advisor order):`,
+        topFive.map(p => ({ sym: p.symbol, conf: p.confidence })));
 
-      // Max 2 yeni pozisyon per scan (asindan kacinmak icin)
-      for (const pick of eligible.slice(0, 2)) {
+      for (const pick of topFive) {
         openPosition({ ...pick, _source: 'advisor_auto' });
       }
     };

@@ -3,6 +3,7 @@ import { QUICK_STOCKS } from '../../utils/constants.js';
 import { fetchData, fetchFundamentals, fetchBigParaBatchPrices } from '../../utils/fetchEngine.js';
 import { calcAll } from '../../utils/indicators.js';
 import { genSignal, calcPosition, getUnifiedAnalysis } from '../../utils/signals.js';
+import { getUnifiedDecision } from '../../utils/unifiedDecision.js';
 import { setApiKey, buildExpertPrompt } from '../../utils/claude.js';
 import { analyzeDetailedFinancials, getFundamentalGrade, analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
 import { fetchIsYatirimFinancials } from '../../utils/isyatirimEngine.js';
@@ -89,6 +90,106 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
       const kapSentiment = calcKAPSentiment(kapDisclosures);
       const extraContext = { kapSentiment };
       const { ind, sig } = getUnifiedAnalysis(s, data, extraContext);
+
+      // ── ML Confluence: STRICTLY INHERIT from AI Advisor first ──
+      // Single Analysis must produce IDENTICAL signal to bulk Advisor scan.
+      // Priority order:
+      //   1. Inherit ML enrichment from advisor cache (bist_last_ai_picks)
+      //      — this is the SAME pick the AI Advisor labeled as AL/SAT/TUT
+      //   2. Fall back to fresh ML scoring only if no cached enrichment exists
+      let mlConfidenceBoost = 0, mlMatchedCount = 0, mlBestRule = null;
+      let inheritedFromAdvisor = false;
+
+      // v26: Two-tier advisor inheritance.
+      //   1. Detailed pick in `picks[]` (top 10 — full data: stop/target/grade/tier...)
+      //   2. Compact verdict in `allVerdicts[symbol]` (HER taranan sembol — minimum)
+      // Aynı seans (4 saat) = aynı sinyal. Advisor↔Tekil çelişkisi yok.
+      let cachedPick = null;
+      try {
+        const cached = JSON.parse(localStorage.getItem('bist_last_ai_picks') || '{}');
+        const isFresh = cached?.ts && (Date.now() - cached.ts) < 4 * 60 * 60 * 1000;
+        if (isFresh) {
+          // 1) Detailed top-10 pick (geniş alan seti)
+          const detailed = Array.isArray(cached?.picks)
+            ? cached.picks.find(p => p?.symbol === s)
+            : null;
+          // 2) Compact verdict her sembol için
+          const verdict = cached?.allVerdicts?.[s] || null;
+          cachedPick = detailed || verdict;
+          if (cachedPick) {
+            mlConfidenceBoost = cachedPick.mlConfidenceBoost || 0;
+            mlMatchedCount    = cachedPick.mlMatchedCount    || 0;
+            mlBestRule        = cachedPick.mlBestRule         || null;
+            inheritedFromAdvisor = true;
+            console.log(`[Analyze] Advisor verdict for ${s}:`, {
+              cls: cachedPick.cls, signal: cachedPick.signal, score: cachedPick.score,
+              boost: mlConfidenceBoost, matched: mlMatchedCount,
+              source: detailed ? 'top-pick' : 'compact-verdict',
+            });
+          }
+        }
+      } catch { /* cache read best-effort */ }
+
+      // Fresh ML scoring fallback (only if advisor cache didn't provide enrichment)
+      if (!inheritedFromAdvisor) {
+        try {
+          const mlDb = window.electronAPI?.mlDb;
+          if (mlDb) {
+            let rules = await mlDb.getTopRules(50, 10);
+            if (!rules?.length) rules = await mlDb.getTopRules(50, 3);
+            if (rules?.length) {
+              const { scoreNewSignal } = await import('../../utils/ML_BacktestEngine.js');
+              const mlResult = scoreNewSignal(sig, rules);
+              mlConfidenceBoost = Math.max(0, mlResult?.boost || 0);
+              mlMatchedCount   = mlResult?.matched?.length || 0;
+              mlBestRule       = mlResult?.bestRule?.setup_name || null;
+              if (mlMatchedCount > 0 && mlConfidenceBoost < 1) mlConfidenceBoost = 1;
+            }
+          }
+        } catch (mlErr) {
+          console.debug('[Analyze] ML scoring skipped:', mlErr?.message);
+        }
+      }
+
+      // ── STRICT inheritance: advisor cache wins ──
+      // Advisor panelinde "AL" gosterdiyse, tekil analiz "TUT" diyemez.
+      // cachedPick yukarida ayarlandi (4 saatlik fresh window).
+      const inheritedCls    = cachedPick?.cls    || null;
+      const inheritedSignal = cachedPick?.signal || null;
+      // Advisor'in score'unu da tercih et (advisor confluence + boost iceriyor,
+      // tekil analizdeki raw score'dan daha guclu sinyal)
+      const inheritedScore  = cachedPick?.score != null ? cachedPick.score : null;
+
+      const unified = getUnifiedDecision(
+        inheritedScore != null ? inheritedScore : sig.score,
+        mlConfidenceBoost,
+        {
+          mlMatchedCount,
+          baseSignal: inheritedSignal || sig.signal,
+          baseCls:    inheritedCls    || sig.cls,
+        }
+      );
+
+      // STRICT priority: advisor cache > unified > raw genSignal
+      sig.cls    = inheritedCls    || unified.cls    || sig.cls;
+      sig.signal = inheritedSignal || unified.signal || sig.signal;
+      if (inheritedScore != null) sig.score = inheritedScore;
+      sig.unifiedSource = inheritedFromAdvisor
+        ? `⚡ AI Advisor sync: ${cachedPick.signal} (score ${cachedPick.score?.toFixed?.(0) || '-'})`
+        : unified.source;
+      sig.unifiedOverride = unified.override || inheritedFromAdvisor;
+      sig.mlConfidenceBoost = mlConfidenceBoost;
+      sig.mlMatchedCount = mlMatchedCount;
+      sig.mlBestRule = mlBestRule;
+      sig.inheritedFromAdvisor = inheritedFromAdvisor;
+      // Stop/target da advisor'dan gelsin (normalizeStopTarget ile uyumlu)
+      if (cachedPick?.stop && (!sig.stop || Math.abs(sig.stop - cachedPick.stop) / cachedPick.stop > 0.02)) {
+        sig.stop = cachedPick.stop;
+      }
+      if (cachedPick?.target && (!sig.t1 || Math.abs(sig.t1 - cachedPick.target) / cachedPick.target > 0.02)) {
+        sig.t1 = cachedPick.target;
+      }
+
       setGData(data); setGInd(ind); setGSig(sig);
       // Picks panel ile sync icin event dispatch — cache picks bayat ise kullanici gorur
       try {
@@ -337,6 +438,21 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
                 <div className="progress-fill" style={{ width: (gSig.conf || 0) + '%' }} />
               </div>
               <div className="conf-txt">Güven: %{gSig.conf || 0} · Skor: {(gSig.score || 0).toFixed(0)}/100</div>
+              {(gSig.mlMatchedCount || 0) > 0 && (
+                <div style={{
+                  marginTop: 6, padding: '4px 8px', borderRadius: 4,
+                  background: 'rgba(255,215,0,0.08)', border: '1px solid rgba(255,215,0,0.25)',
+                  fontSize: 9, color: '#ffd700',
+                }}>
+                  🎯 ML +{(gSig.mlConfidenceBoost || 0).toFixed(1)} · {gSig.mlMatchedCount} kural eşleşti
+                  {gSig.mlBestRule && <div style={{ fontSize: 8, color: '#fbbf24', marginTop: 1 }}>{gSig.mlBestRule}</div>}
+                </div>
+              )}
+              {gSig.unifiedSource && (
+                <div style={{ fontSize: 8, color: 'var(--t3)', marginTop: 4, fontStyle: 'italic' }}>
+                  {gSig.unifiedOverride ? '⚡ ML Override · ' : ''}{gSig.unifiedSource}
+                </div>
+              )}
             </div>
 
             {/* Trade Setup */}
