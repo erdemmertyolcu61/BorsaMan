@@ -24,6 +24,7 @@ const ALLOWED_DOMAINS = [
   'bigpara.hurriyet.com.tr',
   'www.isyatirim.com.tr',
   'www.tcmb.gov.tr',
+  'evds2.tcmb.gov.tr',
   'nfs.faireconomy.media',
   'api.genelpara.com',
   'www.kap.org.tr',

@@ -35,6 +35,18 @@ npx vitest run src/utils/__tests__/signals.test.js   # Tek dosya testi
 
 # Python
 pytest tests/                # bist_bridge.py icin pytest
+
+# Walk-Forward Optimizer (offline research, root-level)
+python ml_forward_tester.py --symbol THYAO                    # SMC, 12M IS / 3M OOS, 2Y veri
+python ml_forward_tester.py --symbol GARAN --strategy adx     # ADX trend stratejisi
+python ml_forward_tester.py --symbol AKBNK --timeframe 5Y     # 5Y → 2Y fallback test
+python ml_forward_tester.py --symbols THYAO,GARAN,SISE --quiet --out reports/wf.json
+
+# Graphify (kod-haritasi token tasarrufu, ~15x reduction)
+graphify update .              # Re-extract code → graphify-out/{graph.json,GRAPH_REPORT.md}
+graphify query "<concept>"     # Sembol/topic ara
+graphify path A B              # Iki node arasi en kisa yol
+graphify explain <node>        # Bir node + komsulari aciklama
 ```
 
 ## Mimari
@@ -330,8 +342,171 @@ electronAPI.paperDb.reset()
 5. Stop = entry × 0.97, target = pick.target (genSignal'dan)
 6. Her 30s BigPara batch fiyat kontrolü → stop/target hit → otomatik kapanış
 7. Kapanış SQLite'a yazılır: pnl_tl, pnl_pct, held_ms, exit_reason
+8. **v5 feedback loop**: trade'in `rule_hash`'i varsa `closePaperTrade` otomatik `applyTradeFeedback(hash, pnlPct)` çağırır → `discovered_rules`'in `total_count`/`win_count`/`loss_count`/`avg_roi_pct`/`expectancy` + ek `paper_win_count`/`paper_loss_count` sayaçları güncellenir → bir sonraki tarama bu kaliprasyonu görür
+
+## DB Schema v5 — Paper Trade Feedback Loop (2026-05)
+
+### Yeni kolonlar
+| Tablo | Kolon | Amaç |
+|---|---|---|
+| `paper_trades` | `rule_hash TEXT` | `discovered_rules.rule_hash`'a deterministik join key — trade kapandığında hangi ML kuralının outcome'unu güncelleyeceğimizi bilmek için |
+| `discovered_rules` | `paper_win_count INTEGER DEFAULT 0` | Canlı forward-test win sayacı (backtest count'larından ayrı izlenir — UI rozeti için) |
+| `discovered_rules` | `paper_loss_count INTEGER DEFAULT 0` | Canlı forward-test loss sayacı |
+| index | `idx_pt_rule_hash` ON `paper_trades(rule_hash)` | Hızlı join |
+
+### `applyTradeFeedback(ruleHash, pnlPct)` algoritması
+Tek-örnek incremental moving average (formül `_upsertRulesNode` weighted merge'den birebir reuse):
+```
+newTotal   = oldTotal + 1
+newWins    = oldWins  + (pnlPct > 0 ? 1 : 0)
+newLosses  = oldLosses + (pnlPct > 0 ? 0 : 1)
+newAvgRoi  = (oldAvgRoi × oldTotal + pnlPct) / newTotal
+newAvgWin  = win ise (oldAvgWin × oldWins + pnlPct) / newWins, değilse oldAvgWin
+newAvgLoss = loss ise (oldAvgLoss × oldLosses + pnlPct) / newLosses, değilse oldAvgLoss
+winRate01  = newWins / newTotal
+expectancy = newAvgWin × winRate01 + newAvgLoss × (1 - winRate01)
+last_seen_date = now
+```
+**Atomic**: tek `UPDATE`. Eski rule kaybolmaz, kural bulunamazsa (pruned/archived) sessizce no-op.
+
+### Wiring
+- `useAIAdvisor` scan loop → her pick'e `mlBestRuleHash` set eder
+- `PaperTradeEngine._openTrade` → `trade.ruleHash = pick.mlBestRuleHash || pick.mlBestRule?.ruleHash`
+- `openPaperTrade` payload'a `rule_hash` yazar (NULL ML eşleşmesi olmayan trade'lerde)
+- `closePaperTrade` → `api.applyTradeFeedback` otomatik tetiklenir, `{ ruleHash, feedback }` döndürür
+- `PaperTradeEngine.closeTrade` → console log `[PaperML] Rule feedback applied — hash=… paperWins=… paperLosses=… total=…`
+- IPC handler: `paper:applyTradeFeedback` (defensive manuel/replay için expose; runtime'da çağırmaya gerek yok)
+
+### UI: 🔄 LIVE rozeti
+`AIAdvisorPanel.jsx` her pick kartında ML rozetinin (🎯 %WR) yanında, koşul:
+```js
+paperSamples = paperWinCount + paperLossCount
+liveShare    = paperSamples / totalCount
+SHOW if paperSamples >= 1 && totalCount >= 5 && liveShare >= 0.20
+```
+Yeşil gradient (`#10b981 → #059669`). Tooltip: paper W/L kırılımı, paper win rate, sample share.
+
+## Walk-Forward Optimizer (`ml_forward_tester.py` — 2026-05)
+
+Standalone Python CLI; React UI'a hiç dokunmaz. Offline research surface — overfit kuralları yakalamak için.
+
+### Mimari
+- **`WalkForwardEngine`** sınıfı (root-level dosya): rolling IS/OOS pencereleri ile parametre-stabilitesi testi
+- **Veri**: `bist_bridge.BistBridge.fetch_ohlcv(symbol, timeframe=...)` — yeni v5 DEFAULT_TIMEFRAME='2Y' + 5Y→2Y truncation fallback'ten faydalanır
+- **Saf pandas/numpy**: TA-Lib gerekmez; ADX Wilder smoothing + swing-high/low rolling `.shift(1)` ile causal
+- **Lookahead-safe**: pozisyon bar `t`'de karar, `t+1` return (`pos.shift(1)`)
+
+### Stratejiler (`STRATEGIES` tablosu)
+| Strateji | Giriş | Çıkış | Grid |
+|---|---|---|---|
+| `smc` | `close > rolling_swing_high(lookback)` + `confirm_bars` ardışık teyit | `close < rolling_swing_low(lookback)` | `swing_lookback ∈ {5,8,12,16,20}` × `confirm_bars ∈ {1,2,3}` = 15 |
+| `adx` | `adx > threshold && (di+ − di−) > di_diff` | `di+ < di−` | `adx_threshold ∈ {15,20,25,30}` × `di_diff ∈ {1,3,5,8}` = 16 |
+
+### Pipeline (per window)
+1. IS slice (default 12M): grid-search → max profit-factor parametre seti (tiebreak: profit %)
+2. OOS slice (default 3M): seçili parametreleri uygula, metrikleri hesapla
+3. Pencereyi `oos_months` kadar kaydır, bitene kadar tekrarla
+
+### Metrikler
+- **Walk-Forward Efficiency (WFE)** = `ΣOOS_profit / ΣIS_profit`
+  - `>= 0.5` robust, `< 0.2` overfit, arası borderline
+- **Worst OOS Drawdown** — tüm forward pencerelerin en kötü DD'si
+- **Avg OOS Profit Factor** — `(sum_wins / |sum_losses|)` pencere ortalaması
+- **Avg OOS Win Rate** + **%profitable OOS** pencere oranı
+- **Verdict**: `stable` (WFE≥0.5 + PF≥1.2 + %prof≥60), `overfit` (WFE<0.2 OR PF<0.9 OR %prof<40), arası `borderline`
+
+### CLI
+```bash
+python ml_forward_tester.py --symbol THYAO
+python ml_forward_tester.py --symbol GARAN --strategy adx
+python ml_forward_tester.py --symbol AKBNK --timeframe 5Y    # bridge fallback'i tetikler
+python ml_forward_tester.py --symbols THYAO,GARAN,SISE --quiet --out reports/wf.json
+python ml_forward_tester.py --symbol THYAO --is-months 18 --oos-months 6
+```
+Output: pencere tablosu + summary + verdict; `--out` JSON dump; `--quiet` tek-satır verdict.
+
+## bist_bridge.py — Timeframe API (v5, 2026-05)
+
+### Sabitler (module-level)
+```python
+TIMEFRAME_DAYS = { "1M":30, "3M":90, "6M":180, "1Y":365, "2Y":730, "5Y":1825 }
+TIMEFRAME_EXPECTED_CANDLES = { ..., "5Y": 1260 }  # ~252 sessions/yr
+COMPLETENESS_RATIO = 0.80                           # < 80% expected → truncated
+DEFAULT_TIMEFRAME = "2Y"                            # snappy cold boot
+FALLBACK_TIMEFRAME = "2Y"                           # 5Y truncation rescue
+```
+
+### `fetch_ohlcv(symbol, lookback_days=None, timeframe=None)` davranışı
+- `lookback_days` verilirse → bu sayıyı kullan (back-compat)
+- Sadece `timeframe` verilirse → `TIMEFRAME_DAYS[label]` (örn. 5Y=1825 gün)
+- Hiçbiri verilmezse → `DEFAULT_TIMEFRAME = "2Y"` (mevcut callers `fetch_ohlcv(symbol)` → 2Y alır)
+- **5Y truncation guard**: dönen candle sayısı < %80 × 1260 ise log warning + `FALLBACK_TIMEFRAME` (2Y) ile yeniden çekim
+- Log mesajı (kullanıcı kontratı): `"5Y Data Truncated - Falling back to stable 2Y window (symbol=X got=Y expected>=Z)"`
+- Yeni private helper `_fetch_ohlcv_window(symbol, lookback_days)`: MCP→borsapy zinciri tek noktada; fallback path aynı zinciri reuse eder
+
+## Graphify — Code Knowledge Graph (2026-05)
+
+### Kurulum
+- `uv tool install graphifyy` (`v0.5.0` runtime adı, exe: `graphify.exe`)
+- `graphify claude install` → CLAUDE.md'ye section + `.claude/settings.json` PreToolUse Glob|Grep hook
+- `graphify update .` → 177 file indexed → `graphify-out/{graph.json, graph.html, GRAPH_REPORT.md}`
+
+### Hook'lar (`.claude/hooks/`)
+- **`block_search_tools.py`** (PreToolUse:Bash): grep/find/rg/ag/fd komutlarını yakalar:
+  - Önce `graphify query <term>` çalıştırır
+  - Sonuç varsa: grep'i BLOKLAR, graphify çıktısını additionalContext olarak inject eder
+  - Sonuç yoksa: grep'e fallback olarak izin verir (legitimate fallback note ile)
+- **`subagent_graphify_context.py`** (SubagentStart): subagent'lara mandatory graphify-first kuralını enjekte eder
+
+### Token tasarrufu (benchmark)
+- Naive corpus: ~240k tokens
+- Graphify query: ~15.9k tokens average → **15.1× reduction**
+- Cross-module relation query'leri: **38×**
+- Graph: 3640 nodes / 8924 edges / 110 communities
+
+### Kullanım disiplini
+- "Where is X / what uses Y / how does Z connect" — önce `graphify query`, sonra grep
+- `graphify path <a> <b>` — iki node arası shortest path
+- `graphify explain <node>` — bir node + komşuları plain-language
+- Hook otomatik fallback'i yönetir; bilinçli grep gerekirse hook izin verir
 
 ## Son Yapilanlar (2026-05)
+- [x] **Walk-Forward Optimizer (Python)** — `ml_forward_tester.py` root-level CLI:
+  - `WalkForwardEngine` sınıfı: rolling 12M IS / 3M OOS pencereleri, IS'de grid-search → max-PF parametre seçimi, OOS'da seçili setle teyit
+  - 2 strateji: **SMC** (`swing_lookback × confirm_bars` BOS+structure stop), **ADX** (`adx_threshold × di_diff` trend takip)
+  - Saf pandas+numpy implementasyon (no TA-Lib gerekmiyor); ADX Wilder smoothing + swing-high/low `.shift(1)` ile causal
+  - Metrikler: **WFE** (ΣOOS_profit/ΣIS_profit; >0.5 robust, <0.2 overfit), worst OOS DD, avg PF, win-rate, %profitable OOS
+  - Verdict: `stable` / `borderline` / `overfit` (3 eşik kombinasyonu)
+  - Lookahead-safe: pozisyon t'de karar verir, t+1'de return; swing struct shift(1)
+  - **`bist_bridge.fetch_ohlcv(symbol, timeframe='5Y')` reuse** — yeni 5Y→2Y truncation fallback'ten faydalanır
+  - CLI: `--symbol`, `--symbols`, `--strategy {smc,adx}`, `--is-months`, `--oos-months`, `--timeframe {1M,3M,6M,1Y,2Y,5Y}`, `--out <json>`, `--quiet`
+- [x] **ML Forward Test Feedback Loop (DB v5)** — Faz 1 kapali dongu: paper trade outcomes → `discovered_rules`:
+  - **DB Schema v5**: `paper_trades.rule_hash` (deterministik join key) + `discovered_rules.paper_win_count` / `paper_loss_count` (canlı sayaçlar, backtest count'larından ayrı)
+  - `applyTradeFeedback(ruleHash, pnlPct)`: tek-örnek incremental moving average ile total/win/loss/avgRoi/expectancy günceller — formül `_upsertRulesNode` weighted merge'den birebir reuse
+  - `closePaperTrade` artık otomatik feedback tetikler ve `{ ruleHash, feedback }` döner
+  - `ML_BacktestEngine.scoreNewSignal` matched rule output'una `ruleHash`, `paperWinCount`, `paperLossCount`, `totalCount` ekler
+  - `useAIAdvisor` her pick'e `mlBestRuleHash` set eder; localStorage cache de persist eder
+  - `PaperTradeEngine._openTrade` `pick.mlBestRuleHash`'i `trade.ruleHash` olarak `openTrade` payload'una koyar
+  - IPC: `paperDb.applyTradeFeedback(ruleHash, pnlPct)` renderer'a expose (defensive — şu an server-side otomatik)
+  - **🔄 LIVE rozeti** (AIAdvisorPanel): paper sample share ≥ %20 olduğunda gösterilir; tooltip paper W/L kırılımı ve paper win rate
+  - Engine console log: `[PaperML] Rule feedback applied — hash=… paperWins=… paperLosses=… total=…`
+  - **Test**: `PaperTradeEngine.test.js` 7 senaryo (rule_hash propagation, fallback, no-ML pick, win/loss accumulator, çoklu trade aggregate, no-rule bypass) → 194/194 vitest pass
+- [x] **`bist_bridge.py` v5 — 5Y Truncation Fallback**:
+  - **TIMEFRAME_DAYS** + **TIMEFRAME_EXPECTED_CANDLES** sabitleri (`1M`/`3M`/`6M`/`1Y`/`2Y`/`5Y`); 252 sessions/yr baz
+  - `COMPLETENESS_RATIO = 0.80` — 5Y request <%80 expected candles → truncated sayılır
+  - **`DEFAULT_TIMEFRAME = "2Y"`** (cold-boot snappy; 5Y opt-in)
+  - **FALLBACK_TIMEFRAME = "2Y"** — known-stable rescue window
+  - `fetch_ohlcv(symbol, lookback_days=None, timeframe=None)`: yeni opsiyonel `timeframe` parametresi; 5Y truncated ise log warning `"5Y Data Truncated - Falling back to stable 2Y window"` + 2Y'ye yeniden çekim
+  - `_fetch_ohlcv_window` private helper: tek MCP-then-borsapy attempt; fallback path aynı zinciri reuse eder (no behavior drift)
+  - Geriye uyumlu: `fetch_ohlcv(symbol, lookback_days=N)` çağrıları aynı şekilde çalışır
+- [x] **Graphify Code-Knowledge-Graph (Claude Skill)** — proje genelinde token tasarrufu:
+  - `graphifyy v0.5.0` (uv tool) — graph.json + GRAPH_REPORT.md + community wiki üretir
+  - `graphify claude install`: CLAUDE.md'ye graphify section + `.claude/settings.json` PreToolUse hook
+  - **Hook'lar** (gist'ten install edildi, oyilmaztekin/e4bfb7d...):
+    - `.claude/hooks/block_search_tools.py` — PreToolUse:Bash: grep/find/rg/ag/fd algılarsa otomatik `graphify query` çalıştırır, sonuç varsa grep'i bloklayıp inject eder; yoksa fallback'e izin verir
+    - `.claude/hooks/subagent_graphify_context.py` — SubagentStart: subagent'lara graphify-first kuralını enjekte eder
+  - Benchmark: **15.1× ortalama token reduction** (240k naive → ~15.9k per query); cross-module relation query'lerde **38×**
+  - Graph: 3640 nodes / 8924 edges / 110 communities (177 indexed files)
 - [x] **ML Forward Test Paper Trading Engine** — SQLite-backed forward testing:
   - DB Schema v4: `paper_portfolio` + `paper_trades` tabloları
   - `PaperTradeEngine.js`: TOP 3 ML-scored, 33% alloc, -3% stop
@@ -831,3 +1006,13 @@ Eski localStorage cache **scan sonrasi devirilir**, asla stale kalmaz.
 - `useSignalTracker.calcStats()` — kapanan trade'lerdeki firedSignals'dan `bySignalType` win rate hesabi (min 8 ornek)
 - `genSignal` — her fired sinyal tipinin gecmis basari oranina gore ±2 puan kalibre (signal attribution feedback)
 - `usePaperTrading` — pozisyon acarken firedSignals kaydeder, kapaninca bySignalType guncellenir
+
+## graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)

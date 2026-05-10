@@ -338,8 +338,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       // tavan picks icin continuationProbability >= 38% kontrolu yapar,
       // mutlak tehlikeli senaryolar (RSI>88, gap-up) bloklanir.
       // Non-tavan + yuksek-confidence tavan picks gecer.
+      // v27: _emergencyPick picks — engine zaten vetted, panel filter bypass et.
       const safe = [...topPicks]
-        .filter(p => !isUnsafe(p))
+        .filter(p => p._emergencyPick || !isUnsafe(p))
         .sort((a, b) => {
           // Non-tavan daima tavan'in onunde
           const aPump = Math.max(a.todayPumpReal || 0, a.recentPump || 0);
@@ -351,20 +352,76 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           }
           return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
         });
-      setDisplayPicks(safe);
+
+      // v27: TOP 5 garantisi — eger panel-side filter picks 5'in altina dusurduyse,
+      // scanResults'tan kalan eksikleri doldur (emergency rozetiyle).
+      // 3-tier permissive cascade: strict → relaxed → ultra-relaxed
+      if (safe.length < 5 && Array.isArray(scanResults) && scanResults.length > 0) {
+        const have = new Set(safe.map(p => p.symbol));
+        const need = 5 - safe.length;
+        const sortByConf = (a, b) => (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
+        const buildFiller = (rows) => rows
+          .filter(r => !have.has(r.symbol))
+          .sort(sortByConf)
+          .slice(0, need)
+          .map(r => ({ ...r, _fallback: true, _emergencyPick: true }));
+
+        // TIER 1: strict (200K+ TL, ATR>=0.4, non-sell, RSI/MFI<=92)
+        let filler = buildFiller(scanResults.filter(r =>
+          (r.avgVolumeTL || 0) >= 200_000 &&
+          (r.atrPct || 0) >= 0.4 &&
+          r.cls !== 'sell' &&
+          (r.rsi || 50) <= 92 && (r.mfi || 50) <= 92
+        ));
+
+        // TIER 2: relaxed (100K+ TL, ATR>=0.2, non-sell)
+        if (filler.length < need) {
+          const t2have = new Set([...have, ...filler.map(p => p.symbol)]);
+          const t2 = buildFiller(scanResults
+            .filter(r => !t2have.has(r.symbol))
+            .filter(r => (r.avgVolumeTL || 0) >= 100_000)
+            .filter(r => (r.atrPct || 0) >= 0.2)
+            .filter(r => r.cls !== 'sell')
+          ).slice(0, need - filler.length);
+          filler = [...filler, ...t2];
+        }
+
+        // TIER 3: ultra-relaxed (any scanResult — guarantee 5 regardless)
+        if (filler.length < need) {
+          const t3have = new Set([...have, ...filler.map(p => p.symbol)]);
+          const t3 = scanResults
+            .filter(r => !t3have.has(r.symbol))
+            .sort(sortByConf)
+            .slice(0, need - filler.length)
+            .map(r => ({ ...r, _fallback: true, _emergencyPick: true }));
+          filler = [...filler, ...t3];
+        }
+
+        setDisplayPicks([...safe, ...filler]);
+      } else {
+        setDisplayPicks(safe);
+      }
     } else if (scanResults.length > 0) {
       // Scan calisti ama topPicks bos (strict filtreler her seyi reddetti).
-      // scanResults'tan KALITELI low-pump setup'lari sec — TAVAN ASLA YOK.
-      const freshFallback = scanResults
-        .filter(r => !isUnsafe(r))                    // Wall Street filter
-        .filter(r => (r.score || 0) >= 45)
-        .filter(r => (r.avgVolumeTL || 0) >= 1_000_000) // 1M TL min likidite
-        .sort((a, b) => {
-          // Quality-first: erken birikim varsa once, sonra confidence/score
-          if (a._earlyPick && !b._earlyPick) return -1;
-          if (b._earlyPick && !a._earlyPick) return 1;
-          return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
-        })
+      // v27: TOP 5 GARANTI — 3 tier cascade.
+      const sortFn = (a, b) => {
+        if (a._earlyPick && !b._earlyPick) return -1;
+        if (b._earlyPick && !a._earlyPick) return 1;
+        return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
+      };
+      let pool = scanResults.filter(r => !isUnsafe(r) && (r.score || 0) >= 45 && (r.avgVolumeTL || 0) >= 1_000_000);
+      if (pool.length < 5) {
+        const have = new Set(pool.map(p => p.symbol));
+        const t2 = scanResults.filter(r => !have.has(r.symbol) && (r.avgVolumeTL || 0) >= 200_000 && r.cls !== 'sell');
+        pool = [...pool, ...t2];
+      }
+      if (pool.length < 5) {
+        const have2 = new Set(pool.map(p => p.symbol));
+        const t3 = scanResults.filter(r => !have2.has(r.symbol));
+        pool = [...pool, ...t3];
+      }
+      const freshFallback = pool
+        .sort(sortFn)
         .slice(0, 8)
         .map(r => ({
           symbol: r.symbol, sector: r.sector, price: r.price, change: r.change,
@@ -469,7 +526,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     };
 
     doLivePriceUpdate();                              // hemen bir kez
-    const iv = setInterval(doLivePriceUpdate, 60_000); // sonra her 60s
+    const iv = setInterval(doLivePriceUpdate, 30_000); // v6: 30s — daha taze fiyat
     return () => { cancelled = true; clearInterval(iv); };
   }, [displayPicks.length, isFromCache]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -551,6 +608,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         .ai-pick-top1 { box-shadow: 0 0 0 1px #ffd60044, 0 0 14px #ffd60022 inset; }
         .ai-pick-top2 { box-shadow: 0 0 0 1px #06b6d433, 0 0 12px #06b6d422 inset; }
         .ai-pick-top3 { box-shadow: 0 0 0 1px #8b5cf633, 0 0 10px #8b5cf622 inset; }
+        .ai-pick-top4 { box-shadow: 0 0 0 1px #10b98133, 0 0 8px #10b98118 inset; }
+        .ai-pick-top5 { box-shadow: 0 0 0 1px #3b82f633, 0 0 8px #3b82f618 inset; }
       `}</style>
       {/* ── Header bar ── */}
       <div style={{
@@ -591,6 +650,25 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
               letterSpacing: 0.4,
             }}>
               {isStale ? '⚠ ESKİ VERİ' : 'OTOMATİK YEDEK'} {cacheAge ? `• ${cacheAge}` : ''}
+            </span>
+          )}
+          {/* MAKRO BADGE — risk regime (USDTRY + VIX + TCMB + BIST/USD) */}
+          {marketSentiment?.macro && (
+            <span
+              title={
+                `Adjust: ${marketSentiment.macro.scoreAdjust > 0 ? '+' : ''}${marketSentiment.macro.scoreAdjust}\n` +
+                (marketSentiment.macro.reasons?.join('\n') || '')
+              }
+              style={{
+                fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 10,
+                background: `${marketSentiment.macro.badgeColor}22`,
+                color: marketSentiment.macro.badgeColor,
+                border: `1px solid ${marketSentiment.macro.badgeColor}66`,
+                letterSpacing: 0.4, whiteSpace: 'pre-line',
+                boxShadow: marketSentiment.macro.regime === 'panic' ? `0 0 8px ${marketSentiment.macro.badgeColor}55` : 'none',
+              }}
+            >
+              {marketSentiment.macro.badge}
             </span>
           )}
           {scanning && (
@@ -820,15 +898,22 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           if (p._dataSource) tooltipLines.push(`Veri kaynağı: ${p._dataSource}`);
 
           // Veri yasi (her pick icin ayri — _scanTs varsa)
+          // v6: Renk-kodlu tazelik pill (her zaman gorunur, kullanici tooltip'i acmadan da fark eder)
           const pickAge = p._scanTs ? (() => {
             const mins = Math.floor((Date.now() - p._scanTs) / 60000);
-            if (mins < 1) return null;
-            if (mins < 60) return `${mins}dk`;
-            return `${Math.floor(mins / 60)}s`;
+            if (mins < 5)  return { label: '● TAZE',         color: '#10e87a', bg: 'rgba(16,232,122,0.18)', border: 'rgba(16,232,122,0.45)' };
+            if (mins < 15) return { label: `⚠ ${mins}dk`,    color: '#ff9a3c', bg: 'rgba(255,154,60,0.18)', border: 'rgba(255,154,60,0.45)' };
+            if (mins < 60) return { label: `🔴 ${mins}dk`,   color: '#ff5470', bg: 'rgba(244,63,94,0.18)',  border: 'rgba(244,63,94,0.45)' };
+            return                  { label: `🔴 ${Math.floor(mins/60)}s ESKI`, color: '#ff5470', bg: 'rgba(244,63,94,0.25)', border: 'rgba(244,63,94,0.6)' };
           })() : null;
 
-          // Top 3 cards get a subtle glow accent
-          const topClass = idx === 0 ? 'ai-pick-top1' : idx === 1 ? 'ai-pick-top2' : idx === 2 ? 'ai-pick-top3' : '';
+          // Top 5 cards get a subtle glow accent
+          const topClass = idx === 0 ? 'ai-pick-top1'
+            : idx === 1 ? 'ai-pick-top2'
+            : idx === 2 ? 'ai-pick-top3'
+            : idx === 3 ? 'ai-pick-top4'
+            : idx === 4 ? 'ai-pick-top5'
+            : '';
           // Premium gradient background based on signal type
           const cardBg = p._fallback
             ? 'linear-gradient(180deg, #14192410 0%, #0d111c 100%)'
@@ -955,6 +1040,37 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       🎯 %{(p.mlBestRule.winRate || 0).toFixed(0)}
                     </span>
                   )}
+                  {/* LIVE CALIBRATION rozeti — paper trade outcome'lari kuralin
+                      win/loss sayilarinin >= %20'sine ulasti, yani kural artik
+                      sadece historical backtest degil canli forward-test ile de
+                      kalibre. */}
+                  {(p.mlMatchedCount || 0) > 0 && p.mlBestRule && (() => {
+                    const paperW = p.mlBestRule.paperWinCount  || 0;
+                    const paperL = p.mlBestRule.paperLossCount || 0;
+                    const total  = p.mlBestRule.totalCount     || 0;
+                    const paperSamples = paperW + paperL;
+                    if (paperSamples < 1 || total < 3) return null;
+                    const liveShare = paperSamples / total;
+                    if (liveShare < 0.10) return null;
+                    const paperWinRate = paperSamples > 0
+                      ? (paperW / paperSamples) * 100
+                      : 0;
+                    return (
+                      <span style={{
+                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                        background: 'linear-gradient(90deg, #10b981, #059669)',
+                        color: '#fff',
+                        letterSpacing: 0.3,
+                        boxShadow: '0 0 4px rgba(16,185,129,0.35)',
+                      }} title={[
+                        `🔄 Kural canlı forward-test ile kalibre edildi`,
+                        `Paper trade örneği: ${paperSamples}/${total} (${(liveShare * 100).toFixed(0)}%)`,
+                        `Paper win rate: %${paperWinRate.toFixed(0)} (${paperW}W/${paperL}L)`,
+                      ].join('\n')}>
+                        🔄 LIVE
+                      </span>
+                    );
+                  })()}
                   {/* TAVAN UYARI + DEVAM OLASILIGI rozeti — son bar +%9 uzeri */}
                   {Math.max(p.todayPumpReal || 0, p.recentPump || 0) >= 9 && (() => {
                     const cp = p.continuationProbability;
@@ -1219,12 +1335,13 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
               }}>
                 {pickAge && (
                   <span style={{
-                    fontSize: 9, color: pickAge.includes('s') ? '#ff9a3c' : '#b0bccd',
-                    fontWeight: 700, background: 'rgba(0,0,0,0.55)',
+                    fontSize: 9, color: pickAge.color,
+                    fontWeight: 800, background: pickAge.bg,
                     padding: '2px 5px', borderRadius: 3,
-                    border: '1px solid rgba(255,255,255,0.08)',
-                  }} title={`${pickAge} önce taranmış`}>
-                    {pickAge}
+                    border: `1px solid ${pickAge.border}`,
+                    letterSpacing: 0.3,
+                  }} title="Tarama anindan bu yana gecen sure">
+                    {pickAge.label}
                   </span>
                 )}
                 <span style={{
@@ -1232,11 +1349,13 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   background: idx === 0 ? 'linear-gradient(135deg, #ffd700, #ff9d00)'
                     : idx === 1 ? 'linear-gradient(135deg, #c0c0c0, #808080)'
                     : idx === 2 ? 'linear-gradient(135deg, #cd7f32, #8b4513)'
+                    : idx === 3 ? 'linear-gradient(135deg, #10b981, #059669)'
+                    : idx === 4 ? 'linear-gradient(135deg, #3b82f6, #1d4ed8)'
                     : 'rgba(0,0,0,0.4)',
-                  color: idx <= 2 ? '#000' : 'var(--t3)',
+                  color: idx <= 4 ? (idx <= 2 ? '#000' : '#fff') : 'var(--t3)',
                   padding: '1px 5px', borderRadius: 3,
-                  border: idx <= 2 ? 'none' : '1px solid rgba(255,255,255,0.05)',
-                  boxShadow: idx <= 2 ? '0 1px 3px rgba(0,0,0,0.4)' : 'none',
+                  border: idx <= 4 ? 'none' : '1px solid rgba(255,255,255,0.05)',
+                  boxShadow: idx <= 4 ? '0 1px 3px rgba(0,0,0,0.4)' : 'none',
                 }}>#{idx + 1}</span>
               </div>
             </div>

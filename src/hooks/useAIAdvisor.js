@@ -7,6 +7,7 @@ import { calcSectorMetrics, rankSectors } from '../utils/sectorEngine.js';
 import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
+import { getMacroContext } from '../utils/macroContextEngine.js';
 
 /**
  * _istanbulParts — returns { day, h, m } in Europe/Istanbul regardless of host TZ.
@@ -966,9 +967,20 @@ export function useAIAdvisor(portfolio) {
         sector: s.sector, avgScore: s.avgScore, total: s.scanned, strength: s.strength, rotation: s.rotation,
       }));
 
+      // ── Macro context (USDTRY + VIX + TCMB + BIST/USD) ──
+      // Fire-and-await with 6s soft cap — non-blocking if all sources fail.
+      let macroCtx = null;
+      try {
+        macroCtx = await Promise.race([
+          getMacroContext(),
+          new Promise(r => setTimeout(() => r(null), 6000)),
+        ]);
+      } catch { macroCtx = null; }
+
       const sentimentObj = {
         sentiment, color, buys, sells, scanned: results.length, avgRSI, accumulations,
         sectorRotation,
+        macro: macroCtx,
       };
 
       // ── Top picks — dual mode ──
@@ -1457,7 +1469,7 @@ export function useAIAdvisor(portfolio) {
       //   4. PAS GEC: hicbirini dolduramiyorsak panel YEDI ALTERNATIF gosterir, tavan EKLEMEZ
       // Tavan hisseler (rp>=9) artik lastResort'a DAHIL EDILMEZ — sadece kuvvetli kataliz +
       // 4 teknik teyitle buyPicks/fallbackBuys'tan gelmis olanlar gosterilir.
-      if (picks.length < 3) {
+      if (picks.length < 5) {
         const existingSyms2 = new Set(picks.map(p => p.symbol));
         const need = 5 - picks.length;
 
@@ -1538,7 +1550,8 @@ export function useAIAdvisor(portfolio) {
       //   TIER 2: 100K+ TL hacim (son çare — likit değil ama hareketli)
       // Tavan/bearish filtrelerini BYPASS et, ⚠ "⚡ YARIN UMUT" rozetiyle göster
       // v26: picks boş ise DAIMA emergency fallback çalıştır
-      if (picks.length === 0) {
+      // v27: TOP 5 garantisi — picks 5'ten azsa eksikleri emergency ile doldur
+      if (picks.length < 5) {
         const existingSyms3 = new Set(picks.map(p => p.symbol));
         const need = 5 - picks.length;
 
@@ -1802,6 +1815,28 @@ export function useAIAdvisor(portfolio) {
       picks = picks.map(enhancePick);
 
       // ══════════════════════════════════════════════════════════════════════
+      //  MACRO SCORE ADJUSTMENT — USDTRY/VIX/TCMB regime
+      // ══════════════════════════════════════════════════════════════════════
+      // Risk-off macro: BUY picks lose 6-15 confidence. Risk-on: +4 to +8.
+      // SELL picks unaffected (macro stress validates short bias).
+      if (macroCtx && typeof macroCtx.scoreAdjust === 'number' && macroCtx.scoreAdjust !== 0) {
+        picks = picks.map(p => {
+          if (p.cls === 'sell') return { ...p, _macroAdjust: 0, _macroRegime: macroCtx.regime };
+          const adjusted = Math.max(0, Math.min(100, (p.confidence || 50) + macroCtx.scoreAdjust));
+          const grade = adjusted >= 75 ? 'A' : adjusted >= 65 ? 'B' : adjusted >= 55 ? 'C' : 'D';
+          const tier = adjusted >= 75 ? 'STRONG' : adjusted >= 65 ? 'GOOD' : adjusted >= 55 ? 'FAIR' : 'WEAK';
+          return {
+            ...p,
+            confidence: adjusted,
+            grade,
+            tier,
+            _macroAdjust: macroCtx.scoreAdjust,
+            _macroRegime: macroCtx.regime,
+          };
+        });
+      }
+
+      // ══════════════════════════════════════════════════════════════════════
       //  ML RULE SCORING — Discovered rules from SQLite self-learning engine
       // ══════════════════════════════════════════════════════════════════════
       //
@@ -1845,12 +1880,19 @@ export function useAIAdvisor(portfolio) {
                     winRate: best.winRate,
                     avgRoi: best.avgRoi,
                     conditions: best.conditions,
+                    // v5: live-feedback counts for "🔄 LIVE" badge
+                    paperWinCount:  best.paperWinCount  || 0,
+                    paperLossCount: best.paperLossCount || 0,
+                    totalCount:     best.totalCount     || 0,
                   } : null,
+                  // v5: deterministic key into discovered_rules so paper trades
+                  // can feed outcomes back into rule weights when they close.
+                  mlBestRuleHash: best?.ruleHash || null,
                   mlMatchedCount: result.ruleCount,
                 };
               }
               // No ML match → standard signal, no badge
-              return { ...p, mlConfidenceBoost: 0, mlBestRule: null, mlMatchedCount: 0 };
+              return { ...p, mlConfidenceBoost: 0, mlBestRule: null, mlBestRuleHash: null, mlMatchedCount: 0 };
             });
             console.log(`[AI Advisor] ML scoring: ${mlMatched}/${picks.length} picks matched rules`);
           }
@@ -2066,6 +2108,7 @@ export function useAIAdvisor(portfolio) {
               insiderScore: p.insiderScore, insiderNetBuys: p.insiderNetBuys,
               hasRecentInsiderBuy: p.hasRecentInsiderBuy, hasRecentInsiderSell: p.hasRecentInsiderSell,
               mlConfidenceBoost: p.mlConfidenceBoost, mlBestRule: p.mlBestRule,
+              mlBestRuleHash: p.mlBestRuleHash,
               mlMatchedCount: p.mlMatchedCount,
             })),
             // ── COMPACT VERDICT MAP — ALL scanned symbols ──
