@@ -1528,6 +1528,27 @@ export async function applyLiveOverlay(r, symbol) {
  * sanitizePrices — Ham fiyat verisindeki bozuk/duplicate bar'lari temizler.
  * Wall Street kalitesinde bir feed bu kontrollerden gecmek zorundadir.
  */
+// BIST ghost candle filter — drop incomplete "today" daily candle before market close (18:10 TRT)
+function _stripGhostCandle(bars) {
+  if (!bars.length) return bars;
+  const last = bars[bars.length - 1];
+  const lastDate = new Date(last.date);
+  const nowTRT = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Istanbul' }));
+  const todayStr = nowTRT.getFullYear() + '-' +
+    String(nowTRT.getMonth() + 1).padStart(2, '0') + '-' +
+    String(nowTRT.getDate()).padStart(2, '0');
+  const barDateTRT = new Date(lastDate.toLocaleString('en-US', { timeZone: 'Europe/Istanbul' }));
+  const barStr = barDateTRT.getFullYear() + '-' +
+    String(barDateTRT.getMonth() + 1).padStart(2, '0') + '-' +
+    String(barDateTRT.getDate()).padStart(2, '0');
+  if (barStr !== todayStr) return bars;
+  const trtMinutes = nowTRT.getHours() * 60 + nowTRT.getMinutes();
+  // 18:10 TRT = 1090 minutes — BIST continuous session fully closed
+  if (trtMinutes >= 1090) return bars;
+  bars.pop();
+  return bars;
+}
+
 function sanitizePrices(prices) {
   if (!Array.isArray(prices)) return [];
   const out = [];
@@ -1559,7 +1580,8 @@ function sanitizePrices(prices) {
       out[i] = { ...out[i], close: (pre + nxt) / 2, _corrected: true };
     }
   }
-  return out;
+  // Ghost candle filter: strip incomplete "today" candle before BIST close
+  return _stripGhostCandle(out);
 }
 
 export async function fetchData(symbol, range, interval, logFn) {
