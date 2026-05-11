@@ -14,6 +14,7 @@ Environment=BMAN_AUTH_CONFIG=/home/rpi/BorsaMan/config/web-auth.json
 Environment=BMAN_SESSION_STATUS=/home/rpi/BorsaMan/reports/admin/sessions.json
 Environment=BMAN_ADVISOR_BACKGROUND=1
 Environment=BMAN_ADVISOR_CACHE=/home/rpi/BorsaMan/reports/advisor/latest.json
+Environment=BMAN_ADVISOR_PROGRESS=/home/rpi/BorsaMan/reports/advisor/progress.json
 Environment=BMAN_ADVISOR_UNIVERSE=bistall
 Environment=BMAN_ADVISOR_CONCURRENCY=4
 Environment=BMAN_ADVISOR_DELAY_MS=350

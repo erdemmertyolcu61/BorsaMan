@@ -141,6 +141,11 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
   const [top10Stats, setTop10Stats] = useState(null);
   const [dbInitialized, setDbInitialized] = useState(false);
   const [processLog, setProcessLog] = useState([]); // For UI feedback
+  const serverProgress = serverCacheStatus?.progress || {};
+  const progressDone = Number(serverProgress.done ?? scanProgress.done ?? 0);
+  const progressTotal = Number(serverProgress.total ?? scanProgress.total ?? 0);
+  const progressPct = progressTotal > 0 ? Math.max(0, Math.min(100, Math.round((progressDone / progressTotal) * 100))) : 0;
+  const showServerProgress = scanning || serverCacheStatus?.running || serverCacheStatus?.pending || progressTotal > 0;
   
   const addLog = (msg, type = 'info') => {
     setProcessLog(prev => [{ msg, type, ts: new Date() }, ...prev].slice(0, 10));
@@ -241,7 +246,11 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
             {serverCacheStatus?.running || serverCacheStatus?.pending ? 'CACHE YENILENIYOR' : (isMarketOpen() ? 'CANLI' : 'YARIN ICIN')}
           </span>
         )}
-        {scanning && <span style={{ color: 'var(--yellow)' }}>Sunucu cache yenileniyor</span>}
+        {scanning && (
+          <span style={{ color: 'var(--yellow)' }}>
+            Sunucu cache yenileniyor {progressTotal ? `${progressDone}/${progressTotal} (%${progressPct})` : ''}
+          </span>
+        )}
         {!scanning && lastUpdate && <span style={{ color: 'var(--t3)' }}>{new Date(lastUpdate).toLocaleTimeString('tr-TR')}</span>}
         {!scanning && serverCacheStatus?.cacheAgeSeconds != null && (
           <span style={{ color: 'var(--t3)', fontSize: 10 }}>
@@ -252,6 +261,17 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
         <SourceHealthBadge />
         <StaleWarningBadge />
       </div>
+
+      {showServerProgress && progressTotal > 0 && (
+        <div style={{ flexBasis: '100%', height: 4, background: 'rgba(15,23,42,0.92)', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{
+            height: '100%',
+            width: `${progressPct}%`,
+            background: 'linear-gradient(90deg, var(--cyan), var(--green))',
+            transition: 'width 0.35s ease',
+          }} />
+        </div>
+      )}
 
       {/* Global Market Ticker */}
       {globalMarket.length > 0 && (

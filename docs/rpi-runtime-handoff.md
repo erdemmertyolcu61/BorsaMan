@@ -87,6 +87,9 @@ Branch target:
 - Browsers poll `/api/advisor-cache`.
 - Manual refresh calls `/api/advisor-refresh` and queues server-side work.
 - Browser-side full-universe scan is developer fallback only.
+- The advisor scanner writes `reports/advisor/progress.json` while it runs, so
+  the UI can show `done/total` and a progress bar instead of a silent blank
+  panel.
 
 Relevant files:
 
@@ -190,4 +193,3 @@ Before pushing the branch:
 npm run build
 python3 -m py_compile server.py telegram-bot/bot.py
 ```
-

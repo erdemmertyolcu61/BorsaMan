@@ -31,6 +31,7 @@ PORT = int(os.environ.get("BMAN_PORT", "8080"))
 COOKIE_NAME = "bman_session"
 DEFAULT_TTL_SECONDS = 8 * 60 * 60
 ADVISOR_CACHE_PATH = Path(os.environ.get("BMAN_ADVISOR_CACHE", ROOT / "reports" / "advisor" / "latest.json")).resolve()
+ADVISOR_PROGRESS_PATH = Path(os.environ.get("BMAN_ADVISOR_PROGRESS", ROOT / "reports" / "advisor" / "progress.json")).resolve()
 ADVISOR_SCRIPT = Path(os.environ.get("BMAN_ADVISOR_SCRIPT", ROOT / "scripts" / "advisor" / "build-advisor-cache.mjs")).resolve()
 ADVISOR_ENABLED = os.environ.get("BMAN_ADVISOR_BACKGROUND", "1").lower() not in {"0", "false", "no"}
 ADVISOR_UNIVERSE = os.environ.get("BMAN_ADVISOR_UNIVERSE", "bistall")
@@ -191,6 +192,17 @@ def load_advisor_cache() -> dict[str, Any] | None:
         return None
 
 
+def load_advisor_progress() -> dict[str, Any]:
+    try:
+        if not ADVISOR_PROGRESS_PATH.exists():
+            return {}
+        with ADVISOR_PROGRESS_PATH.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def advisor_cache_age_seconds() -> float | None:
     try:
         return max(0.0, time.time() - ADVISOR_CACHE_PATH.stat().st_mtime)
@@ -223,6 +235,7 @@ class AdvisorScanner:
 
     def status(self) -> dict[str, Any]:
         age = advisor_cache_age_seconds()
+        progress = load_advisor_progress()
         return {
             "enabled": ADVISOR_ENABLED,
             "running": self.running,
@@ -232,10 +245,15 @@ class AdvisorScanner:
             "lastError": self.last_error,
             "lastReason": self.last_reason,
             "cachePath": str(ADVISOR_CACHE_PATH),
+            "progressPath": str(ADVISOR_PROGRESS_PATH),
             "cacheAgeSeconds": age,
             "marketOpen": is_bist_market_open(),
             "marketIntervalSeconds": ADVISOR_MARKET_INTERVAL,
             "idleIntervalSeconds": ADVISOR_IDLE_INTERVAL,
+            "progress": progress,
+            "done": progress.get("done", 0),
+            "total": progress.get("total", 0),
+            "pct": progress.get("pct", 0),
         }
 
     def _needs_scan(self) -> bool:
@@ -287,6 +305,8 @@ class AdvisorScanner:
                 str(ADVISOR_SCRIPT),
                 "--out",
                 str(ADVISOR_CACHE_PATH),
+                "--progress",
+                str(ADVISOR_PROGRESS_PATH),
                 "--universe",
                 ADVISOR_UNIVERSE,
                 "--concurrency",

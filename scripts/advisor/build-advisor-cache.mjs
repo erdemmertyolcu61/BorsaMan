@@ -17,6 +17,7 @@ const DEFAULTS = {
   concurrency: 4,
   delayMs: 350,
   maxSymbols: null,
+  progress: '',
   dryRun: false,
 };
 
@@ -32,6 +33,7 @@ function parseArgs(argv) {
     else if (key === '--concurrency') { args.concurrency = Math.max(1, Number(next) || args.concurrency); i += 1; }
     else if (key === '--delay-ms') { args.delayMs = Math.max(0, Number(next) || 0); i += 1; }
     else if (key === '--max-symbols') { args.maxSymbols = Math.max(0, Number(next) || 0); i += 1; }
+    else if (key === '--progress') { args.progress = next || ''; i += 1; }
     else if (key === '--dry-run') { args.dryRun = true; }
   }
   return args;
@@ -248,6 +250,14 @@ async function atomicWriteJson(path, payload) {
   await rename(tmp, out);
 }
 
+async function writeProgress(args, patch) {
+  if (!args.progress || args.dryRun) return;
+  await atomicWriteJson(args.progress, {
+    ...patch,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const allSymbols = getStockList(args.universe);
@@ -256,9 +266,38 @@ async function main() {
   const scanMode = isMarketOpen() ? 'intraday' : 'afterHours';
   const results = [];
   const failures = [];
+  const startedIso = new Date().toISOString();
+
+  await writeProgress(args, {
+    ready: false,
+    running: true,
+    phase: 'starting',
+    universe: args.universe,
+    scanMode,
+    done: 0,
+    total: symbols.length,
+    ok: 0,
+    failed: 0,
+    pct: 0,
+    startedAt: startedIso,
+  });
 
   for (let i = 0; i < symbols.length; i += args.concurrency) {
     const chunk = symbols.slice(i, i + args.concurrency);
+    await writeProgress(args, {
+      ready: false,
+      running: true,
+      phase: 'scan',
+      universe: args.universe,
+      scanMode,
+      done: i,
+      total: symbols.length,
+      ok: results.length,
+      failed: failures.length,
+      current: chunk,
+      pct: symbols.length ? Math.round((i / symbols.length) * 1000) / 10 : 0,
+      startedAt: startedIso,
+    });
     const chunkResults = await Promise.all(chunk.map(async symbol => {
       try {
         return await scanSymbol(symbol, args.range, args.interval);
@@ -270,6 +309,20 @@ async function main() {
     for (const result of chunkResults) {
       if (result) results.push(result);
     }
+    const done = Math.min(symbols.length, i + chunk.length);
+    await writeProgress(args, {
+      ready: false,
+      running: true,
+      phase: 'scan',
+      universe: args.universe,
+      scanMode,
+      done,
+      total: symbols.length,
+      ok: results.length,
+      failed: failures.length,
+      pct: symbols.length ? Math.round((done / symbols.length) * 1000) / 10 : 100,
+      startedAt: startedIso,
+    });
     if (i + args.concurrency < symbols.length && args.delayMs > 0) {
       await sleep(args.delayMs);
     }
@@ -278,6 +331,22 @@ async function main() {
   const payload = buildPayload(results, failures, symbols, args, startedAt, scanMode);
   if (!args.dryRun) {
     await atomicWriteJson(args.out, payload);
+    await writeProgress(args, {
+      ready: true,
+      running: false,
+      phase: 'done',
+      universe: args.universe,
+      scanMode,
+      done: symbols.length,
+      total: symbols.length,
+      ok: results.length,
+      failed: failures.length,
+      pct: 100,
+      topPicks: payload.topPicks.length,
+      durationMs: payload.durationMs,
+      startedAt: startedIso,
+      finishedAt: new Date().toISOString(),
+    });
   }
   console.log(JSON.stringify({
     out: args.dryRun ? '<dry-run>' : resolve(args.out),
