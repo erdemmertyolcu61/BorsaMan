@@ -474,10 +474,17 @@ export function useSignalTracker() {
       for (const sig of activeSignals) {
         const t = new Date(sig.timestamp).getTime();
         const ageDays = (now - t) / TRADING_DAY_MS;
-        if (ageDays < 0.5) continue;
 
         const priceNow = quotes[sig.symbol];
         if (!priceNow) continue;
+
+        // v29: currentReturn her zaman güncellenir — UI'da "% kaç ilerledi" göstergesi
+        // Önceki: ageDays < 0.5 ise tüm signal güncellemesi atlanıyordu → günlük takip yok
+        // Yeni: progress her tick'te (10dk) hesaplanır, sadece outcome eşikleri 0.5 gün sonra devreye girer
+        const entryForReturn = sig.entryPrice || sig.price;
+        const currentReturn = (entryForReturn && priceNow)
+          ? ((priceNow - entryForReturn) / entryForReturn) * (sig.cls === 'sell' ? -1 : 1) * 100
+          : null;
 
         // --- TRAILING STOP LOGIC ---
         let currentStop = sig.stop;
@@ -507,14 +514,31 @@ export function useSignalTracker() {
         if (ageDays >= 5 && perf.d5 == null) perf.d5 = out.pct;
         if (ageDays >= 7 && perf.d7 == null) perf.d7 = out.pct;
 
-        const finalOutcome = (ageDays >= 7 || out.outcome === 'TARGET_HIT' || out.outcome === 'STOP_HIT')
+        // TARGET_HIT / STOP_HIT her zaman finalize (yaş gözetmez); WIN/LOSS yumuşak
+        // eşiklerdir, sadece 0.5 gün sonra outcome'a yansıtılır
+        const isHardHit = out.outcome === 'TARGET_HIT' || out.outcome === 'STOP_HIT';
+        const isSoftHit = (out.outcome === 'WIN' || out.outcome === 'LOSS') && ageDays >= 0.5;
+        const finalOutcome = (isHardHit || isSoftHit || ageDays >= 7)
           ? out.outcome
           : sig.outcome;
+
+        // Hedefe ne kadar yakın? (UI'da progress bar için)
+        let targetProgress = null;
+        if (entryForReturn && sig.target) {
+          const totalDist = sig.target - entryForReturn;
+          const moved     = priceNow      - entryForReturn;
+          if (Math.abs(totalDist) > 0) {
+            targetProgress = Math.max(-50, Math.min(150, (moved / totalDist) * 100));
+          }
+        }
 
         updates[sig.id] = {
           perf,
           outcome: finalOutcome,
           lastPrice: priceNow,
+          currentReturn,                 // v29: anlık % getiri (her tick'te güncellenir)
+          targetProgress,                // v29: hedef-yolu yüzdesi (0=entry, 100=target hit)
+          lastCheckedAt: now,            // v29: son fiyat kontrolü zamanı
           stop: currentStop,
           trailingStopActivated,
           status: (finalOutcome && finalOutcome !== 'OPEN') || ageDays >= 10 ? 'closed' : 'active',

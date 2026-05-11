@@ -719,15 +719,25 @@ export function useAIAdvisor(portfolio) {
                 }
               }
 
-              // ── FORMING BAR GUARD ──
-              // If the last bar is still forming (live overlay from BigPara, intraday),
-              // strip it from indicator calculation — H/L are not final yet.
-              // A forming bar with narrow H-L range distorts ATR and Bollinger Bands,
-              // which leads to inflated signals and false buy recommendations.
-              // We use the live price for display but complete bars for analysis.
+              // ── FORMING BAR HANDLING (v29) ──
+              // Eskiden TÜM forming bar'lar indicator hesabından strip ediliyordu — bu
+              // AI advisor'ın bugünün hareketini görmemesine yol açıyordu (kullanıcı
+              // şikayeti: "bugünki mumlar gelmeden öneri yapıyor").
+              //
+              // YENI MANTIK:
+              //   - Zero-range bar (H==L veya range < %0.1): strip (ATR'yi sıfırlar)
+              //   - Normal forming bar (gerçek H>L hareketi var): DAHIL et
+              //     Sebep: 14-bar ATR'da forming bar sadece 1/14 ağırlık taşır, ama
+              //     advisor bugünün momentum/hacim/breakout sinyalini yakalar.
               const lastRaw = data.prices[data.prices.length - 1];
-              const isFormingBar = lastRaw?._isForming === true
-                || (lastRaw?.high > 0 && lastRaw.high === lastRaw.low); // H=L=C zero-range
+              const formingFlag = lastRaw?._isForming === true;
+              const lastRange  = lastRaw ? (lastRaw.high - lastRaw.low) : 0;
+              const lastClose  = lastRaw?.close || 0;
+              const rangePct   = lastClose > 0 ? (lastRange / lastClose) * 100 : 0;
+              // Sadece "ölü" forming bar (range yok) strip edilir — gerçek hareketli forming bar tutulur
+              const isDeadForming = formingFlag && (lastRange <= 0 || rangePct < 0.1);
+              const isFormingBar  = isDeadForming
+                || (lastRaw?.high > 0 && lastRaw.high === lastRaw.low);
               const calcPrices = (isFormingBar && data.prices.length > 20)
                 ? data.prices.slice(0, -1)
                 : data.prices;
