@@ -1,0 +1,28 @@
+[Unit]
+Description=BorsaMan web terminal
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rpi
+WorkingDirectory=/home/rpi/BorsaMan
+Environment=BMAN_HOST=0.0.0.0
+Environment=BMAN_PORT=8080
+Environment=BMAN_DIST_DIR=/home/rpi/BorsaMan/dist
+Environment=BMAN_AUTH_CONFIG=/home/rpi/BorsaMan/config/web-auth.json
+Environment=BMAN_SESSION_STATUS=/home/rpi/BorsaMan/reports/admin/sessions.json
+Environment=BMAN_ADVISOR_BACKGROUND=1
+Environment=BMAN_ADVISOR_CACHE=/home/rpi/BorsaMan/reports/advisor/latest.json
+Environment=BMAN_ADVISOR_UNIVERSE=bistall
+Environment=BMAN_ADVISOR_CONCURRENCY=4
+Environment=BMAN_ADVISOR_DELAY_MS=350
+Environment=BMAN_ADVISOR_MARKET_INTERVAL_SECONDS=1200
+Environment=BMAN_ADVISOR_IDLE_INTERVAL_SECONDS=3600
+Environment=BMAN_ADVISOR_SCAN_TIMEOUT_SECONDS=1200
+ExecStart=/usr/bin/python3 /home/rpi/BorsaMan/server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -4,86 +4,177 @@ import { genSignal } from './signals.js';
 // Total round-trip cost (commission + spread + slippage estimate)
 export const TOTAL_COST_PCT = 0.003;
 
-export function runBacktest(prices, strategy = 'signal') {
+const STRATEGY_DEFAULTS = {
+  signal: { minBars: 20, maxHold: 25 },
+  rsi: { minBars: 20, maxHold: 25 },
+  macd: { minBars: 40, maxHold: 45 },
+  ma: { minBars: 55, maxHold: 60 },
+};
+
+function asFiniteNumber(value, fallback = null) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+export function normalizeBacktestOptions(strategyOrOptions = 'signal', overrides = {}) {
+  const base = typeof strategyOrOptions === 'object' && strategyOrOptions !== null
+    ? { ...strategyOrOptions, ...overrides }
+    : { ...overrides, strategy: strategyOrOptions };
+
+  const strategy = base.strategy || 'signal';
+  const defaults = STRATEGY_DEFAULTS[strategy] || STRATEGY_DEFAULTS.signal;
+
+  return {
+    strategy,
+    minBars: base.minBars ?? defaults.minBars,
+    maxHold: base.maxHold ?? defaults.maxHold,
+    maxLookback: base.maxLookback ?? 200,
+    costPct: base.costPct ?? TOTAL_COST_PCT,
+
+    // genSignal() now returns a normalized 0-100 score. Older backtests used
+    // 2.5, which makes almost every non-empty signal eligible.
+    signalThreshold: base.signalThreshold ?? 65,
+    requireBuyClass: base.requireBuyClass ?? true,
+    minRR: base.minRR ?? 0,
+
+    rsiOversold: base.rsiOversold ?? 35,
+    rsiRequireTurn: base.rsiRequireTurn ?? true,
+
+    useSignalStops: base.useSignalStops ?? true,
+    useSignalTargets: base.useSignalTargets ?? true,
+    fallbackStopPct: base.fallbackStopPct ?? 0.05,
+    maxStopPct: base.maxStopPct ?? 0.08,
+    fallbackTargetPct: base.fallbackTargetPct ?? 0.05,
+    minTargetPct: base.minTargetPct ?? 0.01,
+
+    useChandelierTrail: base.useChandelierTrail ?? true,
+    chandelierPeriod: base.chandelierPeriod ?? 22,
+    chandelierMultiplier: base.chandelierMultiplier ?? 3,
+  };
+}
+
+function shouldEnter(strategy, ind, sig, len, options) {
+  if (strategy === 'signal') {
+    const score = asFiniteNumber(sig.score, 0);
+    if (score < options.signalThreshold) return false;
+    if (options.requireBuyClass && sig.cls !== 'buy') return false;
+
+    const rr = asFiniteNumber(sig.rr, null);
+    if (rr != null && rr < options.minRR) return false;
+    return true;
+  }
+
+  if (strategy === 'rsi') {
+    let enter = ind.lastRSI != null && ind.lastRSI < options.rsiOversold;
+    if (enter && options.rsiRequireTurn && len >= 2 && ind.rsi[len - 2] != null) {
+      enter = ind.lastRSI >= ind.rsi[len - 2];
+    }
+    return enter;
+  }
+
+  if (strategy === 'macd') {
+    const m = ind.macd.macd[len - 1];
+    const s = ind.macd.signal[len - 1];
+    const pm = len >= 2 ? ind.macd.macd[len - 2] : null;
+    const ps = len >= 2 ? ind.macd.signal[len - 2] : null;
+    return m != null && s != null && pm != null && ps != null && m > s && pm <= ps;
+  }
+
+  if (strategy === 'ma') {
+    const m20 = ind.ma20[len - 1];
+    const m50 = ind.ma50[len - 1];
+    const pm20 = len >= 2 ? ind.ma20[len - 2] : null;
+    const pm50 = len >= 2 ? ind.ma50[len - 2] : null;
+    return m20 != null && m50 != null && pm20 != null && pm50 != null && m20 > m50 && pm20 <= pm50;
+  }
+
+  return false;
+}
+
+function resolveRiskLevels(entryPrice, sig, options) {
+  let stop = options.useSignalStops ? asFiniteNumber(sig.stop, null) : null;
+  if (!stop || stop >= entryPrice) stop = entryPrice * (1 - options.fallbackStopPct);
+  if (stop < entryPrice * (1 - options.maxStopPct)) stop = entryPrice * (1 - options.maxStopPct);
+
+  let target = options.useSignalTargets ? asFiniteNumber(sig.t1, null) : null;
+  if (!target || target <= entryPrice * (1 + options.minTargetPct)) {
+    target = entryPrice * (1 + options.fallbackTargetPct);
+  }
+
+  return { stop, target };
+}
+
+export function runBacktest(prices, strategyOrOptions = 'signal', overrides = {}) {
+  if (!Array.isArray(prices) || prices.length === 0) return [];
+
+  const options = normalizeBacktestOptions(strategyOrOptions, overrides);
+  const { strategy } = options;
   const trades = [];
-  const minBars = strategy === 'ma' ? 55 : strategy === 'macd' ? 40 : 20;
-  const maxHold = strategy === 'ma' ? 60 : strategy === 'macd' ? 45 : 25;
   let inPos = false;
   let pos = null;
 
-  for (let i = minBars; i < prices.length; i++) {
-    const window = prices.slice(Math.max(0, i - 200), i);
-    if (window.length < minBars) continue;
+  for (let i = options.minBars; i < prices.length; i++) {
+    const bar = prices[i];
+    const close = asFiniteNumber(bar.close, null);
+    if (close == null) continue;
+
+    const window = prices.slice(Math.max(0, i - options.maxLookback), i);
+    if (window.length < options.minBars) continue;
     const ind = calcAll(window);
     const sig = genSignal(ind, window);
-    const close = prices[i].close;
     const len = window.length;
 
     if (inPos) {
-      const trailWindow = prices.slice(Math.max(0, i - 200), i);
-      const ch = calcChandelierExit(trailWindow, 22, 3);
-      if (ch.longStop && ch.longStop > pos.stop && ch.longStop < prices[i].close) {
-        pos.stop = ch.longStop;
+      if (options.useChandelierTrail) {
+        const trailWindow = prices.slice(Math.max(0, i - options.maxLookback), i);
+        const ch = calcChandelierExit(trailWindow, options.chandelierPeriod, options.chandelierMultiplier);
+        if (ch.longStop && ch.longStop > pos.stop && ch.longStop < close) {
+          pos.stop = ch.longStop;
+        }
       }
-      const hitStop = prices[i].low <= pos.stop;
-      const hitTarget = prices[i].high >= pos.target;
+      const low = asFiniteNumber(bar.low, close);
+      const high = asFiniteNumber(bar.high, close);
+      const hitStop = low <= pos.stop;
+      const hitTarget = high >= pos.target;
       const held = i - pos.idx;
       if (hitStop) {
-        const exit = pos.stop * (1 - TOTAL_COST_PCT);
+        const exit = pos.stop * (1 - options.costPct);
         const pnl = ((exit - pos.price) / pos.price) * 100;
-        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: prices[i].date, days: held, pnl, result: 'stop' });
+        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: bar.date, days: held, pnl, result: 'stop' });
         inPos = false;
       } else if (hitTarget) {
-        const exit = pos.target * (1 - TOTAL_COST_PCT);
+        const exit = pos.target * (1 - options.costPct);
         const pnl = ((exit - pos.price) / pos.price) * 100;
-        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: prices[i].date, days: held, pnl, result: 'target' });
+        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: bar.date, days: held, pnl, result: 'target' });
         inPos = false;
-      } else if (held > maxHold) {
-        const exit = close * (1 - TOTAL_COST_PCT);
+      } else if (held > options.maxHold) {
+        const exit = close * (1 - options.costPct);
         const pnl = ((exit - pos.price) / pos.price) * 100;
-        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: prices[i].date, days: held, pnl, result: 'timeout' });
+        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: bar.date, days: held, pnl, result: 'timeout' });
         inPos = false;
       }
     } else {
-      let enter = false;
-      if (strategy === 'signal') {
-        enter = sig.score >= 2.5;
-      } else if (strategy === 'rsi') {
-        enter = ind.lastRSI != null && ind.lastRSI < 35;
-        if (enter && len >= 2 && ind.rsi[len - 2] != null) enter = ind.lastRSI >= ind.rsi[len - 2];
-      } else if (strategy === 'macd') {
-        const m = ind.macd.macd[len - 1];
-        const s = ind.macd.signal[len - 1];
-        const pm = len >= 2 ? ind.macd.macd[len - 2] : null;
-        const ps = len >= 2 ? ind.macd.signal[len - 2] : null;
-        enter = m != null && s != null && pm != null && ps != null && m > s && pm <= ps;
-      } else if (strategy === 'ma') {
-        const m20 = ind.ma20[len - 1];
-        const m50 = ind.ma50[len - 1];
-        const pm20 = len >= 2 ? ind.ma20[len - 2] : null;
-        const pm50 = len >= 2 ? ind.ma50[len - 2] : null;
-        enter = m20 != null && m50 != null && pm20 != null && pm50 != null && m20 > m50 && pm20 <= pm50;
-      }
+      const enter = shouldEnter(strategy, ind, sig, len, options);
       if (enter) {
-        const entryPrice = prices[i].open * (1 + TOTAL_COST_PCT);
-        let stop = sig.stop;
-        if (!stop || stop >= entryPrice) stop = entryPrice * 0.95;
-        if (stop < entryPrice * 0.88) stop = entryPrice * 0.92;
-        let target = sig.t1;
-        if (!target || target <= entryPrice * 1.01) target = entryPrice * 1.05;
-        pos = { idx: i, price: entryPrice, date: prices[i].date, stop, target };
+        const rawEntry = asFiniteNumber(bar.open, close);
+        if (rawEntry == null) continue;
+        const entryPrice = rawEntry * (1 + options.costPct);
+        const { stop, target } = resolveRiskLevels(entryPrice, sig, options);
+        pos = { idx: i, price: entryPrice, date: bar.date, stop, target };
         inPos = true;
       }
     }
   }
 
   if (inPos) {
-    const exit = prices[prices.length - 1].close * (1 - TOTAL_COST_PCT);
+    const last = prices[prices.length - 1];
+    const exitClose = asFiniteNumber(last.close, pos.price);
+    const exit = exitClose * (1 - options.costPct);
     trades.push({
       entry: pos.price,
       exit,
       entryDate: pos.date,
-      exitDate: prices[prices.length - 1].date,
+      exitDate: last.date,
       days: prices.length - 1 - pos.idx,
       pnl: ((exit - pos.price) / pos.price) * 100,
       result: 'open',
@@ -101,7 +192,9 @@ export function calcBacktestStats(trades, totalDays) {
   const totalReturn = closed.reduce((a, t) => a + t.pnl, 0);
   const avgWin = wins.length > 0 ? wins.reduce((a, t) => a + t.pnl, 0) / wins.length : 0;
   const avgLoss = losses.length > 0 ? losses.reduce((a, t) => a + t.pnl, 0) / losses.length : 0;
-  const profitFactor = avgLoss !== 0 ? Math.abs((avgWin * wins.length) / (avgLoss * losses.length || 1)) : 0;
+  const grossWin = wins.reduce((a, t) => a + Math.max(0, t.pnl), 0);
+  const grossLoss = Math.abs(losses.reduce((a, t) => a + Math.min(0, t.pnl), 0));
+  const profitFactor = grossLoss > 0 ? grossWin / grossLoss : wins.length > 0 ? 99 : 0;
   const expectancy = closed.length > 0 ? totalReturn / closed.length : 0;
 
   const equity = [10000];

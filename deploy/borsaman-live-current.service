@@ -1,0 +1,18 @@
+[Unit]
+Description=BorsaMan web terminal (current live minimal RPi service)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rpi
+WorkingDirectory=/home/rpi/BorsaMan
+ExecStart=/usr/bin/python3 /home/rpi/BorsaMan/server.py
+Restart=always
+RestartSec=5
+Environment=PORT=8080
+Environment=BIND=0.0.0.0
+Environment=LOG_LEVEL=INFO
+
+[Install]
+WantedBy=multi-user.target

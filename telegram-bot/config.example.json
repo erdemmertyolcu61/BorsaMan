@@ -1,0 +1,83 @@
+{
+  "project_name": "BorsaMan Telegram",
+  "telegram_token": "PUT_DEDICATED_BOT_TOKEN_HERE_OR_KEEP_EMPTY",
+  "token_source_json": "/opt/wifi-monitor/config.json",
+  "token_source_key": "telegram_token",
+  "admin_chat_ids": [
+    "PUT_FURKAN_CHAT_ID_HERE",
+    "PUT_ERDEM_CHAT_ID_HERE"
+  ],
+  "admin_chat_id_source_json": "",
+  "admin_chat_id_source_key": "telegram_chat_id",
+  "borsaman_root": "/home/rpi/BorsaMan",
+  "public_web_url": "https://bman.ta7tur.com/",
+  "site_urls": [
+    "https://bman.ta7tur.com/"
+  ],
+  "status_urls": [
+    "http://127.0.0.1:8080/"
+  ],
+  "poll_timeout": 3,
+  "poll_sleep": 0.2,
+  "telegram_api_timeout_seconds": 8,
+  "telegram_send_timeout_seconds": 8,
+  "telegram_callback_timeout_seconds": 2,
+  "telegram_handler_workers": 4,
+  "http_status_timeout_seconds": 2,
+  "command_timeout_seconds": 2,
+  "drop_pending_on_start": true,
+  "trade_reports_enabled": true,
+  "trade_report_timezone": "Europe/Istanbul",
+  "morning_report_time": "09:30",
+  "closing_report_time": "18:10",
+  "daily_trade_pick_count": 5,
+  "daily_trade_cash_per_pick": 10000,
+  "daily_trade_data_layer": "1d_5y",
+  "trade_plan_version": "2026-05-03-r2",
+  "trade_ledger_file": "state/trade-ledger.json",
+  "gemini_enabled": true,
+  "gemini_append_to_reports": true,
+  "gemini_append_to_manual_reports": false,
+  "gemini_model": "gemini-2.5-flash",
+  "gemini_api_key": "",
+  "gemini_api_key_source_json": "/opt/wifi-monitor/config.json",
+  "gemini_api_key_source_keys": [
+    "gemini_api_key",
+    "google_api_key",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY"
+  ],
+  "gemini_timeout_seconds": 20,
+  "research_enabled": true,
+  "research_data_dir": "data/yahoo/1d_5y",
+  "research_out_dir": "reports/research",
+  "research_data_source": "telegram-yahoo-1d-5y",
+  "research_jobs_file": "state/research-jobs.json",
+  "research_max_random_trials": 3000,
+  "research_max_symbols": 250,
+  "research_default_symbols": "THYAO,ASELS,SISE,EREGL,GARAN,KCHOL,PETKM,SAHOL,TOASO,TUPRS",
+  "research_default_bot_id": "telegram-research",
+  "research_node_bin": "node",
+  "research_script": "scripts/research/backtest-batch.mjs",
+  "docs": {
+    "komutlar": "docs/telegram-admin-panel.md",
+    "backtest": "docs/research-backtesting.md",
+    "telegram": "docs/telegram-bot-ux.md",
+    "skor": "reports/research/SCOREBOARD_STANDARD.md",
+    "sonuc": "reports/research/RUN_SUMMARY_20260503.md"
+  },
+  "daily_trade_symbols": [
+    "AKBNK",
+    "ASELS",
+    "BIMAS",
+    "EREGL",
+    "GARAN",
+    "KCHOL",
+    "PETKM",
+    "SAHOL",
+    "SISE",
+    "THYAO",
+    "TOASO",
+    "TUPRS"
+  ]
+}

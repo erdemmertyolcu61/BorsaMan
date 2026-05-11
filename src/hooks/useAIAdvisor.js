@@ -25,6 +25,47 @@ const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market
 const SCAN_CONCURRENCY = 10;                    // parallel workers per chunk
 const CHUNK_DELAY_MS = 200;                     // delay between chunks
 const SCAN_UNIVERSE = 'bistall';                // full universe ~648 symbols
+const AUTO_SCAN_KEY = 'bist_browser_scan_enabled';
+const SCAN_CACHE_KEY = 'bist_advisor_scan_cache_v2';
+const SCAN_CACHE_TTL_MS = 60 * 60 * 1000;       // show last scan for 1 hour
+const SERVER_CACHE_POLL_MS = 60 * 1000;         // all clients read the same RPi cache
+
+function isAutoScanEnabled() {
+  try { return localStorage.getItem(AUTO_SCAN_KEY) === '1'; } catch { return false; }
+}
+
+function loadScanCache() {
+  try {
+    const raw = localStorage.getItem(SCAN_CACHE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data?.ts || Date.now() - data.ts > SCAN_CACHE_TTL_MS) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function saveScanCache(data) {
+  try {
+    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify({ ...data, ts: Date.now() }));
+  } catch {}
+}
+
+function normalizeAdvisorCache(data) {
+  if (!data?.ready || !Array.isArray(data.scanResults)) return null;
+  return {
+    topPicks: Array.isArray(data.topPicks) ? data.topPicks : [],
+    scanResults: data.scanResults,
+    marketSentiment: data.marketSentiment || null,
+    sectorHeatmap: data.sectorHeatmap || {},
+    ts: data.ts || Date.parse(data.updatedAt || '') || Date.now(),
+    scanMode: data.scanMode,
+    scanned: data.scanned || data.scanResults.length,
+    totalSymbols: data.totalSymbols || data.scanResults.length,
+    scanner: data.scanner || null,
+  };
+}
 
 // ── Tomorrow Potential Score: rank stocks by next-day opportunity ──
 // Pure function — no React state dependency, safe to define at module level
@@ -84,21 +125,77 @@ function calcTomorrowPotential(result) {
  * Dispatches window 'advisor-scan-complete' on each full scan.
  */
 export function useAIAdvisor(portfolio) {
-  const [topPicks, setTopPicks] = useState([]);
-  const [scanResults, setScanResults] = useState([]);
+  const initialCacheRef = useRef(null);
+  if (initialCacheRef.current === null) initialCacheRef.current = loadScanCache();
+  const initialCache = initialCacheRef.current;
+  const [topPicks, setTopPicks] = useState(() => initialCache?.topPicks || []);
+  const [scanResults, setScanResults] = useState(() => initialCache?.scanResults || []);
   const [riskAlerts, setRiskAlerts] = useState([]);
-  const [marketSentiment, setMarketSentiment] = useState(null);
+  const [marketSentiment, setMarketSentiment] = useState(() => initialCache?.marketSentiment || null);
   const [globalMarket, setGlobalMarket] = useState([]);
   const [advisorLog, setAdvisorLog] = useState([]);
-  const [sectorHeatmap, setSectorHeatmap] = useState({});
+  const [sectorHeatmap, setSectorHeatmap] = useState(() => initialCache?.sectorHeatmap || {});
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0 });
-  const [lastUpdate, setLastUpdate] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(() => initialCache?.ts ? new Date(initialCache.ts) : null);
+  const [serverCacheStatus, setServerCacheStatus] = useState(null);
   const runningRef = useRef(false);
 
   const pushLog = useCallback((entry) => {
     setAdvisorLog(prev => [{ time: new Date(), ...entry }, ...prev].slice(0, 100));
   }, []);
+
+  const applyAdvisorCache = useCallback((cache, silent = true) => {
+    setTopPicks(cache.topPicks);
+    setScanResults(cache.scanResults);
+    setMarketSentiment(cache.marketSentiment);
+    setSectorHeatmap(cache.sectorHeatmap);
+    setLastUpdate(new Date(cache.ts));
+    setScanProgress({ done: cache.scanned, total: cache.totalSymbols });
+    setScanning(Boolean(cache.scanner?.running || cache.scanner?.pending));
+    setServerCacheStatus(cache.scanner || null);
+    saveScanCache({
+      topPicks: cache.topPicks,
+      scanResults: cache.scanResults,
+      marketSentiment: cache.marketSentiment,
+      sectorHeatmap: cache.sectorHeatmap,
+      ts: cache.ts,
+    });
+    if (!silent) {
+      pushLog({ type: 'ok', msg: `Sunucu cache hazir: ${cache.scanned}/${cache.totalSymbols} hisse` });
+    }
+    window.dispatchEvent(new CustomEvent('advisor-scan-complete', {
+      detail: {
+        results: cache.scanResults,
+        topPicks: cache.topPicks,
+        marketContext: cache.marketSentiment,
+        sectorRotation: cache.marketSentiment?.sectorRotation || [],
+        riskAlerts,
+        timestamp: cache.ts,
+        scanMode: cache.scanMode || 'server-cache',
+      },
+    }));
+  }, [pushLog, riskAlerts]);
+
+  const loadServerCache = useCallback(async ({ silent = true } = {}) => {
+    try {
+      const resp = await fetch('/api/advisor-cache', { cache: 'no-store' });
+      if (!resp.ok && resp.status !== 202) return false;
+      const data = await resp.json();
+      setServerCacheStatus(data.scanner || null);
+      setScanning(Boolean(data.scanner?.running || data.scanner?.pending));
+      const cache = normalizeAdvisorCache(data);
+      if (!cache) {
+        if (!silent) pushLog({ type: 'info', msg: 'Sunucu AI cache henuz hazir degil' });
+        return false;
+      }
+      applyAdvisorCache(cache, silent);
+      return true;
+    } catch (err) {
+      if (!silent) pushLog({ type: 'warn', msg: 'Sunucu cache okunamadi: ' + (err.message || err) });
+      return false;
+    }
+  }, [applyAdvisorCache, pushLog]);
 
   // ── Portfolio-level risk alerts ──
   useEffect(() => {
@@ -136,6 +233,14 @@ export function useAIAdvisor(portfolio) {
 
   // ── Core scan implementation ──
   const runScan = useCallback(async (opts = {}) => {
+    pushLog({ type: 'info', msg: 'Browser taramasi kapali; sunucu AI cache kullaniliyor' });
+    try {
+      await fetch('/api/advisor-refresh', { method: 'POST' });
+      setServerCacheStatus(prev => ({ ...(prev || {}), pending: true }));
+      setTimeout(() => loadServerCache({ silent: true }), 5000);
+    } catch {}
+    return false;
+
     if (runningRef.current) return;
     runningRef.current = true;
     setScanning(true);
@@ -301,6 +406,12 @@ export function useAIAdvisor(portfolio) {
       setMarketSentiment(sentimentObj);
       setSectorHeatmap(sectorMetrics);
       setLastUpdate(new Date());
+      saveScanCache({
+        topPicks: picks,
+        scanResults: results,
+        marketSentiment: sentimentObj,
+        sectorHeatmap: sectorMetrics,
+      });
       
       const modeLabel = isAfterHours ? 'Kapanis Sonrasi (Yarin Icin)' : 'Canli';
       pushLog({ type: 'ok', msg: `${modeLabel} tarama: ${results.length} hisse, ${picks.length} firsat` });
@@ -323,15 +434,47 @@ export function useAIAdvisor(portfolio) {
       setScanning(false);
       runningRef.current = false;
     }
-  }, [portfolio, pushLog, riskAlerts]);
+  }, [portfolio, pushLog, riskAlerts, loadServerCache]);
 
-  const manualScan = useCallback(() => {
-    runScan({ universe: SCAN_UNIVERSE });
-  }, [runScan]);
+  const manualScan = useCallback(async () => {
+    setScanning(true);
+    setScanProgress(prev => ({ done: prev.done || 0, total: prev.total || 0 }));
+    try {
+      const resp = await fetch('/api/advisor-refresh', { method: 'POST' });
+      if (resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        setServerCacheStatus(data.scanner || null);
+        pushLog({ type: 'info', msg: 'Sunucu AI taramasi siraya alindi' });
+        setTimeout(() => loadServerCache({ silent: true }), 5000);
+        return;
+      }
+    } catch {}
+
+    setScanning(false);
+    pushLog({ type: 'warn', msg: 'Sunucu AI scanner hazir degil. RPi servis logunu kontrol et.' });
+  }, [loadServerCache, pushLog]);
 
 
-  // Auto-scan loop — dual mode: market open vs after hours
+  // Server cache polling: every visitor reads the same prepared RPi cache.
   useEffect(() => {
+    let mounted = true;
+    let timer = null;
+    const tick = async () => {
+      await loadServerCache({ silent: true });
+      if (mounted) timer = setTimeout(tick, SERVER_CACHE_POLL_MS);
+    };
+    tick();
+    return () => {
+      mounted = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [loadServerCache]);
+
+  // Developer-only browser scan fallback. Production uses /api/advisor-cache
+  // produced by the RPi background scanner.
+  useEffect(() => {
+    return;
+    if (!isAutoScanEnabled()) return;
     let timer = null;
     let mounted = true;
     const tick = () => {
@@ -372,6 +515,7 @@ export function useAIAdvisor(portfolio) {
     scanning,
     scanProgress,
     lastUpdate,
+    serverCacheStatus,
     manualScan,
     runScan,
     setGlobalMarket,

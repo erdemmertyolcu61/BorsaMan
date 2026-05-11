@@ -1,8 +1,6 @@
 // BIST AI Trading Terminal — Service Worker (PWA)
-const CACHE_NAME = 'bist-ai-v1';
+const CACHE_NAME = 'bist-ai-v3-auth-20260503';
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icons/icon.svg',
 ];
@@ -25,7 +23,8 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch: network-first for API, cache-first for assets
+// Fetch: never serve authenticated pages from cache. API/data requests are
+// network-first, static assets are cache-first.
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
@@ -33,10 +32,15 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   if (url.protocol === 'chrome-extension:') return;
 
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.endsWith('/index.html')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
   // API/data requests: network-first
   if (url.pathname.startsWith('/yahoo/') || url.pathname.startsWith('/api/') || url.hostname.includes('yahoo') || url.hostname.includes('anthropic')) {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
+      fetch(event.request)
     );
     return;
   }

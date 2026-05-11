@@ -1,0 +1,101 @@
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(135deg, #070b12, #101827);
+  color: var(--t1, #e5edf7);
+}
+
+.auth-panel {
+  width: min(420px, 100%);
+  padding: 28px;
+  border: 1px solid var(--border, #243244);
+  border-radius: 8px;
+  background: rgba(17, 24, 39, 0.94);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+}
+
+.auth-brand {
+  margin-bottom: 6px;
+  font-family: "Space Grotesk", Inter, system-ui, sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--green, #00e676);
+}
+
+.auth-panel p {
+  margin: 0 0 22px;
+  color: var(--t2, #8fa0b7);
+}
+
+.auth-panel label {
+  display: block;
+  margin: 14px 0 7px;
+  color: var(--t2, #8fa0b7);
+  font-size: 13px;
+}
+
+.auth-panel input {
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid var(--border, #243244);
+  border-radius: 6px;
+  background: #0b1220;
+  color: var(--t1, #e5edf7);
+  font: inherit;
+}
+
+.auth-panel input:focus {
+  outline: none;
+  border-color: var(--green, #00e676);
+  box-shadow: 0 0 0 3px rgba(0, 230, 118, 0.12);
+}
+
+.auth-panel button {
+  width: 100%;
+  margin-top: 20px;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--green, #00e676);
+  color: #03130a;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.auth-panel button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.auth-error {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 77, 109, 0.35);
+  border-radius: 6px;
+  background: rgba(255, 77, 109, 0.12);
+  color: #ffb3c0;
+}
+
+.auth-logout {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 500;
+  padding: 9px 12px;
+  border: 1px solid var(--border, #243244);
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.92);
+  color: var(--t2, #8fa0b7);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.auth-logout:hover {
+  border-color: var(--green, #00e676);
+  color: var(--green, #00e676);
+}
+

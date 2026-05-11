@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback } from 'react';
 import SectorHeatmap from '../Heatmap/SectorHeatmap.jsx';
 import { isMarketOpen } from '../../hooks/useAIAdvisor.js';
 import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
@@ -110,7 +110,7 @@ function StaleWarningBadge() {
       borderLeft: '1px solid var(--red)', paddingLeft: 10,
       background: 'rgba(255,0,0,0.1)', borderRadius: 4, padding: '2px 8px'
     }}>
-      <span style={{ fontSize: 10, color: 'var(--red)' }}>⚠️ Eski Veri</span>
+      <span style={{ fontSize: 10, color: 'var(--red)' }}>âš ï¸ Eski Veri</span>
       <span style={{ fontSize: 9, color: 'var(--t3)' }}>
         {staleSources.map(([s, _]) => s).join(', ')}
       </span>
@@ -126,6 +126,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
     marketSentiment = null,
     scanning = false,
     lastUpdate = null,
+    serverCacheStatus = null,
     scanProgress = { done: 0, total: 0 },
     manualScan = null,
     scanResults = [],
@@ -149,11 +150,11 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
     if (!dbInitialized) {
       await initTop10Intelligence();
       setDbInitialized(true);
-      addLog('Veritabanı başlatıldı', 'ok');
+      addLog('VeritabanÄ± baÅŸlatÄ±ldÄ±', 'ok');
     }
     
     setTop10Loading(true);
-    addLog('Veri yükleniyor...', 'loading');
+    addLog('Veri yÃ¼kleniyor...', 'loading');
     try {
       const [recent, preds, stats] = await Promise.all([
         getRecentTopGainers(5),
@@ -163,11 +164,11 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
       
       if (recent.length > 0) {
         setTodayTop10(recent[0].stocks || []);
-        addLog(`${recent[0].stocks?.length || 0} hisse yüklendi`, 'ok');
+        addLog(`${recent[0].stocks?.length || 0} hisse yÃ¼klendi`, 'ok');
       }
       setPredictions(preds.slice(0, 5));
       setTop10Stats(stats);
-      addLog('Tahminler hazır', 'ok');
+      addLog('Tahminler hazÄ±r', 'ok');
     } catch (e) {
       console.warn('[Top10Panel] Load failed:', e);
       addLog(`Hata: ${e.message}`, 'error');
@@ -180,22 +181,22 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
     if (!dbInitialized) {
       await initTop10Intelligence();
       setDbInitialized(true);
-      addLog('Veritabanı başlatıldı', 'ok');
+      addLog('VeritabanÄ± baÅŸlatÄ±ldÄ±', 'ok');
     }
     
     setTop10Loading(true);
     try {
       // Step 1: Fetch Top10
-      addLog('1/4: Top10 verileri çekiliyor...', 'loading');
+      addLog('1/4: Top10 verileri Ã§ekiliyor...', 'loading');
       const top10Result = await dailyTop10Cycle();
       
       if (!top10Result) {
-        addLog('Top10 verisi çekilemedi - tekrar deniyorum', 'warn');
+        addLog('Top10 verisi Ã§ekilemedi - tekrar deniyorum', 'warn');
         // Retry once
         await new Promise(r => setTimeout(r, 2000));
         const retryResult = await dailyTop10Cycle();
         if (!retryResult) {
-          throw new Error('Top10 verisi çekilemedi');
+          throw new Error('Top10 verisi Ã§ekilemedi');
         }
       } else {
         addLog(`Top10 kaydedildi: ${top10Result.top10?.stocks?.length || 0} hisse`, 'ok');
@@ -205,7 +206,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
       await loadTop10Data();
       
       // Success
-      addLog('Güncelleme tamamlandı!', 'ok');
+      addLog('GÃ¼ncelleme tamamlandÄ±!', 'ok');
     } catch (e) {
       console.warn('[Top10Panel] Daily cycle failed:', e);
       addLog(`Hata: ${e.message}`, 'error');
@@ -237,11 +238,16 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
             background: isMarketOpen() ? 'var(--green)' : 'var(--cyan)',
             color: '#000',
           }}>
-            {isMarketOpen() ? 'CANLI' : 'YARIN İÇİN'}
+            {serverCacheStatus?.running || serverCacheStatus?.pending ? 'CACHE YENILENIYOR' : (isMarketOpen() ? 'CANLI' : 'YARIN ICIN')}
           </span>
         )}
-        {scanning && <span style={{ color: 'var(--yellow)' }}>Taranıyor... {scanProgress.total > 0 ? `${scanProgress.done}/${scanProgress.total}` : ''}</span>}
+        {scanning && <span style={{ color: 'var(--yellow)' }}>Sunucu cache yenileniyor</span>}
         {!scanning && lastUpdate && <span style={{ color: 'var(--t3)' }}>{new Date(lastUpdate).toLocaleTimeString('tr-TR')}</span>}
+        {!scanning && serverCacheStatus?.cacheAgeSeconds != null && (
+          <span style={{ color: 'var(--t3)', fontSize: 10 }}>
+            cache {Math.floor(serverCacheStatus.cacheAgeSeconds / 60)}dk
+          </span>
+        )}
         <DataFreshnessBadge />
         <SourceHealthBadge />
         <StaleWarningBadge />
@@ -276,7 +282,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
       {riskAlerts.length > 0 && (
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
           <span style={{ color: riskAlerts.some(a => a.type === 'err') ? 'var(--red)' : 'var(--yellow)', fontWeight: 700, fontSize: 12 }}>
-            {riskAlerts.filter(a => a.type === 'err' || a.type === 'warn').length} Uyarı
+            {riskAlerts.filter(a => a.type === 'err' || a.type === 'warn').length} UyarÄ±
           </span>
         </div>
       )}
@@ -284,7 +290,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
       {/* Top Pick Quick View */}
       {topPicks.length > 0 && !scanning && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
-          <span style={{ color: 'var(--t3)', fontSize: 11 }}>En İyi:</span>
+          <span style={{ color: 'var(--t3)', fontSize: 11 }}>En Ä°yi:</span>
           {topPicks.slice(0, 3).map(p => (
             <button key={p.symbol} onClick={() => onAnalyze && onAnalyze(p.symbol)} style={{
               background: 'var(--green2)', color: 'var(--green)', border: '1px solid var(--green)',
@@ -320,7 +326,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
         color: '#fff', border: 'none', borderRadius: 5, padding: '6px 16px', fontSize: 12, cursor: scanning ? 'default' : 'pointer',
         fontFamily: 'inherit', fontWeight: 600, opacity: scanning ? 0.5 : 1, letterSpacing: 0.5
       }}>
-        {scanning ? 'TARANIYOR...' : 'TARA'}
+        {scanning ? 'CACHE...' : 'CACHE YENILE'}
       </button>
       
       {/* Top10 Intelligence Button */}
@@ -331,8 +337,8 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
           padding: '6px 12px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600,
           marginLeft: 8, display: 'flex', alignItems: 'center', gap: 4
         }}>
-          <span>📈</span>
-          <span>TAHMİN TOP10</span>
+          <span>ğŸ“ˆ</span>
+          <span>TAHMÄ°N TOP10</span>
           {top10Stats && top10Stats.validRules > 0 && (
             <span style={{ background: 'var(--green)', color: '#000', borderRadius: 10, padding: '1px 6px', fontSize: 9 }}>
               {top10Stats.validRules}
@@ -352,13 +358,13 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
               padding: '10px 14px', background: 'var(--bg2)', borderBottom: '1px solid var(--border)',
               display: 'flex', justifyContent: 'space-between', alignItems: 'center'
             }}>
-              <span style={{ fontWeight: 700, color: 'var(--green)', fontSize: 12 }}>📈 TOP10 TAHMİN SİSTEMİ</span>
+              <span style={{ fontWeight: 700, color: 'var(--green)', fontSize: 12 }}>ğŸ“ˆ TOP10 TAHMÄ°N SÄ°STEMÄ°</span>
               <button onClick={runDailyCycle} disabled={top10Loading} style={{
                 background: top10Loading ? 'var(--bg3)' : 'var(--green)', color: top10Loading ? 'var(--t3)' : '#000',
                 border: 'none', borderRadius: 4, padding: '4px 10px', fontSize: 10, cursor: top10Loading ? 'default' : 'pointer',
                 fontWeight: 600
               }}>
-                {top10Loading ? 'YÜKLENİYOR...' : 'GÜNCELLE'}
+                {top10Loading ? 'YÃœKLENÄ°YOR...' : 'GÃœNCELLE'}
               </button>
             </div>
             
@@ -368,11 +374,11 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
                 padding: '8px 14px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)',
                 display: 'flex', gap: 16, fontSize: 10
               }}>
-                <span><span style={{ color: 'var(--t3)' }}>Gün:</span> <span style={{ color: 'var(--green)', fontWeight: 600 }}>{top10Stats.top10Days}</span></span>
+                <span><span style={{ color: 'var(--t3)' }}>GÃ¼n:</span> <span style={{ color: 'var(--green)', fontWeight: 600 }}>{top10Stats.top10Days}</span></span>
                 <span><span style={{ color: 'var(--t3)' }}>Kural:</span> <span style={{ color: 'var(--cyan)', fontWeight: 600 }}>{top10Stats.validRules}</span></span>
                 <span><span style={{ color: 'var(--t3)' }}>Ort. %:</span> <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>{top10Stats.avgTop10Change}%</span></span>
                 {top10Stats.bestRule && (
-                  <span><span style={{ color: 'var(--t3)' }}>En İyi:</span> <span style={{ color: 'var(--green)', fontWeight: 600 }}>{top10Stats.bestRule.name}</span></span>
+                  <span><span style={{ color: 'var(--t3)' }}>En Ä°yi:</span> <span style={{ color: 'var(--green)', fontWeight: 600 }}>{top10Stats.bestRule.name}</span></span>
                 )}
               </div>
             )}
@@ -398,10 +404,10 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
             {/* Today's Top 10 */}
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', marginBottom: 8, textTransform: 'uppercase' }}>
-                Bugünün Top 10 (Dün Çekilen)
+                BugÃ¼nÃ¼n Top 10 (DÃ¼n Ã‡ekilen)
               </div>
               {top10Loading ? (
-                <div style={{ color: 'var(--t3)', fontSize: 11 }}>Yükleniyor...</div>
+                <div style={{ color: 'var(--t3)', fontSize: 11 }}>YÃ¼kleniyor...</div>
               ) : todayTop10.length > 0 ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {todayTop10.map((s, i) => (
@@ -415,17 +421,17 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
                   ))}
                 </div>
               ) : (
-                <div style={{ color: 'var(--t3)', fontSize: 11 }}>Veri yok. "Güncelle" butonuna basın.</div>
+                <div style={{ color: 'var(--t3)', fontSize: 11 }}>Veri yok. "GÃ¼ncelle" butonuna basÄ±n.</div>
               )}
             </div>
             
             {/* Predictions for Tomorrow */}
             <div style={{ padding: '10px 14px' }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', marginBottom: 8, textTransform: 'uppercase' }}>
-                Yarın İçin Tahmin (Sistem Önerisi)
+                YarÄ±n Ä°Ã§in Tahmin (Sistem Ã–nerisi)
               </div>
               {top10Loading ? (
-                <div style={{ color: 'var(--t3)', fontSize: 11 }}>Yükleniyor...</div>
+                <div style={{ color: 'var(--t3)', fontSize: 11 }}>YÃ¼kleniyor...</div>
               ) : predictions.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {predictions.map((p, i) => (
@@ -458,7 +464,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
                 </div>
               ) : (
                 <div style={{ color: 'var(--t3)', fontSize: 11 }}>
-                  Tahmin yok. Önce "Güncelle" butonuna basarak veri çekin.
+                  Tahmin yok. Ã–nce "GÃ¼ncelle" butonuna basarak veri Ã§ekin.
                 </div>
               )}
             </div>
@@ -511,11 +517,11 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           {marketSentiment && <span style={{ color: marketSentiment.color, fontWeight: 700, background: marketSentiment.color + '11', padding: '2px 8px', borderRadius: 4 }}>{marketSentiment.sentiment}</span>}
           {!open && topPicks.slice(0, 4).map(p => (
             <span key={p.symbol} style={{ color: 'var(--green)', fontWeight: 700, fontSize: 10, background: 'var(--bg3)', padding: '2px 6px', borderRadius: 3, border: '1px solid var(--border)' }}>
-              {p.symbol} {p._intradayConfirmed && <span style={{ color: 'var(--orange)' }}>⚡</span>}
+              {p.symbol} {p._intradayConfirmed && <span style={{ color: 'var(--orange)' }}>âš¡</span>}
             </span>
           ))}
         </div>
-        <span style={{ color: 'var(--t2)', fontSize: 12, transition: 'transform 0.3s', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>▲</span>
+        <span style={{ color: 'var(--t2)', fontSize: 12, transition: 'transform 0.3s', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>â–²</span>
       </div>
       {/* Content */}
       <div style={{ padding: '0 16px 10px', display: 'flex', gap: 16, fontSize: 10, overflowY: 'auto', maxHeight: 380, flexWrap: 'wrap' }}>
@@ -523,7 +529,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       {topPicks.length > 0 && (
         <div style={{ flex: 2, minWidth: 300 }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
-            AI En İyi Fırsatlar ({topPicks.length})
+            AI En Ä°yi FÄ±rsatlar ({topPicks.length})
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
             {topPicks.slice(0, 6).map(p => (
@@ -604,7 +610,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         {/* Risk Alerts */}
         {riskAlerts.length > 0 && (
           <div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--orange)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Uyarılar</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--orange)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>UyarÄ±lar</div>
             {riskAlerts.slice(0, 5).map((a, i) => (
               <div key={i} style={{
                 fontSize: 9, padding: '3px 6px', marginBottom: 2, borderRadius: 3,
@@ -655,3 +661,4 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     </div>
   );
 }
+

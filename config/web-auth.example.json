@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "session_ttl_seconds": 28800,
+  "users": [
+    {
+      "username": "erdem",
+      "display_name": "Erdem",
+      "password_hash": "pbkdf2_sha256$260000$BASE64_SALT$BASE64_DIGEST"
+    }
+  ]
+}
+

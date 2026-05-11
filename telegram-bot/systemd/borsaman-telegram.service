@@ -1,0 +1,17 @@
+[Unit]
+Description=BorsaMan Telegram standalone bot
+After=network-online.target borsaman.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rpi
+WorkingDirectory=/home/rpi/BorsaManTelegram
+Environment=BMAN_TG_CONFIG=/home/rpi/BorsaManTelegram/config.json
+ExecStart=/usr/bin/python3 /home/rpi/BorsaManTelegram/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+

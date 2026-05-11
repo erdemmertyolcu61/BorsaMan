@@ -1,0 +1,25 @@
+{
+  "botName": "BorsaMan Telegram",
+  "adminUsers": [
+    { "label": "furkan", "telegramUserId": "PUT_FURKAN_NUMERIC_ID_HERE" },
+    { "label": "erdem", "telegramUserId": "PUT_ERDEM_NUMERIC_ID_HERE" }
+  ],
+  "broadcastChatIds": [
+    "PUT_FURKAN_CHAT_ID_HERE",
+    "PUT_ERDEM_CHAT_ID_HERE"
+  ],
+  "timezone": "Europe/Istanbul",
+  "dataDir": "data/yahoo",
+  "dailyDataDir": "data/yahoo/1d_5y",
+  "reportsDir": "reports/research",
+  "telegramReportsDir": "reports/telegram",
+  "defaultCash": 100000,
+  "defaultPositionPct": 0.25,
+  "schedules": {
+    "preMarket": "09:15",
+    "endOfDay": "18:05",
+    "weeklyExpectation": "MON 09:05",
+    "weeklyPnl": "FRI 18:20",
+    "weekendReview": "SAT 11:00"
+  }
+}

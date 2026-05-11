@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { runBacktest, calcBacktestStats, TOTAL_COST_PCT } from '../backtestEngine.js';
+import { runBacktest, calcBacktestStats, normalizeBacktestOptions, TOTAL_COST_PCT } from '../backtestEngine.js';
 
 // Build a price series: slow uptrend interrupted by pullbacks so entries fire.
 function mixedSeries(n = 150) {
@@ -58,6 +58,23 @@ describe('runBacktest', () => {
     }
   });
 
+  it('uses normalized 0-100 signal thresholds by default', () => {
+    const options = normalizeBacktestOptions('signal');
+    expect(options.signalThreshold).toBeGreaterThanOrEqual(50);
+    expect(options.signalThreshold).toBeLessThanOrEqual(100);
+  });
+
+  it('accepts parameterized research options without throwing', () => {
+    const prices = mixedSeries(150);
+    expect(() => runBacktest(prices, {
+      strategy: 'signal',
+      signalThreshold: 70,
+      maxHold: 15,
+      fallbackStopPct: 0.04,
+      fallbackTargetPct: 0.08,
+    })).not.toThrow();
+  });
+
   it('applies round-trip cost to filled trades', () => {
     // Cost constant is non-zero and reasonable
     expect(TOTAL_COST_PCT).toBeGreaterThan(0);
@@ -100,6 +117,14 @@ describe('calcBacktestStats', () => {
     ];
     const s = calcBacktestStats(trades, 10);
     expect(s.maxDrawdown).toBeGreaterThan(15);
+  });
+
+  it('does not score all-winning samples as zero profit factor', () => {
+    const s = calcBacktestStats(
+      [{ pnl: 2, days: 1, result: 'target' }, { pnl: 3, days: 1, result: 'target' }],
+      10,
+    );
+    expect(s.profitFactor).toBeGreaterThan(1);
   });
 
   it('verdict bucket is one of GUCLU / ORTA / ZAYIF', () => {
