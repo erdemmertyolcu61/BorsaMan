@@ -1550,7 +1550,7 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
           const avgDelta = totalDelta / counted;
           const scoreBump = Math.max(-2, Math.min(2, avgDelta * 2));
           if (Math.abs(scoreBump) >= 0.3) {
-            baseSig.score = Math.max(0, Math.min(10, baseSig.score + scoreBump));
+            baseSig.score = Math.max(0, Math.min(100, baseSig.score + scoreBump));
             baseSig.attributionDelta = Math.round(scoreBump * 10) / 10;
             baseSig.reasons.push({
               t: `SINYAL ATRIBU: ${counted} tip gecmisi (${scoreBump > 0 ? '+' : ''}${scoreBump.toFixed(1)} skor)`,
