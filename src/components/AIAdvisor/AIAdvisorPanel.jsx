@@ -854,6 +854,14 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             tooltipLines.push(`  • Giriş kalitesi: ${breakdown.entry}`);
             tooltipLines.push(`  • Likidite: ${breakdown.liquidity}`);
           }
+          // ML Override — standart filtreyi atladı
+          if (p._mlOverride) {
+            tooltipLines.push('');
+            tooltipLines.push('🤖 ML KAPI AÇTI — bu hisse standart likit/skor filtrelerini geçemedi');
+            tooltipLines.push(`  Ama ML motoru %${(p._mlConfidence || p.mlBestRule?.winRate || 0).toFixed(0)} win-rate kuralına eşleşti`);
+            tooltipLines.push(`  Hacim: ${p.avgVolumeTL ? (p.avgVolumeTL / 1_000_000).toFixed(2) + 'M TL/gün' : '—'} (standart eşik: 2M TL)`);
+            tooltipLines.push('  Dikkat: küçük-cap slipaj riski — küçük pozisyon önerilir');
+          }
           // ML Engine data
           if (p.mlBestRule && (p.mlMatchedCount || 0) > 0) {
             tooltipLines.push(`🎯 ML: ${p.mlBestRule.setupName} (%${(p.mlBestRule.winRate || 0).toFixed(1)} win rate)`);
@@ -984,6 +992,24 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       animation: 'pulse 2s ease-in-out infinite',
                     }} title={`Patlama hazirligi — ${p._nearBreakoutCount || 0}/10 sinyal: ${(p._nearBreakoutSignals || []).join(', ')}`}>
                       🚀 PATLAMA YAKIN
+                    </span>
+                  )}
+                  {/* v28: ML KAPI AÇTI rozeti — standart filtreden geçemedi ama ML güveni ile listede */}
+                  {p._mlOverride && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'linear-gradient(90deg, #7c3aed, #db2777)',
+                      color: '#fff', letterSpacing: 0.3,
+                      boxShadow: '0 0 6px rgba(124,58,237,0.5)',
+                    }} title={[
+                      '🤖 ML KAPI AÇTI',
+                      'Bu hisse standart likit/skor filtrelerini GEÇEMEDI.',
+                      `ML motoru ${p.mlBestRule?.setupName || 'kural'} kalibını tanıdı`,
+                      `Win rate: %${(p._mlConfidence || p.mlBestRule?.winRate || 0).toFixed(0)} (${p.mlBestRule?.totalCount || 0} örnek)`,
+                      `Hacim: ${p.avgVolumeTL ? (p.avgVolumeTL / 1_000_000).toFixed(2) + 'M TL/gün' : '—'}`,
+                      'Küçük pozisyon ile gir — slipaj riski var',
+                    ].join('\n')}>
+                      🤖 ML KAPISI
                     </span>
                   )}
                   {/* v25: TAVAN AMA DEVAM ROZETI — yuksek devam ihtimali (>=50%) */}
