@@ -28,13 +28,23 @@ export function getRateDecisionImpact(/* country, rate */) {
 }
 
 // ── Key live indicators (promises — fetched in useEffect) ──────────────────
-export function getLiveIndicators() {
-  return Promise.resolve({
-    policyRate: { label: 'TCMB Faiz', value: 42.5, unit: '%',   trend: 'dusus'   },
-    tufe:       { label: 'TUFE',      value: 38.1, unit: '%',   trend: 'dusus'   },
-    usdtry:     { label: 'USDTRY',    value: 38.42, unit: '',   trend: 'yukselis'},
-    bist100:    { label: 'BIST100',   value: 10245, unit: '',   trend: 'yukselis'},
-  });
+// Live wiring: getMacroContext() doldurur. Hata/fallback durumda statik degerler.
+import { getMacroContext } from './macroContextEngine.js';
+
+export async function getLiveIndicators() {
+  let ctx = null;
+  try { ctx = await getMacroContext(); } catch {}
+  const usdtryVal = ctx?.usdtry?.value ?? 38.42;
+  const usdtryTrend = ctx?.usdtry
+    ? (ctx.usdtry.change5d >= 0 ? 'yukselis' : 'dusus')
+    : 'yukselis';
+  const tcmbRate = ctx?.tcmb?.rate ?? 42.5;
+  return {
+    policyRate: { label: 'TCMB Faiz', value: tcmbRate, unit: '%', trend: 'dusus' },
+    tufe:       { label: 'TUFE',      value: 38.1,     unit: '%', trend: 'dusus' },
+    usdtry:     { label: 'USDTRY',    value: usdtryVal, unit: '', trend: usdtryTrend },
+    bist100:    { label: 'BIST100',   value: 10245,    unit: '',  trend: 'yukselis' },
+  };
 }
 
 // ── Upcoming macro events (promise) ────────────────────────────────────────

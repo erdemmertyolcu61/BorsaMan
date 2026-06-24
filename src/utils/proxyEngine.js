@@ -42,7 +42,8 @@ export function trackSource(source, success, duration) {
 
 export async function getDataViaProxies(url, options = {}) {
   try {
-    const response = await fetch(url, options);
+    const fetchOptions = options && typeof options === 'object' ? options : {};
+    const response = await fetch(url, fetchOptions);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return await response.json();
   } catch (error) {
@@ -76,6 +77,9 @@ export async function _racePublicProxies(url) {
   const proxies = [
     'https://api.allorigins.win/get?url=',
     'https://corsproxy.io/?',
+    'https://thingproxy.freeboard.io/fetch/',
+    'https://cors-anywhere.herokuapp.com/', // Note: Needs opt-in sometimes, but good as fallback
+    'https://api.codetabs.com/v1/proxy?quest='
   ];
 
   const results = await Promise.allSettled(

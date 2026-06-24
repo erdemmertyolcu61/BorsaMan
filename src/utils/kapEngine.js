@@ -1,4 +1,4 @@
-import { getDataViaProxies } from './proxyEngine.js';
+import { smartFetch } from './fetchEngine.js';
 
 // ============================================================
 // KAP SENTIMENT SCORING ENGINE
@@ -113,7 +113,19 @@ async function resolveMemberOid(symbol) {
   if (cache[symbol]) return cache[symbol];
 
   const listUrl = 'https://www.kap.org.tr/tr/bist-sirketler';
-  const html = await getDataViaProxies(listUrl, 15000);
+  
+  // Try local proxy first
+  let html = null;
+  if (typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+    try {
+      const res = await fetch('/api/kap/tr/bist-sirketler');
+      if (res.ok) html = await res.text();
+    } catch {}
+  }
+  
+  if (!html) {
+    html = await smartFetch(listUrl, 15000);
+  }
   if (!html) return null;
 
   const re = /"mkkMemberOid":"([^"]+)","[^"]*stockCode":"([^"]+)"/g;
@@ -136,7 +148,18 @@ export async function fetchKAPDisclosures(symbol) {
     if (!oid) return [];
 
     const drillUrl = `https://www.kap.org.tr/tr/bildirim-sorgu-sonuc?member=${oid}`;
-    const html = await getDataViaProxies(drillUrl, 12000);
+    
+    let html = null;
+    if (typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+      try {
+        const res = await fetch(`/api/kap/tr/bildirim-sorgu-sonuc?member=${oid}`);
+        if (res.ok) html = await res.text();
+      } catch {}
+    }
+    
+    if (!html) {
+      html = await smartFetch(drillUrl, 12000);
+    }
     if (!html) return [];
 
     // Improved regex to capture subject/summary if available
@@ -204,7 +227,18 @@ export async function fetchKAPSummaryFinancials(symbol) {
 
     // KAP Summary Financials API
     const apiUrl = `https://www.kap.org.tr/tr/api/ozetFinansalBilgiler?mkkSirketOid=${oid}`;
-    const text = await getDataViaProxies(apiUrl, 15000);
+    
+    let text = null;
+    if (typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+      try {
+        const res = await fetch(`/api/kap/tr/api/ozetFinansalBilgiler?mkkSirketOid=${oid}`);
+        if (res.ok) text = await res.text();
+      } catch {}
+    }
+    
+    if (!text) {
+      text = await smartFetch(apiUrl, 15000);
+    }
     if (!text) return null;
 
     const data = JSON.parse(text);

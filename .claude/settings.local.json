@@ -66,7 +66,14 @@
       "Bash(npm test *)",
       "Bash(python -c \"import sys;print\\(sys.version\\)\")",
       "Bash(where py *)",
-      "Bash(\"C:\\\\Users\\\\Erdem Mert Yolcu\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python.exe\" -c \"import sys;print\\(sys.version\\)\")"
+      "Bash(\"C:\\\\Users\\\\Erdem Mert Yolcu\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python.exe\" -c \"import sys;print\\(sys.version\\)\")",
+      "Bash(npx vitest *)",
+      "Bash(git stash *)",
+      "Bash(git add *)",
+      "Bash(where python *)",
+      "Bash(\"C:\\\\Users\\\\Erdem Mert Yolcu\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python.exe\" --version)",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"import\\('./src/utils/signals.js'\\).then\\(m => console.log\\('OK exports:', Object.keys\\(m\\).filter\\(k=>k!=='default'\\).join\\(', '\\)\\)\\).catch\\(e => console.error\\('ERR:', e.message\\)\\)\")"
     ]
   }
 }

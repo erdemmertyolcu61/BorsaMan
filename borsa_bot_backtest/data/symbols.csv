@@ -1,0 +1,31 @@
+symbol,name,sector
+ASELS,Aselsan,Defense
+THYAO,Turk Hava Yollari,Aviation
+GARAN,Garanti Bankasi,Banking
+AKBNK,Akbank,Banking
+ISCTR,Is Bankasi C,Banking
+SISE,Sise Cam,Glass
+EREGL,Eregli Demir Celik,Steel
+KCHOL,Koc Holding,Holding
+SAHOL,Sabanci Holding,Holding
+TUPRS,Tupras,Energy
+PETKM,Petkim,Petrochemicals
+TCELL,Turkcell,Telecom
+TKFEN,Tekfen Holding,Construction
+KOZAL,Koza Altin,Mining
+KOZAA,Koza Anadolu,Mining
+TOASO,Tofas,Automotive
+FROTO,Ford Otosan,Automotive
+ARCLK,Arcelik,Consumer
+BIMAS,BIM,Retail
+MGROS,Migros,Retail
+HALKB,Halkbank,Banking
+VAKBN,Vakifbank,Banking
+YKBNK,Yapi Kredi,Banking
+ENKAI,Enka Insaat,Construction
+ULKER,Ulker,Food
+KRDMD,Kardemir D,Steel
+DOAS,Dogus Oto,Automotive
+BJKAS,Besiktas Spor,Sport
+GUBRF,Gubretas,Fertilizer
+AKSEN,Aksa Enerji,Energy

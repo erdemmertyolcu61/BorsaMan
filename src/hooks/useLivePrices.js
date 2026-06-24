@@ -1,15 +1,33 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchBigParaQuote } from '../utils/fetchEngine.js';
+import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
 
-const POLL_INTERVAL_MS = 30_000;     // 30 seconds — live quote refresh
-const STOP_CHECK_INTERVAL_MS = 20_000; // dedicated stop/target poll (20s)
-const MARKET_OPEN_HOUR = 9;          // start at 09:55 so we catch opening auction
+// ============================================================
+// TIERED ADAPTIVE LIVE-PRICE ENGINE (v11)
+// ------------------------------------------------------------
+// BIST has no public WebSocket — we simulate WS-grade freshness
+// with three polling tiers and intelligent escalation:
+//   - FAST   (5s): symbols within 1.5% of stop/target ("burst")
+//   - NORMAL (15s): open positions
+//   - SLOW   (45s): watchlist & non-positioned symbols
+// Plus:
+//   - Page Visibility API: pauses all polling when tab hidden
+//   - Batch quote fetch: fetchBiquoteLatest if available
+//   - Re-arm: a symbol that escalated to FAST drops back to NORMAL
+//     once the gap re-widens, capping the load on free CORS proxies.
+// ============================================================
+
+const TIER_FAST_MS = 5_000;
+const TIER_NORMAL_MS = 15_000;
+const TIER_SLOW_MS = 45_000;
+const BURST_PROXIMITY_PCT = 1.5; // escalate to FAST when within 1.5% of stop/target
+
+const MARKET_OPEN_HOUR = 9;
 const MARKET_OPEN_MIN = 55;
-const MARKET_CLOSE_HOUR = 18;        // stops at 18:10
+const MARKET_CLOSE_HOUR = 18;
 const MARKET_CLOSE_MIN = 10;
-const TRAIL_BREAKEVEN_PCT = 3;       // move stop to breakeven at +3%
-const TRAIL_ACTIVE_PCT = 5;          // 50% trail starts at +5%
-const TRAIL_LOCK_FRACTION = 0.5;     // trail locks 50% of profit
+const TRAIL_BREAKEVEN_PCT = 3;
+const TRAIL_ACTIVE_PCT = 5;
+const TRAIL_LOCK_FRACTION = 0.5;
 
 function isWithinMarketHours(d = new Date()) {
   const day = d.getDay();
@@ -20,15 +38,18 @@ function isWithinMarketHours(d = new Date()) {
   return t >= open && t <= close;
 }
 
-// Fire a desktop push notification via Electron IPC (no-op in browser)
+function isTabVisible() {
+  if (typeof document === 'undefined') return true;
+  return document.visibilityState !== 'hidden';
+}
+
 function pushDesktopAlert({ title, message, urgency = 'normal', symbol }) {
   try {
     if (typeof window !== 'undefined' && window.electronAPI?.notifications?.alert) {
       window.electronAPI.notifications.alert({
         id: `risk-${symbol}-${Date.now()}`,
         type: urgency === 'critical' ? 'critical' : 'warning',
-        title, message,
-        urgency, silent: false,
+        title, message, urgency, silent: false,
       });
     } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       new Notification(title, { body: message });
@@ -36,35 +57,41 @@ function pushDesktopAlert({ title, message, urgency = 'normal', symbol }) {
   } catch {}
 }
 
-function uniq(arr) {
-  return Array.from(new Set(arr.filter(Boolean)));
-}
+function uniq(arr) { return Array.from(new Set(arr.filter(Boolean))); }
 
 /**
- * useLivePrices
- * Polls BigPara every 30s for portfolio+watchlist symbols during market hours.
- * - Auto-checks stop-loss / target levels and closes positions
- * - Trails stops: breakeven at +3%, 50%-lock at +5%
- * - Fires watchlist price alarms into alertLog
+ * Compute the polling tier for a single symbol.
+ * Burst (FAST) when fiyat stop'a veya hedefe %1.5'tan yakin.
+ * NORMAL for any open position. SLOW otherwise.
  */
+function classifyTier(symbol, lastPrice, position) {
+  if (position && lastPrice) {
+    const stop = position.stopLoss, target = position.target;
+    const distStop = stop ? Math.abs(lastPrice - stop) / lastPrice * 100 : Infinity;
+    const distTarget = target ? Math.abs(lastPrice - target) / lastPrice * 100 : Infinity;
+    if (Math.min(distStop, distTarget) <= BURST_PROXIMITY_PCT) return 'fast';
+    return 'normal';
+  }
+  return 'slow';
+}
+
 export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
   const [livePrices, setLivePrices] = useState({});
   const [lastUpdate, setLastUpdate] = useState(null);
   const [isPolling, setIsPolling] = useState(false);
+  const [tierStats, setTierStats] = useState({ fast: 0, normal: 0, slow: 0 });
 
-  const firedAlarmsRef = useRef(new Set());  // key: symbol|op|price
-  const tickRef = useRef(0);
-
-  // Refs mirror volatile deps so the polling effect doesn't tear down/re-create
-  // on every portfolio/watchlist identity change (prevents timer leak + duplicate fetches).
+  const firedAlarmsRef = useRef(new Set());
   const portfolioRef = useRef(portfolio);
   const watchlistRef = useRef(watchlist);
   const updatePortfolioRef = useRef(updatePortfolio);
   const alertLogRef = useRef(alertLog);
+  const livePricesRef = useRef(livePrices);
   useEffect(() => { portfolioRef.current = portfolio; }, [portfolio]);
   useEffect(() => { watchlistRef.current = watchlist; }, [watchlist]);
   useEffect(() => { updatePortfolioRef.current = updatePortfolio; }, [updatePortfolio]);
   useEffect(() => { alertLogRef.current = alertLog; }, [alertLog]);
+  useEffect(() => { livePricesRef.current = livePrices; }, [livePrices]);
 
   const updateLivePrice = useCallback((symbol, quote) => {
     const now = Date.now();
@@ -89,26 +116,40 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
     setLastUpdate(new Date(now));
   }, []);
 
-  // Build the list of symbols to poll (reads via refs → stable identity)
-  const buildSymbolList = useCallback(() => {
-    const syms = [];
+  // ── Build tier-bucketed symbol lists ─────────────────────────
+  const buildTieredSymbols = useCallback(() => {
+    const fast = [], normal = [], slow = [];
     const pf = portfolioRef.current;
     const wl = watchlistRef.current;
+    const lp = livePricesRef.current;
+
     if (pf?.positions) {
       for (const p of pf.positions) {
-        if (p.status === 'open' && p.symbol) syms.push(p.symbol);
+        if (p.status !== 'open' || !p.symbol) continue;
+        const sym = p.symbol.replace('.IS', '').toUpperCase();
+        const lastPrice = lp[sym]?.price ?? p.entryPrice ?? p.avgPrice;
+        const tier = classifyTier(sym, lastPrice, p);
+        if (tier === 'fast') fast.push(sym);
+        else normal.push(sym);
       }
     }
     if (Array.isArray(wl)) {
       for (const w of wl) {
         const s = typeof w === 'string' ? w : w?.symbol;
-        if (s) syms.push(s);
+        if (!s) continue;
+        const sym = s.replace('.IS', '').toUpperCase();
+        if (fast.includes(sym) || normal.includes(sym)) continue;
+        slow.push(sym);
       }
     }
-    return uniq(syms).map(s => s.replace('.IS', '').toUpperCase());
+    return {
+      fast: uniq(fast),
+      normal: uniq(normal),
+      slow: uniq(slow),
+    };
   }, []);
 
-  // ── Auto close stop/target + trailing logic ──
+  // ── Risk checks (stop/target/trailing) ───────────────────────
   const runRiskChecks = useCallback((symbol, price) => {
     const portfolio = portfolioRef.current;
     const updatePortfolio = updatePortfolioRef.current;
@@ -121,7 +162,6 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
     if (!entry) return;
     const gainPct = ((price - entry) / entry) * 100;
 
-    // Stop-loss hit
     if (pos.stopLoss && price <= pos.stopLoss) {
       updatePortfolio({
         ...portfolio,
@@ -131,21 +171,15 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
             : p
         ),
       });
-      alertLog?.addAlert?.({
-        type: 'error',
-        source: 'live_guard',
-        symbol,
-        message: `STOP — ${symbol} ${price.toFixed(2)} TL (stop ${pos.stopLoss.toFixed(2)})`,
-      });
+      alertLog?.addAlert?.({ type: 'error', source: 'live_guard', symbol,
+        message: `STOP — ${symbol} ${price.toFixed(2)} TL (stop ${pos.stopLoss.toFixed(2)})` });
       pushDesktopAlert({
         title: `🚨 STOP TETIKLENDI — ${symbol}`,
         message: `${symbol} fiyati ${price.toFixed(2)} TL'ye dustu. Stop ${pos.stopLoss.toFixed(2)} TL otomatik kapatildi.`,
-        urgency: 'critical', symbol,
-      });
+        urgency: 'critical', symbol });
       return;
     }
 
-    // Target hit
     if (pos.target && price >= pos.target) {
       updatePortfolio({
         ...portfolio,
@@ -155,68 +189,53 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
             : p
         ),
       });
-      alertLog?.addAlert?.({
-        type: 'success',
-        source: 'live_guard',
-        symbol,
-        message: `HEDEF — ${symbol} ${price.toFixed(2)} TL`,
-      });
+      alertLog?.addAlert?.({ type: 'success', source: 'live_guard', symbol,
+        message: `HEDEF — ${symbol} ${price.toFixed(2)} TL` });
       pushDesktopAlert({
         title: `🎯 HEDEF ULASILDI — ${symbol}`,
         message: `${symbol} fiyati ${price.toFixed(2)} TL (hedef ${pos.target.toFixed(2)}). Pozisyon karla kapatildi.`,
-        urgency: 'critical', symbol,
-      });
+        urgency: 'critical', symbol });
       return;
     }
 
-    // Near-stop warning (within 2% of stop, not yet triggered)
     if (pos.stopLoss && price > pos.stopLoss) {
-      const proximity = ((price - pos.stopLoss) / price) * 100;
+      const proximity = ((price - pos.stopLoss) / pos.stopLoss) * 100;
       if (proximity <= 2) {
         const warnKey = `near-stop|${pos.id}`;
         if (!firedAlarmsRef.current.has(warnKey)) {
           firedAlarmsRef.current.add(warnKey);
-          setTimeout(() => firedAlarmsRef.current.delete(warnKey), 15 * 60 * 1000); // re-arm after 15min
-          alertLog?.addAlert?.({
-            type: 'warn', source: 'live_guard', symbol,
-            message: `STOP YAKIN — ${symbol} ${price.toFixed(2)} TL, stop ${pos.stopLoss.toFixed(2)} (%${proximity.toFixed(1)} uzakta)`,
-          });
+          setTimeout(() => firedAlarmsRef.current.delete(warnKey), 15 * 60 * 1000);
+          alertLog?.addAlert?.({ type: 'warn', source: 'live_guard', symbol,
+            message: `STOP YAKIN — ${symbol} ${price.toFixed(2)} TL, stop ${pos.stopLoss.toFixed(2)} (%${proximity.toFixed(1)} uzakta)` });
           pushDesktopAlert({
             title: `⚠️ STOP YAKINDA — ${symbol}`,
             message: `${symbol} stop seviyesine %${proximity.toFixed(1)} uzakta. Fiyat ${price.toFixed(2)}.`,
-            urgency: 'normal', symbol,
-          });
+            urgency: 'normal', symbol });
         }
       }
     }
 
-    // Trailing stop logic
     let newStop = pos.stopLoss;
     if (gainPct >= TRAIL_ACTIVE_PCT) {
-      // Lock 50% of current profit
       const lockedStop = entry + ((price - entry) * TRAIL_LOCK_FRACTION);
       if (lockedStop > (newStop ?? -Infinity)) newStop = lockedStop;
     } else if (gainPct >= TRAIL_BREAKEVEN_PCT) {
       if (entry > (newStop ?? -Infinity)) newStop = entry;
     }
 
-    if (newStop && Math.abs((newStop - (pos.stopLoss ?? 0))) > 1e-4 && newStop > (pos.stopLoss ?? -Infinity)) {
+    const stopBase = pos.stopLoss ?? newStop ?? 1;
+    if (newStop && Math.abs((newStop - (pos.stopLoss ?? 0)) / stopBase) > 0.001 && newStop > (pos.stopLoss ?? -Infinity)) {
       updatePortfolio({
         ...portfolio,
         positions: portfolio.positions.map(p =>
           p.id === pos.id ? { ...p, stopLoss: newStop, trailingActive: true } : p
         ),
       });
-      alertLog?.addAlert?.({
-        type: 'info',
-        source: 'live_guard',
-        symbol,
-        message: `Trailing stop ${symbol} → ${newStop.toFixed(2)} TL (kar %${gainPct.toFixed(1)})`,
-      });
+      alertLog?.addAlert?.({ type: 'info', source: 'live_guard', symbol,
+        message: `Trailing stop ${symbol} → ${newStop.toFixed(2)} TL (kar %${gainPct.toFixed(1)})` });
     }
   }, []);
 
-  // ── Watchlist alarm checks ──
   const runWatchlistAlarms = useCallback((symbol, price) => {
     const watchlist = watchlistRef.current;
     const alertLog = alertLogRef.current;
@@ -228,97 +247,123 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
         if (a.price == null) continue;
         const key = `${symbol}|${a.op}|${a.price}`;
         if (firedAlarmsRef.current.has(key)) continue;
-
-        const trip =
-          (a.op === 'above' && price >= a.price) ||
-          (a.op === 'below' && price <= a.price);
+        const trip = (a.op === 'above' && price >= a.price) || (a.op === 'below' && price <= a.price);
         if (trip) {
           firedAlarmsRef.current.add(key);
-          alertLog?.addAlert?.({
-            type: 'warn',
-            source: 'watchlist',
-            symbol,
-            message: `ALARM — ${symbol} fiyat ${price.toFixed(2)} TL (hedef ${a.op === 'above' ? '≥' : '≤'} ${a.price})`,
-          });
+          alertLog?.addAlert?.({ type: 'warn', source: 'watchlist', symbol,
+            message: `ALARM — ${symbol} fiyat ${price.toFixed(2)} TL (hedef ${a.op === 'above' ? '≥' : '≤'} ${a.price})` });
         }
       }
     }
   }, []);
 
-  const pollOnce = useCallback(async () => {
-    const symbols = buildSymbolList();
+  // ── Batch fetcher: tries fetchBiquoteLatest first, falls back per-symbol ──
+  const fetchTier = useCallback(async (symbols) => {
     if (!symbols.length) return;
-    setIsPolling(true);
+    let quoteMap = {};
     try {
-      await Promise.all(symbols.map(async (s) => {
+      const batch = await fetchBiquoteLatest(symbols);
+      if (batch?.length) {
+        for (const q of batch) if (q?.symbol && q.price) quoteMap[q.symbol] = q;
+      }
+    } catch {}
+    const missing = symbols.filter(s => !quoteMap[s]);
+    if (missing.length) {
+      await Promise.all(missing.map(async (s) => {
         try {
           const q = await fetchBigParaQuote(s);
-          if (!q || !q.price) return;
-          updateLivePrice(s, q);
-          runRiskChecks(s, q.price);
-          runWatchlistAlarms(s, q.price);
+          if (q?.price) quoteMap[s] = q;
         } catch {}
       }));
-    } finally {
-      setIsPolling(false);
     }
-  }, [buildSymbolList, updateLivePrice, runRiskChecks, runWatchlistAlarms]);
+    for (const s of symbols) {
+      const q = quoteMap[s];
+      if (!q?.price) continue;
+      updateLivePrice(s, q);
+      runRiskChecks(s, q.price);
+      runWatchlistAlarms(s, q.price);
+    }
+  }, [updateLivePrice, runRiskChecks, runWatchlistAlarms]);
 
-  // Initialize prices from portfolio entry/watchlist at mount
+  // Initialize from portfolio/watchlist at mount
   useEffect(() => {
     const initial = {};
     portfolio?.positions?.forEach(p => {
       if (p.status === 'open' && p.symbol) {
-        initial[p.symbol] = {
-          price: p.entryPrice ?? p.avgPrice ?? 0,
-          timestamp: Date.now(),
-          change: 0,
-        };
+        initial[p.symbol] = { price: p.entryPrice ?? p.avgPrice ?? 0, timestamp: Date.now(), change: 0 };
       }
     });
     watchlist?.forEach(w => {
       const s = typeof w === 'string' ? w : w?.symbol;
-      if (s && !initial[s]) {
-        initial[s] = { price: w?.price || 0, timestamp: Date.now(), change: 0 };
-      }
+      if (s && !initial[s]) initial[s] = { price: w?.price || 0, timestamp: Date.now(), change: 0 };
     });
     setLivePrices(prev => ({ ...initial, ...prev }));
   }, [portfolio?.positions?.length, watchlist?.length]);
 
-  // Stable ref for pollOnce so the polling effect below mounts exactly once.
-  const pollOnceRef = useRef(pollOnce);
-  useEffect(() => { pollOnceRef.current = pollOnce; }, [pollOnce]);
-
-  // Start polling loop — mount-once, guaranteed single active timer, reentrancy-safe.
+  // ── Three independent polling timers (one per tier) ──────────
   useEffect(() => {
-    let timer = null;
     let mounted = true;
-    let inFlight = false;
+    const inFlight = { fast: false, normal: false, slow: false };
+    const timers = { fast: null, normal: null, slow: null };
 
-    const tick = async () => {
+    const pollTier = async (tier) => {
       if (!mounted) return;
-      tickRef.current += 1;
-      if (!inFlight && isWithinMarketHours()) {
-        inFlight = true;
-        try { await pollOnceRef.current?.(); }
-        finally { inFlight = false; }
+      // Pause when market closed OR tab hidden
+      const gated = !isWithinMarketHours() || !isTabVisible();
+      if (!gated && !inFlight[tier]) {
+        const buckets = buildTieredSymbols();
+        const list = buckets[tier];
+        setTierStats({ fast: buckets.fast.length, normal: buckets.normal.length, slow: buckets.slow.length });
+        if (list?.length) {
+          inFlight[tier] = true;
+          setIsPolling(true);
+          try { await fetchTier(list); }
+          finally { inFlight[tier] = false; setIsPolling(false); }
+        }
       }
       if (!mounted) return;
-      timer = setTimeout(tick, POLL_INTERVAL_MS);
+      const intervalMs = tier === 'fast' ? TIER_FAST_MS : tier === 'normal' ? TIER_NORMAL_MS : TIER_SLOW_MS;
+      timers[tier] = setTimeout(() => pollTier(tier), intervalMs);
     };
 
-    tick();
+    pollTier('fast');
+    pollTier('normal');
+    pollTier('slow');
+
+    // Resume immediately when tab becomes visible
+    const onVis = () => {
+      if (isTabVisible() && isWithinMarketHours()) {
+        // kick a fast-tier poll to refresh quickly
+        pollTier('fast');
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis);
+    }
 
     return () => {
       mounted = false;
-      if (timer) { clearTimeout(timer); timer = null; }
+      for (const t of Object.keys(timers)) {
+        if (timers[t]) { clearTimeout(timers[t]); timers[t] = null; }
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVis);
+      }
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [buildTieredSymbols, fetchTier]);
+
+  // Manual one-shot refresh of all tiers
+  const pollOnce = useCallback(async () => {
+    const buckets = buildTieredSymbols();
+    const all = uniq([...buckets.fast, ...buckets.normal, ...buckets.slow]);
+    if (all.length) await fetchTier(all);
+  }, [buildTieredSymbols, fetchTier]);
 
   return {
     livePrices,
     lastUpdate,
     isPolling,
+    tierStats,
     updateLivePrice,
     pollOnce,
     marketOpen: isWithinMarketHours(),

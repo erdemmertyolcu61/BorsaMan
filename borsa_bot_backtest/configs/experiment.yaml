@@ -1,0 +1,24 @@
+## Backtest experiment configuration
+## Bu dosya tek bir backtest çalışmasını tanımlar. Sweep için strategy_params.yaml ile birlikte kullanılır.
+experiment:
+  name: "bist_baseline_001"
+  description: "Initial baseline: SMA crossover on top 30 BIST symbols, 2y daily"
+  initial_balance: 100000      # TL
+  commission_rate: 0.001       # 0.1% per side (BIST avg)
+  slippage_rate: 0.0005        # 5 bps slippage
+  benchmark: "XU100"           # comparison index
+
+risk:
+  risk_per_trade: 0.01         # 1% of equity at risk per trade
+  max_position_size: 0.25      # max 25% of equity in one position
+  max_open_positions: 5
+  stop_loss_atr_mult: 2.0      # stop = entry - 2*ATR
+  take_profit_rr: 2.5          # T1 = entry + 2.5 * (entry - stop)
+
+backtest:
+  test_count: 1000             # for random/grid sweep
+  train_test_mode: "walk_forward"   # walk_forward | single_split | full_sample
+  walk_forward:
+    n_windows: 4
+    in_sample_pct: 0.7
+  out_of_sample_required: true

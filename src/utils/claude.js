@@ -11,6 +11,7 @@
  */
 
 import { logError } from './errorLogger.js';
+import { buildMacroPromptLine } from './macroContextEngine.js';
 
 const API_KEY_STORAGE = 'claude_api_key';
 const PROXY_CLAUDE_ENDPOINT = '/api/claude'; // relative — served by proxy server
@@ -143,18 +144,42 @@ Her uyariyi cevabinda ACIKCA ele al. Uyari varsa confidence'i >=20 puan dusur. H
 export function buildDailyPicksPrompt(picks = [], market = {}) {
   const ctx = market.marketSentiment || market.sentiment || {};
   const header = `Piyasa: ${ctx.sentiment || '-'}  AL:${ctx.buys || 0} SAT:${ctx.sells || 0}  RSI ort: ${ctx.avgRSI?.toFixed(0) || '-'}`;
+  const macroLine = ctx.macro ? buildMacroPromptLine(ctx.macro) : '';
 
   const rows = picks.slice(0, 8).map(p => {
     const grade = gradeSetup(p);
-    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} R/R=1:${p.rr?.toFixed(2)} RSI=${p.rsi?.toFixed(0)}`;
+    // KAP haberleri (varsa)
+    let kapStr = '';
+    if (p.kapSentiment != null && p.kapCount > 0) {
+      const sign = p.kapSentiment >= 0 ? '+' : '';
+      const head = p.kapHeadline ? ` "${p.kapHeadline.slice(0, 40)}"` : '';
+      kapStr = ` KAP=${sign}${p.kapSentiment.toFixed(1)}(${p.kapCount})${head}`;
+    }
+    // Borsa haberleri (yabanci alimi, fundamental sira, geri alim, vb.)
+    let newsStr = '';
+    if (p.newsCount > 0) {
+      const sign = p.newsScore >= 0 ? '+' : '';
+      const cats = p.newsCategories?.length ? `[${p.newsCategories.slice(0, 3).join(',')}]` : '';
+      const head = p.newsHeadline ? ` "${p.newsHeadline.slice(0, 40)}"` : '';
+      newsStr = ` HABER${cats}=${sign}${p.newsScore?.toFixed?.(1) ?? p.newsScore}(${p.newsCount})${head}`;
+    }
+    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} R/R=1:${p.rr?.toFixed(2)} RSI=${p.rsi?.toFixed(0)}${kapStr}${newsStr}`;
   }).join('\n');
 
   return `Sen BIST gunluk strateji uzmanisin. Bugun icin en iyi firsatlari sirala.
 
-${header}
+${header}${macroLine ? '\n' + macroLine : ''}
 
 ADAY LISTESI:
 ${rows}
+
+NOT: KAP=sirket bildirimleri (-10..+10).
+HABER[kategori]=borsa haberleri sentiment'i. Kategoriler:
+  fund_inflow=yabanci/kurumsal alim, fundamental_rank=cari oran/F-K/karlilik siralamasi,
+  buyback=geri alim, insider_buy=iceriden alim, dividend=temettu, upgrade=tavsiye yukselt,
+  downgrade=tavsiye dusur, contract=sozlesme/ihale, risk=dava/sorusturma/ceza.
+Kategoriler kurulum kalitesini tartmada AGIR rol oynamali — fund_inflow + fundamental_rank
+birlesince A notu icin onemli teyittir; risk kategorisi C notuna dusurur.
 
 Her hisseyi A/B/C notuyla derecelendir:
 - A = guclu kurulum (skor>=7, R/R>=2, teknik+temel uyumlu, hacim destekli)
@@ -213,7 +238,16 @@ Monte Carlo P(kar) < %45 ve AL onerisi = cevapta ACIKCA ele al.
 A: skor>=7 + R/R>=2 + teknik+temel uyumlu + hacim destekli
 B: skor 5-7 + R/R 1.5-2 + tek teyit eksik
 C: skor<5 VEYA R/R<1.5 VEYA teyit yok
-D: rejim karsit + birden fazla uyari aktif`;
+D: rejim karsit + birden fazla uyari aktif
+
+=== MAKRO KATMANI ===
+Prompt'taki MAKRO satiri rejim bilgisini iceriyor (USDTRY 5g momentum, VIX, TCMB PPK, BIST/USD).
+RISK_OFF rejiminde: breakout sinyalleri zayiftir — A notunu B'ye dusur, R/R 2.0 ZORUNLU.
+PANIC rejiminde: AL onerme; sadece SAT/TUT, defansif sektor (gida/elektrik/savunma) tercih.
+TCMB PPK haftasi (<=3g): volatilite artar, stop genislet, kademeli giris ZORUNLU, lot kucult.
+USDTRY 5g >+%5 (TL zayifliyor): ihracatci (TUPRS/FROTO/TOASO/EREGL) +B; ithalatci/borc agir (PETKM/TCELL) -B.
+VIX > 25 (global panic): yuksek-beta hisseler (havacilik/banka) -B; dusuk-beta gida/elektrik +B.
+RISK_ON rejiminde: momentum stratejisi ve breakout normal isler, A notunu serbestce ver.`;
 
 const BASE_SYSTEM_PROMPT = 'Sen Wall Street tarzi BIST stratejistisin. Turkce cevap ver. Gerekirse haberlere web_search ile bak. Emin olmadigin yerde "emin degilim" de, uydurma. Asagidaki SMC ve 7-katmanli hiyerarsi kurallari TUM cevaplarinda gecerlidir.';
 

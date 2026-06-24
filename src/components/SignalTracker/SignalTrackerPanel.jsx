@@ -14,6 +14,34 @@ function DayChip({ value }) {
   );
 }
 
+// v29: Anlık getiri + hedef-yolu birleşik göstergesi (signal hâlâ OPEN ise)
+function LiveProgressChip({ currentReturn, targetProgress, outcome }) {
+  if (outcome === 'TARGET_HIT' || outcome === 'STOP_HIT' || outcome === 'WIN' || outcome === 'LOSS') {
+    return <span style={{ fontSize: 9, color: 'var(--t3)' }}>—</span>;
+  }
+  if (currentReturn == null) return <span style={{ fontSize: 9, color: 'var(--t3)' }}>—</span>;
+  const color = currentReturn > 0 ? 'var(--green)' : currentReturn < 0 ? 'var(--red)' : 'var(--t3)';
+  const pct = targetProgress;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+      <span style={{ fontSize: 9, color, fontWeight: 700 }}>
+        {currentReturn > 0 ? '+' : ''}{currentReturn.toFixed(1)}%
+      </span>
+      {pct != null && (
+        <div style={{ width: 38, height: 3, background: 'var(--bg3)', borderRadius: 2, overflow: 'hidden' }}
+             title={`Hedef yolunda %${pct.toFixed(0)}`}>
+          <div style={{
+            height: '100%',
+            width: Math.max(0, Math.min(100, pct)) + '%',
+            background: pct >= 100 ? 'var(--green)' : pct >= 50 ? 'var(--cyan)' : pct >= 0 ? 'var(--yellow)' : 'var(--red)',
+            transition: 'width 600ms ease',
+          }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OutcomeBadge({ outcome }) {
   const map = {
     TARGET_HIT: { label: 'HEDEF', color: 'var(--green)' },
@@ -151,6 +179,7 @@ export default function SignalTrackerPanel({ tracker, onAnalyze }) {
                   <th style={{ padding: '4px 6px', textAlign: 'left' }}>Sembol</th>
                   <th style={{ padding: '4px 6px', textAlign: 'left' }}>Sinyal</th>
                   <th style={{ padding: '4px 6px', textAlign: 'center' }}>Skor</th>
+                  <th style={{ padding: '4px 6px', textAlign: 'center', color: 'var(--cyan)' }} title="Anlık getiri ve hedef-yolu yüzdesi (10dk'da bir güncellenir)">Anlık</th>
                   <th style={{ padding: '4px 6px', textAlign: 'center' }}>1G</th>
                   <th style={{ padding: '4px 6px', textAlign: 'center' }}>3G</th>
                   <th style={{ padding: '4px 6px', textAlign: 'center' }}>5G</th>
@@ -167,6 +196,13 @@ export default function SignalTrackerPanel({ tracker, onAnalyze }) {
                       {s.signal}
                     </td>
                     <td style={{ padding: '4px 6px', textAlign: 'center' }}>{(s.score ?? 0).toFixed(1)}</td>
+                    <td style={{ padding: '4px 6px', textAlign: 'center' }}>
+                      <LiveProgressChip
+                        currentReturn={s.currentReturn ?? s.dailyChange}
+                        targetProgress={s.targetProgress}
+                        outcome={s.outcome}
+                      />
+                    </td>
                     <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d1} /></td>
                     <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d3} /></td>
                     <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d5} /></td>

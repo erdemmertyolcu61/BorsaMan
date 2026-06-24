@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
+import { buildCalibrationModel, setSignalCalibration } from '../utils/signalCalibration.js';
+import { setSignalReliabilityHints } from '../utils/signals.js';
 
 let globalNotificationHandler = null;
 
@@ -7,7 +9,7 @@ export function setSignalNotificationHandler(handler) {
   globalNotificationHandler = handler;
 }
 
-const STORAGE_KEY = 'bist_signal_history';
+const STORAGE_KEY = 'bist_signal_history_v2'; // v2: Reset history completely as requested
 const MAX_HISTORY = 500;
 const TRADING_DAY_MS = 1000 * 60 * 60 * 24;
 
@@ -112,22 +114,51 @@ function calcStats(signals) {
   const bySource = {};
   const byClass = {};
   const bySymbol = {};
+  // Per-signal-type attribution: hangi sinyal tipleri gercekte kazandiriyor?
+  // closed trade'lerin firedSignals listesinden hesaplanir.
+  const bySignalType = {};
+
   for (const s of signals) {
     const src = s.source || 'manual';
     bySource[src] = bySource[src] || { total: 0, wins: 0, totalRoi: 0 };
     bySource[src].total += 1;
     const roi = s.perf?.d5 ?? 0;
-    if (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN') { bySource[src].wins += 1; bySource[src].totalRoi += roi; }
+    const isWin = s.outcome === 'TARGET_HIT' || s.outcome === 'WIN';
+    if (isWin) { bySource[src].wins += 1; bySource[src].totalRoi += roi; }
 
     const cl = s.cls || 'other';
     byClass[cl] = byClass[cl] || { total: 0, wins: 0, totalRoi: 0 };
     byClass[cl].total += 1;
-    if (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN') { byClass[cl].wins += 1; byClass[cl].totalRoi += roi; }
+    if (isWin) { byClass[cl].wins += 1; byClass[cl].totalRoi += roi; }
 
     const sym = s.symbol;
     bySymbol[sym] = bySymbol[sym] || { total: 0, wins: 0, totalRoi: 0 };
     bySymbol[sym].total += 1;
-    if (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN') { bySymbol[sym].wins += 1; bySymbol[sym].totalRoi += roi; }
+    if (isWin) { bySymbol[sym].wins += 1; bySymbol[sym].totalRoi += roi; }
+
+    // Signal attribution — sadece kapali trade'ler icin
+    if (s.status === 'closed' && s.outcome && Array.isArray(s.firedSignals)) {
+      for (const sigType of s.firedSignals) {
+        bySignalType[sigType] = bySignalType[sigType] || { total: 0, wins: 0, totalRoi: 0 };
+        bySignalType[sigType].total++;
+        if (isWin) {
+          bySignalType[sigType].wins++;
+          bySignalType[sigType].totalRoi += roi;
+        }
+      }
+    }
+  }
+
+  // Win-rate hesapla + zayif ornekleri filtrele (< 8 trade)
+  const bySignalTypeStats = {};
+  for (const [type, data] of Object.entries(bySignalType)) {
+    if (data.total < 8) continue;
+    bySignalTypeStats[type] = {
+      ...data,
+      winRate: data.total > 0 ? data.wins / data.total : 0,
+      avgRoi: data.total > 0 ? data.totalRoi / data.total : 0,
+      sampleSize: data.total,
+    };
   }
 
   return {
@@ -151,6 +182,7 @@ function calcStats(signals) {
     bySource,
     byClass,
     bySymbol,
+    bySignalType: bySignalTypeStats,
   };
 }
 
@@ -161,6 +193,42 @@ export function useSignalTracker() {
 
   useEffect(() => {
     persist(signals);
+  }, [signals]);
+
+  // Publish ML calibration model + signal attribution hints to signals.js
+  // whenever closed-signal count changes.
+  // genSignal() reads both to bias score100 by realized performance.
+  const closedCountRef = useRef(0);
+  useEffect(() => {
+    const closedCount = signals.filter(s => s.status === 'closed' && s.outcome).length;
+    if (closedCount === closedCountRef.current) return;
+    closedCountRef.current = closedCount;
+
+    try {
+      // 1. Kalibrasyon modeli (bucket-based)
+      const model = buildCalibrationModel(signals);
+      setSignalCalibration(model);
+    } catch {}
+
+    try {
+      // 2. Sinyal atribuyon hint'leri (per-signal-type win-rate)
+      const stats = calcStats(signals);
+
+      // cls-level hint (mevcut buy/sell win-rate)
+      const closed = signals.filter(s => s.status === 'closed' && s.outcome);
+      const buyWins   = closed.filter(s => s.cls === 'buy' && (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN')).length;
+      const buyTotal  = closed.filter(s => s.cls === 'buy').length;
+      const sellWins  = closed.filter(s => s.cls === 'sell' && (s.outcome === 'TARGET_HIT' || s.outcome === 'WIN')).length;
+      const sellTotal = closed.filter(s => s.cls === 'sell').length;
+
+      setSignalReliabilityHints({
+        buy:  buyTotal  > 0 ? { winRate: buyWins  / buyTotal,  sampleSize: buyTotal  } : null,
+        sell: sellTotal > 0 ? { winRate: sellWins / sellTotal, sampleSize: sellTotal } : null,
+        // per-signal-type attribution: genSignal bu map'i kullanarak
+        // firedSignals ile kesisen tiplere skor deltasi uygular
+        bySignalType: stats.bySignalType || {},
+      });
+    } catch {}
   }, [signals]);
 
   const recordSignal = useCallback((signalData) => {
@@ -215,6 +283,29 @@ export function useSignalTracker() {
       try { globalNotificationHandler.notifySignal(signalData); } catch {}
     }
   }, []);
+
+  // ── (DISABLED) Auto-ingest AI Advisor scan results via event ──
+  // Now handled centrally by App.jsx to prevent race conditions and duplicate listeners
+  // across multiple mounted instances of useSignalTracker.
+
+  // ── Auto-ingest single-stock analyze results (DISABLED by user request) ──
+  // The user requested to strictly follow the 8 best buy picks rule from AI Advisor.
+  /*
+  useEffect(() => {
+    const handler = (e) => {
+      const r = e.detail || {};
+      if (!r.symbol || (r.cls !== 'buy' && r.cls !== 'sell')) return;
+      console.log(`[SignalTracker] Ingesting analyze-result: ${r.symbol} ${r.cls}`);
+      recordSignal({
+        symbol: r.symbol, cls: r.cls, signal: r.signal,
+        price: r.price, entry: r.price, score: r.score, score100: r.score,
+        source: 'analyze',
+      });
+    };
+    window.addEventListener('analyze-result', handler);
+    return () => window.removeEventListener('analyze-result', handler);
+  }, [recordSignal]);
+  */
 
   const updateSignal = useCallback((signalId, updates) => {
     setSignals(prev => prev.map(sig => (sig.id === signalId ? { ...sig, ...updates } : sig)));
@@ -350,10 +441,17 @@ export function useSignalTracker() {
       for (const sig of activeSignals) {
         const t = new Date(sig.timestamp).getTime();
         const ageDays = (now - t) / TRADING_DAY_MS;
-        if (ageDays < 0.5) continue;
 
         const priceNow = quotes[sig.symbol];
         if (!priceNow) continue;
+
+        // v29: currentReturn her zaman güncellenir — UI'da "% kaç ilerledi" göstergesi
+        // Önceki: ageDays < 0.5 ise tüm signal güncellemesi atlanıyordu → günlük takip yok
+        // Yeni: progress her tick'te (10dk) hesaplanır, sadece outcome eşikleri 0.5 gün sonra devreye girer
+        const entryForReturn = sig.entryPrice || sig.price;
+        const currentReturn = (entryForReturn && priceNow)
+          ? ((priceNow - entryForReturn) / entryForReturn) * (sig.cls === 'sell' ? -1 : 1) * 100
+          : null;
 
         // --- TRAILING STOP LOGIC ---
         let currentStop = sig.stop;
@@ -383,14 +481,31 @@ export function useSignalTracker() {
         if (ageDays >= 5 && perf.d5 == null) perf.d5 = out.pct;
         if (ageDays >= 7 && perf.d7 == null) perf.d7 = out.pct;
 
-        const finalOutcome = (ageDays >= 7 || out.outcome === 'TARGET_HIT' || out.outcome === 'STOP_HIT')
+        // TARGET_HIT / STOP_HIT her zaman finalize (yaş gözetmez); WIN/LOSS yumuşak
+        // eşiklerdir, sadece 0.5 gün sonra outcome'a yansıtılır
+        const isHardHit = out.outcome === 'TARGET_HIT' || out.outcome === 'STOP_HIT';
+        const isSoftHit = (out.outcome === 'WIN' || out.outcome === 'LOSS') && ageDays >= 0.5;
+        const finalOutcome = (isHardHit || isSoftHit || ageDays >= 7)
           ? out.outcome
           : sig.outcome;
+
+        // Hedefe ne kadar yakın? (UI'da progress bar için)
+        let targetProgress = null;
+        if (entryForReturn && sig.target) {
+          const totalDist = sig.target - entryForReturn;
+          const moved     = priceNow      - entryForReturn;
+          if (Math.abs(totalDist) > 0) {
+            targetProgress = Math.max(-50, Math.min(150, (moved / totalDist) * 100));
+          }
+        }
 
         updates[sig.id] = {
           perf,
           outcome: finalOutcome,
           lastPrice: priceNow,
+          currentReturn,                 // v29: anlık % getiri (her tick'te güncellenir)
+          targetProgress,                // v29: hedef-yolu yüzdesi (0=entry, 100=target hit)
+          lastCheckedAt: now,            // v29: son fiyat kontrolü zamanı
           stop: currentStop,
           trailingStopActivated,
           status: (finalOutcome && finalOutcome !== 'OPEN') || ageDays >= 10 ? 'closed' : 'active',
@@ -411,9 +526,16 @@ export function useSignalTracker() {
 
   const stats = (() => calcStats(signals))();
 
+  // Expose the live calibration model snapshot for diagnostic UI
+  const calibrationModel = (() => {
+    try { return buildCalibrationModel(signals); }
+    catch { return null; }
+  })();
+
   return {
     signals,
     stats,
+    calibrationModel,
     recordSignal,
     updateSignal,
     removeSignal,

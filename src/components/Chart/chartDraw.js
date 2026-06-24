@@ -245,12 +245,18 @@ export function drawChart({ canvas, container, prices, ind, viewRange, crosshair
     const isUp = p.close >= p.open;
     const upColor = '#10b981';
     const dnColor = '#f43f5e';
+    // All candles render as solid filled bars — including the live forming bar.
+    // _isForming flag is kept on the data object for indicator calculation purposes
+    // (strips incomplete bar from RSI/Bollinger/etc) but visually there is no difference.
+    ctx.globalAlpha = 1;
     ctx.strokeStyle = isUp ? upColor : dnColor;
     ctx.fillStyle = isUp ? upColor : dnColor;
     ctx.lineWidth = 1;
+    ctx.setLineDash([]);
     ctx.beginPath(); ctx.moveTo(x, yH); ctx.lineTo(x, yL); ctx.stroke();
     const bH = Math.max(1, Math.abs(yC - yO));
     ctx.fillRect(x - barW / 2, Math.min(yO, yC), barW, bH);
+    ctx.globalAlpha = 1;
   });
 
   // Monte Carlo overlay

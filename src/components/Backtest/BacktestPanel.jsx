@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { runBacktest, calcBacktestStats } from '../../utils/backtestEngine.js';
+import { runMultiBacktest, compareStrategies, measureWinRate } from '../../utils/backtestRunner.js';
+import { getStockList } from '../../utils/constants.js';
 
 const STRATEGY_LABELS = {
   signal: 'Sinyal Motoru',
@@ -48,75 +50,111 @@ export default function BacktestPanel({ prices, symbol, gData }) {
           </button>
         ))}
       </div>
+      
+      <div style={{ display: 'flex', gap: 4, marginBottom: 10, flexWrap: 'wrap' }}>
+        <button
+          className="btn btn-go"
+          onClick={async () => {
+            setStats({ loading: true });
+            const res = await runMultiBacktest(getStockList('bist30'), 'signal', '1y');
+            setStats({ ...res, multiBacktest: true, listName: 'BIST30' });
+          }}
+          style={{ fontSize: 10, padding: '7px 12px', width: 'auto', background: 'var(--green)', color: '#fff' }}
+        >
+          BIST30 Test Et
+        </button>
+        <button
+          className="btn btn-go"
+          onClick={async () => {
+            setStats({ loading: true });
+            const res = await runMultiBacktest(getStockList('bist50'), 'signal', '1y');
+            setStats({ ...res, multiBacktest: true, listName: 'BIST50' });
+          }}
+          style={{ fontSize: 10, padding: '7px 12px', width: 'auto', background: 'var(--blue)', color: '#fff' }}
+        >
+          BIST50 Test Et
+        </button>
+        <button
+          className="btn btn-go"
+          onClick={async () => {
+            setStats({ loading: true });
+            const res = await runMultiBacktest(getStockList('bist100'), 'signal', '1y');
+            setStats({ ...res, multiBacktest: true, listName: 'BIST100' });
+          }}
+          style={{ fontSize: 10, padding: '7px 12px', width: 'auto', background: 'var(--purple)', color: '#fff' }}
+        >
+          BIST100 Test Et
+        </button>
+      </div>
 
-      {s && (
+      <div style={{ display: 'flex', gap: 4, marginBottom: 10, flexWrap: 'wrap' }}>
+        <button
+          className="btn btn-go"
+          onClick={async () => {
+            setStats({ loading: true });
+            const res = await compareStrategies(getStockList('bist30'), '1y');
+            setStats({ ...res, compare: true });
+          }}
+          style={{ fontSize: 10, padding: '7px 12px', width: 'auto', background: 'var(--orange)', color: '#fff' }}
+        >
+          Strateji Karşılaştır
+        </button>
+        <button
+          className="btn btn-go"
+          onClick={async () => {
+            setStats({ loading: true });
+            const res = await measureWinRate(getStockList('bist30'), '1y');
+            setStats({ ...res, winRate: true });
+          }}
+          style={{ fontSize: 10, padding: '7px 12px', width: 'auto', background: 'var(--cyan)', color: '#fff' }}
+        >
+          Win Rate Ölç
+        </button>
+      </div>
+
+      {s?.loading && (
+        <div style={{ padding: 20, textAlign: 'center', color: 'var(--cyan)' }}>
+          Analiz ediliyor...
+        </div>
+      )}
+
+{s && !s.loading && s?.multiBacktest && s?.avgWinRate != null && (
         <div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--cyan)', marginBottom: 12, fontFamily: 'Space Grotesk,sans-serif' }}>
-            {symbol} — {STRATEGY_LABELS[s.strategy]} ({s.totalDays} gün)
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--green)', marginBottom: 12, fontFamily: 'Space Grotesk,sans-serif' }}>
+            {s.listName || 'BIST30'} Çoklu Backtest Sonucu
           </div>
-
+          
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 12 }}>
             <MetricTile
-              label="Kazanma"
-              value={`%${s.winRate.toFixed(0)}`}
-              color={s.winRate >= 55 ? 'var(--green)' : s.winRate >= 45 ? 'var(--yellow)' : 'var(--red)'}
-              sub={`${s.wins.length}K / ${s.losses.length}Z`}
+              label="Win Rate"
+              value={`%${(s.avgWinRate || 0).toFixed(1)}`}
+              color={(s.avgWinRate || 0) >= 55 ? 'var(--green)' : (s.avgWinRate || 0) >= 45 ? 'var(--yellow)' : 'var(--red)'}
+              sub={`${s.totalWins || 0}K / ${s.totalLosses || 0}Z`}
             />
             <MetricTile
               label="Toplam Getiri"
-              value={`${s.totalReturn >= 0 ? '+' : ''}${s.totalReturn.toFixed(1)}%`}
-              color={s.totalReturn >= 0 ? 'var(--green)' : 'var(--red)'}
+              value={`${(s.avgReturn || 0) >= 0 ? '+' : ''}${(s.avgReturn || 0).toFixed(1)}%`}
+              color={(s.avgReturn || 0) >= 0 ? 'var(--green)' : 'var(--red)'}
             />
             <MetricTile
-              label="10K Sonuç"
-              value={`${(s.finalEquity / 1000).toFixed(1)}K`}
-              color={s.finalEquity >= 10000 ? 'var(--green)' : 'var(--red)'}
+              label="Profit Factor"
+              value={(s.avgProfitFactor || 0).toFixed(2)}
+              color={(s.avgProfitFactor || 0) >= 1.5 ? 'var(--green)' : 'var(--yellow)'}
             />
             <MetricTile
-              label="Max Drawdown"
-              value={`-${s.maxDrawdown.toFixed(1)}%`}
-              color="var(--red)"
-              sub={`${s.maxDDDuration || 0} gün`}
+              label="Toplam İşlem"
+              value={s.totalTrades || 0}
+              color="var(--cyan)"
             />
           </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginBottom: 12 }}>
-            <RatioTile label="Sharpe" value={s.sharpeRatio} border="var(--blue)" />
-            <RatioTile label="Sortino" value={s.sortinoRatio} border="var(--purple)" />
-            <RatioTile label="Calmar" value={s.calmarRatio} border="var(--cyan)" />
+          
+          <div style={{ fontSize: 10, color: s.verdictColor || 'var(--yellow)', fontWeight: 700, padding: 8, borderLeft: `3px solid ${s.verdictColor || 'var(--yellow)'}`, background: 'var(--bg0)', marginBottom: 12 }}>
+            {s.verdict || 'Hesaplaniyor...'}
           </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 4, marginBottom: 12, fontSize: 10 }}>
-            <Row label="Profit Factor" value={s.profitFactor > 10 ? '>10' : s.profitFactor.toFixed(2)} color={s.profitFactor >= 1.5 ? 'var(--green)' : 'var(--yellow)'} />
-            <Row label="Payoff Oranı" value={s.payoffRatio.toFixed(2)} color={s.payoffRatio >= 1.5 ? 'var(--green)' : 'var(--yellow)'} />
-            <Row label="Ort. Kazanç" value={`+${s.avgWin.toFixed(2)}%`} color="var(--green)" />
-            <Row label="Ort. Kayıp" value={`${s.avgLoss.toFixed(2)}%`} color="var(--red)" />
-            <Row label="Beklenti" value={`${s.expectancy.toFixed(2)}%`} color={s.expectancy > 0 ? 'var(--green)' : 'var(--red)'} />
-            <Row label="İşlem Sayısı" value={s.closed.length} color="var(--cyan)" />
-            <Row label="Ard. Kazanç" value={s.maxConsWins} color="var(--green)" />
-            <Row label="Ard. Kayıp" value={s.maxConsLosses} color="var(--red)" />
-          </div>
-
-          {s.equity.length > 2 && <EquityCurve equity={s.equity} finalEquity={s.finalEquity} />}
-
-          <div style={{
-            padding: '8px 12px',
-            borderLeft: `3px solid ${s.verdictColor}`,
-            borderRadius: 4,
-            fontSize: 11,
-            color: s.verdictColor,
-            fontWeight: 700,
-            marginBottom: 10,
-            background: 'var(--bg0)',
-          }}>
-            {s.verdict}
-          </div>
-
-          {s.trades.length > 0 && (
-            <details style={{ fontSize: 10 }}>
-              <summary style={{ cursor: 'pointer', color: 'var(--t2)', marginBottom: 6, fontWeight: 600 }}>
-                İşlem Detayları ({s.trades.length} işlem)
-              </summary>
+          
+          {s.perStock?.length > 0 && (
+            <details>
+              <summary style={{ cursor: 'pointer', color: 'var(--t2)', marginBottom: 6, fontWeight: 600 }}>Hisse Bazlı Sonuçlar ({s.perStock.length})</summary>
               <div style={{ maxHeight: 200, overflowY: 'auto', background: 'var(--bg0)', borderRadius: 4, border: '1px solid var(--border)' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9 }}>
                   <thead>
