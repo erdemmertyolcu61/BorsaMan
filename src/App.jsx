@@ -83,12 +83,17 @@ export default function App() {
   }, []);
 
   // ── Auto-record advisor top picks into signal tracker ──
-  const lastPicksRef = useRef(null);
+  // Bind to the scan event, NOT advisor.topPicks state. The event carries
+  // `finalPicks` — the same non-empty list that fills the bottom "AI EN İYİ
+  // FIRSATLAR" panel. advisor.topPicks can be empty when picks[] falls back to
+  // buyPicks/results (setTopPicks gets the empty picks[]), so recording off the
+  // state alone silently misses every pick → "Sinyaller (0)". The event payload
+  // is the reliable source, so the best opportunities always land in Sinyal Takibi.
   useEffect(() => {
-    if (!advisor?.topPicks || advisor.topPicks === lastPicksRef.current) return;
-    lastPicksRef.current = advisor.topPicks;
-    for (const pick of advisor.topPicks) {
-      if (pick.cls === 'buy') {
+    const handler = (e) => {
+      const picks = e.detail?.topPicks || [];
+      for (const pick of picks) {
+        if (pick.cls !== 'buy') continue;
         signalTracker.recordSignal({
           symbol: pick.symbol,
           cls: pick.cls,
@@ -117,8 +122,10 @@ export default function App() {
           notifications.notifyAdvisorPick(pick);
         }
       }
-    }
-  }, [advisor?.topPicks, signalTracker, notifications]);
+    };
+    window.addEventListener('advisor-scan-complete', handler);
+    return () => window.removeEventListener('advisor-scan-complete', handler);
+  }, [signalTracker, notifications]);
 
   // ── Send notifications for new AI Advisor scan results ──
   useEffect(() => {
