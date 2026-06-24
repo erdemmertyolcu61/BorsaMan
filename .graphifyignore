@@ -1,0 +1,16 @@
+# Minified / compiled bundles — no source value for graphify
+android/
+dist/
+coverage/
+node_modules/
+*.min.js
+*.min.css
+electron/
+
+# Test snapshots
+**/__snapshots__/
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

@@ -39,6 +39,10 @@ export function usePaperTradeML() {
           closedTrades: state?.closedTrades?.length,
           isElectron: engine._isElectron,
         });
+        // Singleton re-mount fix: if engine was already initialized before this subscriber
+        // was registered, _emit() was never called for us. Force snapshot now.
+        const snap = engine.getSnapshot();
+        if (snap) setSnapshot(snap);
       })
       .catch(err => {
         console.warn('[PaperML] Init failed:', err?.message);

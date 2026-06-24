@@ -211,14 +211,15 @@ export async function fetchBigParaBatchPrices() {
     return _batchPriceCache.data;
   }
 
-  const remoteUrl = 'https://bigpara.hurriyet.com.tr/api/v1/borsa/canlilar/hpisinyal';
+  // 1. IsYatirim is the new primary for batch fetching (BigPara hpisinyal is dead/403)
+  const isyatirimUrl = 'https://www.isyatirim.com.tr/_layouts/15/IsYatirim.Website/Common/Data.aspx/TumHisseSenetleri';
   let text = null;
   const t0 = Date.now();
 
   try {
-    // Strategy 1: Vite dev proxy (localhost only)
+    // Strategy 1: Vite dev proxy
     if (isLocalDev()) {
-      const resp = await fetch('/api/bigpara/borsa/canlilar/hpisinyal', {
+      const resp = await fetch('/api/isyatirim/TumHisseSenetleri', {
         signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined,
       });
       if (resp.ok) {
@@ -227,18 +228,18 @@ export async function fetchBigParaBatchPrices() {
       }
     }
 
-    // Strategy 2: Electron IPC Bridge (production .exe — bypasses CORS)
+    // Strategy 2: Electron IPC Bridge
     if (!text && typeof window !== 'undefined' && window.electronAPI?.remoteFetch) {
       try {
-        const res = await window.electronAPI.remoteFetch(remoteUrl + '?_t=' + Date.now(), { method: 'GET' });
+        const res = await window.electronAPI.remoteFetch(isyatirimUrl + '?_t=' + Date.now(), { method: 'GET' });
         if (res.success && res.text && res.text.length > 100) text = res.text;
-      } catch { /* Electron IPC failure — try next */ }
+      } catch { }
     }
 
-    // Strategy 3: Direct fetch (web fallback — may be blocked by CORS)
+    // Strategy 3: Direct fetch
     if (!text) {
       try {
-        const resp = await fetch(remoteUrl + '?_t=' + Date.now(), {
+        const resp = await fetch(isyatirimUrl + '?_t=' + Date.now(), {
           headers: { 'Accept': 'application/json' },
           signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(10000) : undefined,
         });
@@ -246,12 +247,12 @@ export async function fetchBigParaBatchPrices() {
           const t = await resp.text();
           if (t && t.length > 100 && !t.includes('<!DOCTYPE')) text = t;
         }
-      } catch { /* CORS block — try proxy */ }
+      } catch { }
     }
 
     // Strategy 4: CORS proxy chain
     if (!text) {
-      text = await getDataViaProxies(remoteUrl, 10000);
+      text = await getDataViaProxies(isyatirimUrl, 10000);
     }
 
     if (!text) throw new Error('All batch sources failed');
@@ -261,24 +262,44 @@ export async function fetchBigParaBatchPrices() {
     const list = json?.data || json || [];
     if (Array.isArray(list)) {
       for (const item of list) {
-        const sym = (item.kod || item.hpiKod || '').replace('.E', '').replace('.IS', '');
+        const sym = (item.symbol || item.kod || item.hpiKod || '').replace('.E', '').replace('.IS', '');
         if (!sym) continue;
-        // Fiyat oncelik sirasi:
-        // son      = borsa saatlerinde anlık son işlem fiyatı (en güncel)
-        // kapanis  = günlük kapanış (borsa kapandıktan sonra final değer)
-        // fiyat    = genel fiyat alanı (fallback)
-        // Borsa açıkken son > kapanis; kapandıktan sonra ikisi eşit.
+        
+        // IsYatirim format
+        if (item.symbol) {
+          const sonFiyat = parseFloat(item.last || item.dayClose || 0);
+          const kapanisFiy = parseFloat(item.dayClose || 0);
+          const liveF = sonFiyat > 0 ? sonFiyat : 0;
+          let change = 0;
+          if (kapanisFiy > 0 && sonFiyat > 0) {
+            change = ((sonFiyat - kapanisFiy) / kapanisFiy) * 100;
+          }
+          prices[sym] = {
+            price: liveF,
+            son: sonFiyat,
+            prevClose: kapanisFiy,
+            change: change,
+            volume: parseInt(item.quantity || item.volume || 0),
+            high: parseFloat(item.high || 0),
+            low: parseFloat(item.low || 0),
+            open: parseFloat(item.open || 0),
+          };
+          continue;
+        }
+
+        // BigPara format (fallback if another proxy returned it)
         const sonFiyat   = parseFloat(item.son || 0);
         const kapanisFiy = parseFloat(item.kapanis || 0);
-        const liveF      = (sonFiyat > 0 ? sonFiyat : kapanisFiy) || parseFloat(item.fiyat || 0);
+        const liveF = sonFiyat > 0 ? sonFiyat : 0;
         prices[sym] = {
           price:     liveF,
+          son:       sonFiyat,
+          prevClose: kapanisFiy,
           change:    parseFloat(item.yuzde || item.yuzdeDegisim || item.degisim || 0),
           volume:    parseInt(item.hacim || item.hacimLot || 0),
           high:      parseFloat(item.yuksek || 0),
           low:       parseFloat(item.dusuk || 0),
           open:      parseFloat(item.acilis || 0),
-          prevClose: parseFloat(item.oncekiKapanis || item.dunkuKapanis || 0),
         };
       }
     }
@@ -459,7 +480,10 @@ export async function tryProxy(url, ms = 10000) {
     const ct = r.headers.get('content-type') || '';
     const t = await r.text();
     if (!t || t.length < 20) return null;
-    if (t.includes('<!DOCTYPE') || t.includes('<html') || t.includes('<head>') || t.includes('<body>') || t.startsWith('<')) {
+    
+    // Bypass HTML guard for KAP (because KAP natively returns HTML)
+    const isKap = url.includes('kap.org.tr') || url.includes('/api/kap');
+    if (!isKap && (t.includes('<!DOCTYPE') || t.includes('<html') || t.includes('<head>') || t.includes('<body>') || t.startsWith('<'))) {
       return null;
     }
     if (ct.indexOf('json') >= 0) {
@@ -505,7 +529,8 @@ async function _electronDirectFetch(targetUrl, ms = ELECTRON_FAST_MS) {
     if (res?.success && res?.text && res.text.length >= 20) {
       // Check for HTML error pages
       const t = res.text;
-      if (t.startsWith('<') || t.includes('<!DOCTYPE') || t.includes('<html')) {
+      const isKap = targetUrl.includes('kap.org.tr') || targetUrl.includes('/api/kap');
+      if (!isKap && (t.startsWith('<') || t.includes('<!DOCTYPE') || t.includes('<html'))) {
         _recordFailure('electron-direct');
         return null;
       }
@@ -1356,19 +1381,25 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
 
   if (p) {
     trackSource(source);
-    const r = { symbol, prices: p, source, _ts: Date.now(), dataConfidence: 'high', divergencePct: 0 };
+    // Sanitize BEFORE overlay so ghost bars from historical sources are stripped first.
+    // applyLiveOverlay then appends a clean BigPara forming bar (_isForming: true).
+    // _stripGhostCandle skips _isForming bars, so the subsequent sanitizePrices call
+    // in fetchData won't accidentally strip the overlay bar.
+    const r = { symbol, prices: sanitizePrices(p), source, _ts: Date.now(), dataConfidence: 'high', divergencePct: 0 };
     _cache[ck] = r;
     _scheduleL2Persist();
 
     // BIGPARA LIVE OVERLAY:
-    //   - Non-scan single analysis: await with 3s timeout (need fresh price for chart,
-    //     but don't block forever). Batch cache makes this ~0ms typically.
+    //   - Non-scan single analysis: await with 6s timeout (need fresh price for chart).
+    //     Batch cache makes this ~0ms typically; 6s gives per-symbol fallback enough
+    //     headroom when batch cache is cold (önceki 3s timeout 5Y ilk açılışta sık
+    //     fire ediyordu → bugünkü mum eklenemiyordu).
     //   - Scan mode: SKIP per-symbol overlay; scan uses batch BigPara prices instead.
     //     This saves 648 × ~400ms = ~4 dakika per scan.
     if ((interval === '1d' || interval === '1wk') && !scanMode) {
       await Promise.race([
         applyLiveOverlay(r, symbol),
-        new Promise(resolve => setTimeout(resolve, 3000)),
+        new Promise(resolve => setTimeout(resolve, 6000)),
       ]);
     }
     return r;
@@ -1482,37 +1513,36 @@ export async function applyLiveOverlay(r, symbol) {
         const hasRealOpen = live.open > 0;
         const hasRealHL = live.high > 0 && live.low > 0 && live.high > live.low;
 
-        // ── KRITIK: Gece/kapali piyasada APPEND YAPMA ──
-        // Market kapaliysa (09:30 oncesi, 12:30-14:00 arasi mola, 17:30 sonrasi, weekend)
-        // BigPara hala "today's close" donduruyor — fakat bu mum HENUZ olusmus degil,
-        // historical fetch henuz yayinlamamis. Append edersek "fake forming candle" gozukur.
-        // Sadece market AKTIFKEN forming bar olustur — kapaliyken historical fetch'i bekle.
-        if (!marketOpen) {
-          // Market kapali → live quote'u sadece divergence olcumu icin tut, append etme.
-          // Historical fetch sonraki refresh'te today's gercek bar'i getirecek.
-          r.lastPriceSource = 'BigPara+ClosedMarket';
-        } else if (hasRealOpen && hasRealHL) {
-          // Market AKTIF + BigPara gercek OHLC donduruyor → forming bar olustur/guncelle
+        // ── v23 FIX: Market kapaliyken bile gercek OHLC varsa append et ──
+        // Onceden: market kapali ise hicbir sey yapmiyordu → Yahoo/IsYatirim 1-2 gun
+        // gecikmeli olunca yeni gun mumu (orn. 14 Mayis) kayip kaliyordu.
+        // Yeni: gercek OHLC varsa append; market acik → forming, kapali → completed.
+        if (hasRealOpen && hasRealHL) {
+          const isForming = marketOpen; // Market acikken forming, kapaliyken tamamlanmis
           const prevLast = r.prices[r.prices.length - 1];
           const prevKey = prevLast ? istanbulDayKey(prevLast.date) : null;
           if (prevLast?._isForming && prevKey === liveKey) {
+            // Ayni gunun forming bar'i zaten var → guncelle
             prevLast.close = live.price;
             if (live.high > prevLast.high) prevLast.high = live.high;
             if (live.low < prevLast.low) prevLast.low = live.low;
             if (live.volume > 0) prevLast.volume = live.volume;
-            r.lastPriceSource = 'BigPara+Update';
+            // Market kapandi ise forming bayragini kaldir (tamamlanmis bar)
+            if (!isForming) delete prevLast._isForming;
+            r.lastPriceSource = isForming ? 'BigPara+Update' : 'BigPara+Finalize';
           } else {
             const [y, m, day] = liveKey.split('-').map(n => parseInt(n, 10));
-            r.prices.push({
+            const newBar = {
               date: new Date(Date.UTC(y, m - 1, day)),
               open: live.open,
               high: live.high,
               low: live.low,
               close: live.price,
               volume: live.volume || 0,
-              _isForming: true,   // Candle still forming — exclude from indicator calc
-            });
-            r.lastPriceSource = 'BigPara+New';
+            };
+            if (isForming) newBar._isForming = true; // Sadece market acikken forming
+            r.prices.push(newBar);
+            r.lastPriceSource = isForming ? 'BigPara+New' : 'BigPara+Completed';
           }
         }
       }
@@ -1532,6 +1562,8 @@ export async function applyLiveOverlay(r, symbol) {
 function _stripGhostCandle(bars) {
   if (!bars.length) return bars;
   const last = bars[bars.length - 1];
+  // Never strip bars added by applyLiveOverlay — they carry real BigPara OHLC
+  if (last._isForming) return bars;
   const lastDate = new Date(last.date);
   const nowTRT = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Istanbul' }));
   const todayStr = nowTRT.getFullYear() + '-' +

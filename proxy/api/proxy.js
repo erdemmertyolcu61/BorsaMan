@@ -79,6 +79,38 @@ const SOURCE_HEADERS = {
   },
 };
 
+// --- Yahoo Auto-Crumb System for Proxy ---
+let cachedYahooCookie = null;
+let cachedYahooCrumb = null;
+let crumbExpiry = 0;
+
+async function getYahooAuth() {
+  if (cachedYahooCookie && cachedYahooCrumb && Date.now() < crumbExpiry) {
+    return { cookie: cachedYahooCookie, crumb: cachedYahooCrumb };
+  }
+  try {
+    const res = await fetch('https://fc.yahoo.com', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    });
+    const cookieHeader = res.headers.get('set-cookie');
+    if (!cookieHeader) return null;
+    cachedYahooCookie = cookieHeader.split(';')[0];
+    
+    const crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Cookie': cachedYahooCookie
+      }
+    });
+    cachedYahooCrumb = await crumbRes.text();
+    crumbExpiry = Date.now() + 1000 * 60 * 45; // 45 mins
+    return { cookie: cachedYahooCookie, crumb: cachedYahooCrumb };
+  } catch (e) {
+    return null;
+  }
+}
+
+
 // Build URL from shorthand source parameter
 function buildSourceUrl(query) {
   const { source, symbol, path } = query;
@@ -203,8 +235,26 @@ export default async function handler(req, res) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
+    const fetchHeaders = getHeaders(sourceType);
+    
+    // Auto-inject Yahoo Crumb if target is Yahoo v8 or requires it
+    if (sourceType === 'yahoo' && targetUrl.includes('/v8/')) {
+      const auth = await getYahooAuth();
+      if (auth && auth.cookie) {
+        fetchHeaders['Cookie'] = auth.cookie;
+        // The client might have sent its own crumb in URL. We should override it or append ours if missing.
+        // It's safer to always use the server's crumb because it matches the server's cookie.
+        if (targetUrl.includes('crumb=')) {
+          targetUrl = targetUrl.replace(/crumb=[^&]+/, 'crumb=' + auth.crumb);
+        } else {
+          const sep = targetUrl.includes('?') ? '&' : '?';
+          targetUrl += sep + 'crumb=' + auth.crumb;
+        }
+      }
+    }
+
     const response = await fetch(targetUrl, {
-      headers: getHeaders(sourceType),
+      headers: fetchHeaders,
       signal: controller.signal,
     });
 

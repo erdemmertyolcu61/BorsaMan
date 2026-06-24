@@ -290,12 +290,18 @@ process.on('message', async (msg) => {
   if (msg?.type !== 'start') return;
 
   try {
+    let targetSymbols = msg.symbols || BIST100;
+    if (msg.symbols === 'bistall' || msg.range === '5y') {
+      const { getStockList } = await imp('src/utils/constants.js');
+      targetSymbols = getStockList('bistall');
+    }
+
     const result = await runPipeline({
       dbPath: msg.dbPath,
-      symbols: msg.symbols || BIST100,
+      symbols: targetSymbols,
       range: msg.range || '1y',
       interval: msg.interval || '1d',
-      interSymbolMs: msg.interSymbolMs || 2000,
+      interSymbolMs: msg.interSymbolMs || (msg.range === '5y' ? 3500 : 2000),
       batchSize: msg.batchSize || 10,
     });
 
@@ -314,14 +320,28 @@ process.on('message', async (msg) => {
 // If started without IPC (direct node execution for testing)
 if (!process.send) {
   console.log('[MLWorker] Running in standalone mode (no IPC parent)...');
-  runPipeline({
-    dbPath: path.resolve(ROOT, 'data', 'bist_ml_engine.db'),
-    range: '1y',
-  }).then(result => {
-    console.log('[MLWorker] Pipeline complete:', result);
-    process.exit(0);
-  }).catch(err => {
-    console.error('[MLWorker] Pipeline failed:', err);
-    process.exit(1);
-  });
+  (async () => {
+    try {
+      // Import the full symbol list dynamically
+      const { getStockList } = await imp('src/utils/constants.js');
+      const bistAll = getStockList('bistall');
+      
+      console.log(`[MLWorker] Starting MASSIVE 5-Year Deep Training for ${bistAll.length} symbols...`);
+      console.log('[MLWorker] This will take approximately 30-40 minutes due to rate limits.');
+      
+      const result = await runPipeline({
+        dbPath: path.resolve(ROOT, 'data', 'bist_ml_engine.db'),
+        symbols: bistAll,
+        range: '5y',
+        interSymbolMs: 3500, // Safe rate limit for 600+ requests
+        batchSize: 10,
+      });
+      
+      console.log('[MLWorker] Pipeline complete:', result);
+      process.exit(0);
+    } catch (err) {
+      console.error('[MLWorker] Pipeline failed:', err);
+      process.exit(1);
+    }
+  })();
 }

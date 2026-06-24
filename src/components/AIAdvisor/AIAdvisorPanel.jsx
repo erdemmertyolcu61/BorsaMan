@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import SectorHeatmap from '../Heatmap/SectorHeatmap.jsx';
 import { isMarketOpen, isMarketClosedForDay } from '../../hooks/useAIAdvisor.js';
 import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
-import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices } from '../../utils/fetchEngine.js';
+import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices, fetchBigParaQuote } from '../../utils/fetchEngine.js';
 
 function DataFreshnessBadge() {
   const [freshness, setFreshness] = useState(null);
@@ -253,6 +253,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     marketSentiment = null,
     scanning = false,
     lastUpdate = null,
+    marketRegime = null, // v26 FIX 2: { regime, bistChangePct }
   } = advisor;
 
   const [open, setOpen] = useState(true); // start expanded so user always sees it
@@ -284,6 +285,10 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     } catch {}
     return [];
   });
+  // Ref to latest displayPicks — read inside async doLivePriceUpdate without stale closure
+  const displayPicksRef = useRef([]);
+  useEffect(() => { displayPicksRef.current = displayPicks; }, [displayPicks]);
+
   const [cachedMeta, setCachedMeta] = useState(() => {
     try {
       const saved = localStorage.getItem('bist_last_ai_picks');
@@ -477,56 +482,85 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
   // ── STALE CACHE OTOMATIK YENILEME — DEVRE DISI ──
   // Otomatik tarama kaldirildi. Kullanici "↻ TARA" butonuna basarak manuel tarama yapar.
 
-  // ── CANLI FIYAT GUNCELLEME (v20) ──
+  // ── CANLI FIYAT GUNCELLEME (v21) ──
   // HEM cache HEM fresh-scan kartlari icin calisir.
-  // Fresh scan: tarama ani fiyat → piyasa hareket edince kart guncel olmalidir.
-  // Cache: localStorage'dan gelen eski fiyat → daha cok sapma olabilir.
+  //
+  // SORUN (v20): fetchBigParaBatchPrices() batch API'de item.kapanis = DÜNKÜ kapanış.
+  // item.son = 0 (piyasa kapalı veya henüz işlem yok) olduğunda eski kod kapanis'i
+  // "canlı fiyat" olarak kullanıyordu → AI Advisor dünün fiyatını gösteriyordu
+  // (TTRAK 467.25 vs gerçek 476.50 hatası).
+  //
+  // FIX (v21): Batch son=0 ise price=0 döner (fetchEngine güncellemesiyle).
+  // Bu durumda per-symbol fetchBigParaQuote çağrılır — per-symbol endpoint'te
+  // kapanis = BUGÜNKÜ canlı fiyat (farklı anlam, doğru değer).
   //
   // - _livePrice: anlık BigPara fiyatı → kartta PRIMARY gösterim
   // - _divergencePct: tarama fiyatından sapma yüzdesi
   // - _isStaleAdverse: AL önerisi -%3+ düştü → kırmızı uyarı
   // - _divergenceWarn: |sapma| > %6 → turuncu uyarı
-  //
-  // Interval: anlık bir kez çekilir + her 60s güncellenir (piyasa açıkken aktif)
   useEffect(() => {
     if (!displayPicks.length) return;
     let cancelled = false;
 
-    const doLivePriceUpdate = () => {
-      fetchBigParaBatchPrices().then(liveMap => {
-        if (cancelled || !liveMap || Object.keys(liveMap).length === 0) return;
-        setDisplayPicks(prev => {
-          const updated = prev.map(p => {
-            const live = liveMap[p.symbol];
-            if (!live || !(live.price > 0)) return p;
-            const scanPrice = p.price || 0;
-            if (scanPrice <= 0) return p;
-            const divPct = ((live.price - scanPrice) / scanPrice) * 100;
-            const todayChg = live.change || 0;
-            const adverseDrop = (p.cls !== 'sell') && (divPct < -3 || todayChg < -2.5);
-            const adverseRise = (p.cls === 'sell') && (divPct > 3 || todayChg > 2.5);
-            return {
-              ...p,
-              _livePrice:      live.price,
-              _liveChange:     todayChg,
-              _divergencePct:  divPct,
-              _isStaleAdverse: adverseDrop || adverseRise,
-              _divergenceWarn: Math.abs(divPct) > 6,
-            };
-          });
-          // Cache picks: adverse olanlar sona (fresh scan siralama bozmasin)
-          if (!isFromCache) return updated;
-          return updated.sort((a, b) => {
-            if (a._isStaleAdverse && !b._isStaleAdverse) return 1;
-            if (b._isStaleAdverse && !a._isStaleAdverse) return -1;
-            return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
-          });
-        });
-      }).catch(() => {});
+    const applyPriceUpdate = (liveMap) => {
+      if (cancelled || !liveMap || Object.keys(liveMap).length === 0) return;
+      setDisplayPicks(prev => prev.map(p => {
+        const live = liveMap[p.symbol];
+        if (!live || !(live.price > 0)) return p;
+        const scanPrice = p.price || 0;
+        if (scanPrice <= 0) return p;
+        const divPct = ((live.price - scanPrice) / scanPrice) * 100;
+        const todayChg = live.change || 0;
+        const adverseDrop = (p.cls !== 'sell') && (divPct < -3 || todayChg < -2.5);
+        const adverseRise = (p.cls === 'sell') && (divPct > 3 || todayChg > 2.5);
+        return {
+          ...p,
+          _livePrice:      live.price,
+          _liveChange:     todayChg,
+          _divergencePct:  divPct,
+          _isStaleAdverse: adverseDrop || adverseRise,
+          _divergenceWarn: Math.abs(divPct) > 6,
+        };
+      })); // Sıralama kilitli — live fiyat güncellemesi sadece veri ekler, sıra değiştirmez
     };
 
-    doLivePriceUpdate();                              // hemen bir kez
-    const iv = setInterval(doLivePriceUpdate, 30_000); // v6: 30s — daha taze fiyat
+    const doLivePriceUpdate = async () => {
+      // 1) Batch update — tek çağrı, tüm semboller (hızlı)
+      const batchMap = await fetchBigParaBatchPrices().catch(() => ({}));
+      if (cancelled) return;
+      applyPriceUpdate(batchMap);
+
+      // 2) Per-symbol fallback — batch'te son=0 olan kartlar için (yani intraday işlem yok)
+      //    Per-symbol hisseyuzeysel endpoint'i kapanis'i = BUGÜNKÜ canlı fiyat olarak döner.
+      //    displayPicksRef sayesinde stale closure olmadan güncel kartları okuyabiliriz.
+      const curPicks = displayPicksRef.current;
+      const needsRefresh = curPicks.filter(p => {
+        const live = batchMap[p.symbol];
+        return !live || !(live.price > 0); // batch'te price=0 → per-symbol gerekli
+      });
+
+      if (needsRefresh.length === 0 || cancelled) return;
+
+      const perSymResults = await Promise.allSettled(
+        needsRefresh.map(p =>
+          fetchBigParaQuote(p.symbol)
+            .then(r => ({ sym: p.symbol, r }))
+            .catch(() => ({ sym: p.symbol, r: null }))
+        )
+      );
+
+      if (cancelled) return;
+      const perSymMap = {};
+      for (const res of perSymResults) {
+        if (res.status === 'fulfilled' && res.value?.r?.price > 0) {
+          perSymMap[res.value.sym] = res.value.r;
+        }
+      }
+      applyPriceUpdate(perSymMap);
+    };
+
+    doLivePriceUpdate();
+    const iv = setInterval(doLivePriceUpdate, 30_000);
     return () => { cancelled = true; clearInterval(iv); };
   }, [displayPicks.length, isFromCache]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -641,6 +675,28 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
               animation: 'pulseDot 1.4s ease-in-out infinite',
             }} />
           )}
+          {/* v26 FIX 2: Piyasa rejimi rozeti — BULL (8 pick) / NEUTRAL (5) / BEAR (3) */}
+          {marketRegime?.regime && (() => {
+            const r = marketRegime.regime;
+            const c = marketRegime.bistChangePct || 0;
+            const cfg = r === 'BULL'
+              ? { bg: 'rgba(16,232,122,0.18)', fg: '#10e87a', border: 'rgba(16,232,122,0.5)', icon: '🐂' }
+              : r === 'BEAR'
+              ? { bg: 'rgba(244,63,94,0.18)', fg: '#ff5470', border: 'rgba(244,63,94,0.5)', icon: '🐻' }
+              : { bg: 'rgba(176,188,205,0.15)', fg: '#b0bccd', border: 'rgba(176,188,205,0.4)', icon: '⚖️' };
+            return (
+              <span
+                title={`BIST100: ${c >= 0 ? '+' : ''}${c.toFixed(2)}% — ${r === 'BULL' ? 'agresif tarama (8 pick)' : r === 'BEAR' ? 'savunma modu (3 pick + sell odakli)' : 'konservatif (5 pick)'}`}
+                style={{
+                  fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 10,
+                  background: cfg.bg, color: cfg.fg, border: `1px solid ${cfg.border}`,
+                  letterSpacing: 0.4,
+                }}
+              >
+                {cfg.icon} {r} {c >= 0 ? '+' : ''}{c.toFixed(1)}%
+              </span>
+            );
+          })()}
           {isFromCache && (
             <span style={{
               fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 10,
@@ -814,8 +870,17 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           const isSell = p.cls === 'sell';
           const accent = isSell ? 'var(--red)' : 'var(--green)';
           const accentDim = isSell ? '#ff444418' : '#00e68618';
-          const stopPctAbs = Math.abs(p.stopPct || 0);
-          const targetPctAbs = Math.abs(p.targetPct || 0);
+          // Stop/Target yüzdeleri ARTIK LIVE FİYATTAN hesaplanır.
+          // Önceden p.stopPct/targetPct scan anındaki fiyata göreydi → fiyat hareket
+          // edince yüzdeler stale gözüküyordu (örn. TTRAK 1.7% görünürken aslında 3.6%).
+          // Stop/target mutlak TL seviyeleri sabit; sadece "kaçta" değişir.
+          const livePriceForPct = (p._livePrice && p._livePrice > 0) ? p._livePrice : (p.price || 0);
+          const stopPctAbs = (p.stop && livePriceForPct > 0)
+            ? Math.abs((p.stop - livePriceForPct) / livePriceForPct * 100)
+            : Math.abs(p.stopPct || 0);
+          const targetPctAbs = (p.target && livePriceForPct > 0)
+            ? Math.abs((p.target - livePriceForPct) / livePriceForPct * 100)
+            : Math.abs(p.targetPct || 0);
           const signalLabel = isSell
             ? 'GÜÇLÜ SAT'
             : p.signal?.includes('GÜÇLÜ') ? 'GÜÇLÜ AL'
@@ -1233,11 +1298,10 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
 
               {/* Row 2: price (CANLI PRIMARY) + change + R/R + score */}
               {(() => {
-                // _livePrice her zaman primary — scan fiyatı sadece referans
+                // v22: Scan fiyatı strikethrough kaldırıldı — sadece güncel (live)
+                // fiyat gösterilir. Kullanıcı talebi: bayat referans gösterme.
                 const displayPrice = p._livePrice || p.price || 0;
-                const scanPrice    = p.price || 0;
                 const hasLive      = p._livePrice != null && p._livePrice > 0;
-                const priceDrifted = hasLive && Math.abs(p._livePrice - scanPrice) / (scanPrice || 1) > 0.002;
                 const liveChg      = p._liveChange ?? p.change ?? 0;
                 return (
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, marginTop: 6 }}>
@@ -1245,18 +1309,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                     <span style={{ fontWeight: 800, color: '#ffffff', letterSpacing: 0.2 }}>
                       {displayPrice.toFixed(2)} TL
                     </span>
-                    {/* Scan fiyatı küçük referans — sadece fark varsa göster */}
-                    {priceDrifted && (
-                      <span style={{
-                        fontSize: 9, color: '#6b7280', fontWeight: 600,
-                        textDecoration: 'line-through',
-                      }} title={`Tarama anı: ${scanPrice.toFixed(2)} TL`}>
-                        {scanPrice.toFixed(2)}
-                      </span>
-                    )}
-                    {/* Canlı güncelleme indikatörü — live fiyat var ama scan ile aynı */}
-                    {hasLive && !priceDrifted && (
-                      <span style={{ fontSize: 8, color: '#10e87a', fontWeight: 700 }} title="Fiyat güncel">●</span>
+                    {/* Canlı güncelleme indikatörü (yeşil nokta) */}
+                    {hasLive && (
+                      <span style={{ fontSize: 8, color: '#10e87a', fontWeight: 700 }} title="Fiyat güncel (canlı)">●</span>
                     )}
                     <span style={{
                       color: liveChg >= 0 ? '#10e87a' : '#ff5470',
@@ -1274,29 +1329,10 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   </div>
                 );
               })()}
-              {/* STALE / CONFLICT WARNING — hisse cache'tekiyle celisiyor */}
-              {(p._isStaleAdverse || p._conflictsWithLive) && (
-                <div style={{
-                  fontSize: 10, color: '#ff5470', fontWeight: 800,
-                  marginTop: 4, padding: '3px 6px',
-                  background: 'rgba(244,63,94,0.18)', borderRadius: 3,
-                  border: '1px solid rgba(244,63,94,0.45)',
-                  letterSpacing: 0.3,
-                }} title="Cache'deki sinyal canli fiyatla uyumsuz — yeniden tarama oneriliyor">
-                  ⚠ {p._isStaleAdverse ? `BAYAT (${p._divergencePct?.toFixed(1)}%)` : `ÇELİŞKİ: ${p._liveSignal || 'TUT'}`}
-                </div>
-              )}
-              {p._divergenceWarn && !p._isStaleAdverse && !p._conflictsWithLive && (
-                <div style={{
-                  fontSize: 10, color: '#ff9a3c', fontWeight: 800,
-                  marginTop: 4, padding: '3px 6px',
-                  background: 'rgba(255,145,0,0.18)', borderRadius: 3,
-                  border: '1px solid rgba(255,145,0,0.4)',
-                  letterSpacing: 0.3,
-                }} title="Cache fiyati canli fiyattan farkli — yeniden tara">
-                  ⚠ FİYAT KAYDI (Δ{p._divergencePct?.toFixed(1)}%)
-                </div>
-              )}
+              {/* BAYAT / FİYAT KAYDI rozetleri kaldırıldı (v22).
+                  Kullanıcı talebi: "Hiç bayat deme, AI advisor direkt en güncel
+                  fiyatından tarayıp önersin." Stop/Target yüzdeleri zaten artık
+                  livePriceForPct'ten hesaplandığı için kart hep güncel görünür. */}
 
               {/* Row 3: stop + target */}
               <div style={{ display: 'flex', gap: 10, fontSize: 11, marginTop: 6 }}>

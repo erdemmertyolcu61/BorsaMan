@@ -75,12 +75,18 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
     const effectiveRange = overrideRange || range;
     const effectiveInterval = overrideInterval || interval;
     try {
-      // Fetch price data, KAP disclosures, AND pre-warm batch cache in parallel
-      // Batch cache ensures applyLiveOverlay inside fetchData is ~0ms (no per-symbol HTTP)
+      // ── BATCH CACHE PRE-WARM ÖNCE (v22 FIX) ──
+      // Önceden Promise.all içinde paralel başlatılıyordu, fakat fetchData içindeki
+      // applyLiveOverlay batch pre-warm tamamlanmadan tetikleniyordu → race condition:
+      //   - 5Y ilk açılış (cold batch): overlay per-symbol fallback'e düşüyor → 3s timeout
+      //     fires → bugünkü mum eklenmiyor → "13 Mayıs mumu görünmüyor"
+      //   - 2Y ikinci tıklama (warm batch): overlay batch'i bulup anında uyguluyor
+      // Fix: batch pre-warm önce await edilir (~1-3s ilk seferinde, cache'den 0ms sonra),
+      //      sonra fetchData paralel başlar; overlay her zaman warm batch görür.
+      await fetchBigParaBatchPrices().catch(() => {});
       const [data, kapDisclosures] = await Promise.all([
         fetchData(s, effectiveRange, effectiveInterval, log).catch(() => null),
         fetchKAPDisclosures(s).catch(() => []),
-        fetchBigParaBatchPrices().catch(() => {}), // pre-warm batch cache
       ]);
       if (!data) {
         setBadge({ text: 'Hata', cls: 'err' });

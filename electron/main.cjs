@@ -385,8 +385,38 @@ import('../src/utils/DatabaseManager.js')
     await registerMLDbIPC(ipcMain);
   })
   .catch(err => {
-    // better-sqlite3 may not be installed yet — graceful degradation
+    // better-sqlite3 not installed or DB init failed — graceful degradation.
+    // Register stub paper:* handlers so Electron does NOT log "No handler registered"
+    // errors. The renderer's PaperTradeEngine.init() try/catch already falls back to
+    // localStorage — returning null here is safe because the renderer uses ?. / ??
+    // optional chaining with START_CAPITAL defaults for every field.
     console.warn('[Electron] ML Database init skipped:', err?.message);
+    console.warn('[Electron] Registering paper:* stub handlers (localStorage fallback active in renderer)');
+    const _safe = (fn) => { try { fn(); } catch {} };
+    // Paper trading stubs — matches DatabaseManager.registerMLDbIPC paper:* handlers
+    // _stubMode sentinel: PaperTradeEngine.init() checks this and falls back to localStorage,
+    // so existing user trades are preserved instead of starting from a blank state.
+    _safe(() => ipcMain.handle('paper:getPortfolio',       () => ({ _stubMode: true })));
+    _safe(() => ipcMain.handle('paper:updatePortfolio',    () => null));
+    _safe(() => ipcMain.handle('paper:openTrade',          () => null));
+    _safe(() => ipcMain.handle('paper:closeTrade',         () => ({ ruleHash: null, feedback: null })));
+    _safe(() => ipcMain.handle('paper:getOpenTrades',      () => []));
+    _safe(() => ipcMain.handle('paper:getClosedTrades',    () => []));
+    _safe(() => ipcMain.handle('paper:getStats',           () => ({})));
+    _safe(() => ipcMain.handle('paper:reset',              () => null));
+    _safe(() => ipcMain.handle('paper:applyTradeFeedback', () => null));
+    // ML DB stubs — renderer handles missing ML gracefully (SMC fallback mode)
+    _safe(() => ipcMain.handle('mldb:insertSignals',           () => null));
+    _safe(() => ipcMain.handle('mldb:updateOutcomes',          () => null));
+    _safe(() => ipcMain.handle('mldb:getOpenSignals',          () => []));
+    _safe(() => ipcMain.handle('mldb:getClosedSignals',        () => []));
+    _safe(() => ipcMain.handle('mldb:getStats',                () => null));
+    _safe(() => ipcMain.handle('mldb:getTopRules',             () => []));
+    _safe(() => ipcMain.handle('mldb:upsertRules',             () => null));
+    _safe(() => ipcMain.handle('mldb:getFeatureBuckets',       () => []));
+    _safe(() => ipcMain.handle('mldb:getFeatureImportance',    () => []));
+    _safe(() => ipcMain.handle('mldb:updateFeatureImportance', () => null));
+    _safe(() => ipcMain.handle('mldb:prune',                   () => null));
   });
 
 // ── Autonomous ML Training CRON — Friday 20:00 (BIST kapanisindan sonra) ──
@@ -519,8 +549,9 @@ function startMLTraining(opts = {}) {
   return true;
 }
 
-// ── CRON Check: Every 60s, check if it's Friday 20:00 (Turkey time) ──
+// ── CRON Check: Every 60s, check if it's a weekday 20:00 (Turkey time) ──
 // BIST closes at 18:00 Turkish time. We train at 20:00 to ensure all data settles.
+// Runs Mon-Fri (day 1-5) — weekends have no fresh market data to learn from.
 let _cronInterval = null;
 
 function startCRONScheduler() {
@@ -533,23 +564,24 @@ function startCRONScheduler() {
     const localMinutes = now.getUTCMinutes() + now.getUTCHours() * 60 + turkeyOffset;
     const turkeyHour = Math.floor((localMinutes % 1440) / 60);
     const turkeyMinute = localMinutes % 60;
-    const turkeyDay = now.getUTCDay(); // 0=Sun, 5=Fri
 
     // Adjust day if Turkey time rolls over midnight
     const turkeyDate = new Date(now.getTime() + turkeyOffset * 60 * 1000);
     const dateStr = turkeyDate.toISOString().slice(0, 10);
+    const turkeyDay = turkeyDate.getUTCDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
 
-    // Friday (day=5), hour=20, first check within the 20:00 window
-    if (turkeyDate.getUTCDay() === 5 && turkeyHour === 20 && turkeyMinute < 2) {
+    // Weekday (Mon-Fri = 1-5), hour=20, first check within the 20:00 window
+    const isWeekday = turkeyDay >= 1 && turkeyDay <= 5;
+    if (isWeekday && turkeyHour === 20 && turkeyMinute < 2) {
       // Prevent double-run on same day
       if (_lastTrainingDate === dateStr) return;
 
-      console.log(`[CRON] Friday 20:00 TR triggered — starting autonomous ML training`);
+      console.log(`[CRON] Weekday 20:00 TR (day=${turkeyDay}) triggered — starting autonomous ML training`);
       startMLTraining();
     }
   }, 60_000); // check every 60 seconds
 
-  console.log('[CRON] ML training scheduler active — Friday 20:00 (TR time)');
+  console.log('[CRON] ML training scheduler active — Mon-Fri 20:00 (TR time)');
 }
 
 // ── IPC Handlers for ML Training (manual trigger from renderer) ──

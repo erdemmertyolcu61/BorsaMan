@@ -9,7 +9,7 @@ export function setSignalNotificationHandler(handler) {
   globalNotificationHandler = handler;
 }
 
-const STORAGE_KEY = 'bist_signal_history';
+const STORAGE_KEY = 'bist_signal_history_v2'; // v2: Reset history completely as requested
 const MAX_HISTORY = 500;
 const TRADING_DAY_MS = 1000 * 60 * 60 * 24;
 
@@ -284,47 +284,13 @@ export function useSignalTracker() {
     }
   }, []);
 
-  // ── Auto-ingest AI Advisor scan results ──
-  useEffect(() => {
-    const handler = (e) => {
-      const { topPicks } = e.detail || {};
-      if (!Array.isArray(topPicks) || topPicks.length === 0) {
-        console.warn('[SignalTracker] advisor-scan-complete had no topPicks');
-        return;
-      }
-      const tradable = topPicks.filter(p =>
-        p && (p.cls === 'buy' || p.cls === 'sell') && p.symbol
-      );
-      console.log(`[SignalTracker] Ingesting ${tradable.length} advisor picks (of ${topPicks.length} total)`);
-      for (const pick of tradable) {
-        recordSignal({
-          symbol:     pick.symbol,
-          cls:        pick.cls,
-          signal:     pick.signal,
-          price:      pick.price || pick.entry || pick.currentPrice,
-          entry:      pick.entry || pick.price,
-          stop:       pick.stop,
-          target:     pick.target || pick.t1,
-          rr:         pick.rr,
-          score:      pick.score,
-          score100:   pick.score,
-          confidence: pick.confidence,
-          grade:      pick.grade,
-          tier:       pick.tier,
-          sector:     pick.sector,
-          source:     'advisor',
-          firedSignals:      pick.firedSignals,
-          mlConfidenceBoost: pick.mlConfidenceBoost,
-          mlMatchedCount:    pick.mlMatchedCount,
-          mlBestRule:        pick.mlBestRule,
-        });
-      }
-    };
-    window.addEventListener('advisor-scan-complete', handler);
-    return () => window.removeEventListener('advisor-scan-complete', handler);
-  }, [recordSignal]);
+  // ── (DISABLED) Auto-ingest AI Advisor scan results via event ──
+  // Now handled centrally by App.jsx to prevent race conditions and duplicate listeners
+  // across multiple mounted instances of useSignalTracker.
 
-  // ── Auto-ingest single-stock analyze results ──
+  // ── Auto-ingest single-stock analyze results (DISABLED by user request) ──
+  // The user requested to strictly follow the 8 best buy picks rule from AI Advisor.
+  /*
   useEffect(() => {
     const handler = (e) => {
       const r = e.detail || {};
@@ -339,6 +305,7 @@ export function useSignalTracker() {
     window.addEventListener('analyze-result', handler);
     return () => window.removeEventListener('analyze-result', handler);
   }, [recordSignal]);
+  */
 
   const updateSignal = useCallback((signalId, updates) => {
     setSignals(prev => prev.map(sig => (sig.id === signalId ? { ...sig, ...updates } : sig)));

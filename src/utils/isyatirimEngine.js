@@ -154,17 +154,17 @@ function parseFinancialData(rows, symbol, periodLabels) {
     let mkey = null;
     if (MAP[key]) mkey = MAP[key];
     else {
-      if (key.includes('hasilat') && !key.includes('diger') && !key.includes('maliyet')) mkey = out.metrics.revenue ? null : 'revenue';
+      if ((key.includes('hasilat') || key.includes('satis gelir')) && !key.includes('diger') && !key.includes('maliyet') && !key.includes('satilan')) mkey = out.metrics.revenue ? null : 'revenue';
       else if (key.includes('brut kar') && !key.includes('diger')) mkey = out.metrics.grossProfit ? null : 'grossProfit';
-      else if ((key.includes('donem kari') || key.includes('net donem')) && !key.includes('diger') && !key.includes('kontrol')) mkey = out.metrics.netIncome ? null : 'netIncome';
-      else if (key.includes('toplam varlik') || key === 'varliklar toplami') mkey = out.metrics.totalAssets ? null : 'totalAssets';
+      else if ((key.includes('donem kari') || key.includes('net donem') || key.includes('net kar')) && !key.includes('diger') && !key.includes('kontrol') && !key.includes('kapsamli') && !key.includes('faaliyet')) mkey = out.metrics.netIncome ? null : 'netIncome';
+      else if (key.includes('toplam varlik') || key === 'varliklar toplami' || key.includes('aktif toplami')) mkey = out.metrics.totalAssets ? null : 'totalAssets';
       else if (key.includes('donen varlik') && !key.includes('duran')) mkey = out.metrics.currentAssets ? null : 'currentAssets';
       else if (key.includes('nakit ve nakit')) mkey = out.metrics.cash ? null : 'cash';
       else if (key.includes('kisa vadeli') && (key.includes('yukumluluk') || key.includes('borc'))) mkey = out.metrics.currentLiabilities ? null : 'currentLiabilities';
       else if (key.includes('toplam ozkaynak') || key === 'ozkaynaklar toplami') mkey = out.metrics.totalEquity ? null : 'totalEquity';
-      else if (key.includes('toplam yukumluluk') || key === 'yukumlulukler toplami') mkey = out.metrics.totalLiabilities ? null : 'totalLiabilities';
+      else if (key.includes('toplam yukumluluk') || key === 'yukumlulukler toplami' || key.includes('pasif toplami')) mkey = out.metrics.totalLiabilities ? null : 'totalLiabilities';
       else if (key.includes('odenmis sermaye')) mkey = out.metrics.paidCapital ? null : 'paidCapital';
-      else if (key === 'esas faaliyet kari' || key.includes('esas faaliyet kar')) mkey = out.metrics.operatingIncome ? null : 'operatingIncome';
+      else if (key === 'esas faaliyet kari' || key.includes('esas faaliyet kar') || key === 'faaliyet kari (zarari)') mkey = out.metrics.operatingIncome ? null : 'operatingIncome';
     }
     if (!mkey) continue;
 

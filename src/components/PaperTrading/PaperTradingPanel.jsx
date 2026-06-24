@@ -241,7 +241,7 @@ function MLForwardTestPanel({ paperML }) {
             <span>📊 SMC FALLBACK MODU</span>
             <span style={{ color: 'var(--t3)' }}>ML kurallari egitilmemis — score≥55 en iyi hisseler seciliyor</span>
             <span style={{ color: '#fbbf24', marginLeft: 4 }}>
-              (ML aktiflesturmek icin: Portfoy sekmesi → Ayarlar → ML Egitimi)
+              (ML egitimi her isgunu 20:00&apos;de otomatik baslar)
             </span>
           </div>
         )}

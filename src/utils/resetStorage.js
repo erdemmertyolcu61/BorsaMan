@@ -6,7 +6,7 @@ const RESET_EPOCH = '2026-05-04'; // bump this string to trigger another reset
 const RESET_EPOCH_KEY = 'bist_reset_epoch';
 
 const LS_KEYS_TO_CLEAR = [
-  'bist_signal_history',        // useSignalTracker — 500 closed trades
+  'bist_signal_history_v2',     // useSignalTracker — 500 closed trades
   'bist_paper_trading_v1',      // usePaperTrading  — standard paper portfolio
   'bist_paper_ml_engine_v1',    // PaperTradeEngine — ML paper portfolio (fallback)
   'bist_last_ai_picks',         // AIAdvisorPanel   — cached scan results

@@ -90,6 +90,26 @@ async function fetchVIX() {
   return { value: last.close, change5d, classification };
 }
 
+// ── S&P 500: global equity sentiment ────────────────────────────────
+async function fetchSP500() {
+  const series = await fetchYahooSeries('%5EGSPC', '1mo', '1d');
+  if (!series || series.length < 5) return null;
+  const last = series[series.length - 1];
+  const ref5 = series[Math.max(0, series.length - 6)];
+  const change5d = ((last.close - ref5.close) / ref5.close) * 100;
+  return { value: last.close, change5d };
+}
+
+// ── Brent Crude: global inflation / energy risk ─────────────────────
+async function fetchBrent() {
+  const series = await fetchYahooSeries('BZ=F', '1mo', '1d');
+  if (!series || series.length < 5) return null;
+  const last = series[series.length - 1];
+  const ref5 = series[Math.max(0, series.length - 6)];
+  const change5d = ((last.close - ref5.close) / ref5.close) * 100;
+  return { value: last.close, change5d };
+}
+
 // ── BIST100 / USD (yabanci gozu) ───────────────────────────────────
 async function fetchBistUsd(usdtryNow) {
   if (!usdtryNow) return null;
@@ -123,7 +143,7 @@ async function fetchTCMB() {
 
 // ── Regime classification + scoreAdjust ────────────────────────────
 function computeRegime(parts) {
-  const { usdtry, vix, tcmb, bistUsd } = parts;
+  const { usdtry, vix, tcmb, bistUsd, sp500, brent } = parts;
   let adjust = 0;
   const reasons = [];
 
@@ -142,6 +162,17 @@ function computeRegime(parts) {
     if (vix.classification === 'panic') { adjust -= 8; reasons.push(`VIX ${vix.value.toFixed(1)} PANIC -8`); }
     else if (vix.classification === 'elevated') { adjust -= 5; reasons.push(`VIX ${vix.value.toFixed(1)} (yuksek) -5`); }
     else if (vix.classification === 'complacent') { adjust += 2; reasons.push(`VIX ${vix.value.toFixed(1)} (sakin) +2`); }
+  }
+
+  // S&P 500 (global equities proxy)
+  if (sp500) {
+    if (sp500.change5d < -3) { adjust -= 6; reasons.push(`S&P500 5g %${sp500.change5d.toFixed(1)} (kuresel satis) -6`); }
+    else if (sp500.change5d > 3) { adjust += 3; reasons.push(`S&P500 5g +%${sp500.change5d.toFixed(1)} (kuresel ralli) +3`); }
+  }
+
+  // Brent Oil (inflation / energy risk)
+  if (brent) {
+    if (brent.change5d > 5) { adjust -= 3; reasons.push(`Brent 5g +%${brent.change5d.toFixed(1)} (enflasyon riski) -3`); }
   }
 
   // TCMB meeting proximity
@@ -181,14 +212,16 @@ export async function getMacroContext({ forceFresh = false } = {}) {
 
   _inflight = (async () => {
     try {
-      const [usdtry, vix, tcmb] = await Promise.all([
+      const [usdtry, vix, tcmb, sp500, brent] = await Promise.all([
         fetchUSDTRY().catch(() => null),
         fetchVIX().catch(() => null),
         fetchTCMB().catch(() => ({ ...TCMB_FALLBACK })),
+        fetchSP500().catch(() => null),
+        fetchBrent().catch(() => null),
       ]);
       const bistUsd = await fetchBistUsd(usdtry?.value).catch(() => null);
 
-      const parts = { usdtry, vix, tcmb, bistUsd };
+      const parts = { usdtry, vix, tcmb, bistUsd, sp500, brent };
       const regime = computeRegime(parts);
 
       const ctx = {
@@ -202,7 +235,9 @@ export async function getMacroContext({ forceFresh = false } = {}) {
         vix,
         tcmb,
         bistUsd,
-        isStale: !usdtry && !vix,   // tum kaynaklar fail
+        sp500,
+        brent,
+        isStale: !usdtry && !vix && !sp500,   // tum kaynaklar fail
       };
       _cache = { ts: now, value: ctx };
       return ctx;
@@ -229,6 +264,8 @@ export function buildMacroPromptLine(ctx) {
       : null;
     parts.push(`TCMB ${ctx.tcmb.rate}%${daysToMeeting != null && daysToMeeting >= 0 ? ` (PPK ${daysToMeeting}g sonra)` : ''}`);
   }
+  if (ctx.sp500) parts.push(`S&P500 ${ctx.sp500.value.toFixed(0)} (5g ${ctx.sp500.change5d >= 0 ? '+' : ''}${ctx.sp500.change5d.toFixed(1)}%)`);
+  if (ctx.brent) parts.push(`Brent $${ctx.brent.value.toFixed(1)}`);
   if (ctx.bistUsd) parts.push(`BIST/USD 20g ${ctx.bistUsd.change20d >= 0 ? '+' : ''}${ctx.bistUsd.change20d.toFixed(1)}%`);
   parts.push(`Rejim: ${ctx.regime.toUpperCase()}`);
   return `MAKRO: ${parts.join(' | ')}`;
