@@ -83,49 +83,67 @@ export default function App() {
   }, []);
 
   // ── Auto-record advisor top picks into signal tracker ──
-  // Bind to the scan event, NOT advisor.topPicks state. The event carries
-  // `finalPicks` — the same non-empty list that fills the bottom "AI EN İYİ
-  // FIRSATLAR" panel. advisor.topPicks can be empty when picks[] falls back to
-  // buyPicks/results (setTopPicks gets the empty picks[]), so recording off the
-  // state alone silently misses every pick → "Sinyaller (0)". The event payload
-  // is the reliable source, so the best opportunities always land in Sinyal Takibi.
+  // Records the buy picks shown in "AI EN İYİ FIRSATLAR" so they land in Sinyal
+  // Takibi. recordSignal dedups (4h, symbol+cls+source), so calling it from both
+  // the live scan event AND the cached-picks seed below never double-records.
+  const recordAdvisorPick = useCallback((pick, opts = {}) => {
+    if (!pick || pick.cls !== 'buy' || !pick.symbol) return;
+    signalTracker.recordSignal({
+      symbol: pick.symbol,
+      cls: pick.cls,
+      signal: pick.signal,
+      score: pick.score,
+      confidence: pick.confidence,
+      score100: pick.confidence,
+      price: pick.price || pick.entry || pick.currentPrice,
+      entry: pick.entry || pick.price,
+      stop: pick.stop,
+      target: pick.target || pick.t1,
+      rr: pick.rr,
+      source: 'advisor',
+      sector: pick.sector,
+      grade: pick.grade,
+      tier: pick.tier,
+      liquidity: pick.liquidityScore || pick.liquidity,
+      firedSignals: pick.firedSignals || [],
+      mlConfidenceBoost: pick.mlConfidenceBoost,
+      mlMatchedCount: pick.mlMatchedCount,
+      mlBestRule: pick.mlBestRule,
+    });
+    if (opts.notify && (pick.score >= 7.5 || pick.confidence >= 75)) {
+      notifications.notifyAdvisorPick(pick);
+    }
+  }, [signalTracker, notifications]);
+
+  // (1) Live scan: bind to the event payload (the non-empty finalPicks list that
+  //     fills the panel) rather than advisor.topPicks state, which can be empty.
   useEffect(() => {
     const handler = (e) => {
-      const picks = e.detail?.topPicks || [];
-      for (const pick of picks) {
-        if (pick.cls !== 'buy') continue;
-        signalTracker.recordSignal({
-          symbol: pick.symbol,
-          cls: pick.cls,
-          signal: pick.signal,
-          score: pick.score,
-          confidence: pick.confidence,
-          score100: pick.confidence,
-          price: pick.price || pick.entry || pick.currentPrice,
-          entry: pick.entry || pick.price,
-          stop: pick.stop,
-          target: pick.target || pick.t1,
-          rr: pick.rr,
-          source: 'advisor',
-          sector: pick.sector,
-          grade: pick.grade,
-          tier: pick.tier,
-          liquidity: pick.liquidityScore || pick.liquidity,
-          firedSignals: pick.firedSignals || [],
-          mlConfidenceBoost: pick.mlConfidenceBoost,
-          mlMatchedCount: pick.mlMatchedCount,
-          mlBestRule: pick.mlBestRule,
-        });
-
-        // Desktop notification for high-score advisor picks
-        if (pick.score >= 7.5 || pick.confidence >= 75) {
-          notifications.notifyAdvisorPick(pick);
-        }
-      }
+      for (const pick of (e.detail?.topPicks || [])) recordAdvisorPick(pick, { notify: true });
     };
     window.addEventListener('advisor-scan-complete', handler);
     return () => window.removeEventListener('advisor-scan-complete', handler);
-  }, [signalTracker, notifications]);
+  }, [recordAdvisorPick]);
+
+  // (2) Cold start: the panel shows the LAST persisted picks from localStorage
+  //     before any fresh scan fires an event. Seed those into the tracker too, so
+  //     whatever is displayed in "AI EN İYİ FIRSATLAR" is always in Sinyal Takibi.
+  //     Gated to reasonably fresh cache (<=24h) to avoid recording stale entries.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current) return;
+    seededRef.current = true;
+    try {
+      const raw = localStorage.getItem('bist_last_ai_picks');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      const ageH = data?.ts ? (Date.now() - data.ts) / 3.6e6 : 999;
+      if (ageH > 24) return;
+      for (const pick of (Array.isArray(data?.picks) ? data.picks : [])) {
+        recordAdvisorPick(pick);
+      }
+    } catch { /* cache unavailable */ }
+  }, [recordAdvisorPick]);
 
   // ── Send notifications for new AI Advisor scan results ──
   useEffect(() => {
