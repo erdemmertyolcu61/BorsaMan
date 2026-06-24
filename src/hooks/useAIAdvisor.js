@@ -8,6 +8,7 @@ import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
+import { classifyRegime } from '../utils/regimeEngine.js';
 import { correlationCapFilter } from '../utils/portfolioOptimizer.js';
 
 /**
@@ -1110,10 +1111,23 @@ export function useAIAdvisor(portfolio) {
         ]);
       } catch { macroCtx = null; }
 
+      // ── Market regime classification (breadth + momentum + macro stress) ──
+      // Labels the tape so the forward journal can break accuracy down by regime
+      // and downstream sizing can adapt. macroCtx.scoreAdjust <= -8 ≈ panic/stress.
+      const sectorStrengthAvg = sectorRotation.length
+        ? sectorRotation.reduce((s, x) => s + (x.strength || 0), 0) / sectorRotation.length
+        : 0;
+      const regime = classifyRegime({
+        pctBull, avgRSI, scanned: results.length, sectorStrengthAvg,
+        macroStress: !!(macroCtx && typeof macroCtx.scoreAdjust === 'number' && macroCtx.scoreAdjust <= -8),
+      });
+
       const sentimentObj = {
         sentiment, color, buys, sells, scanned: results.length, avgRSI, accumulations,
         sectorRotation,
         macro: macroCtx,
+        regime,                 // full regime object { regime, label, riskMult, confidence, ... }
+        bias: regime.regime,    // stable label consumed by the forward journal's byRegime
       };
 
       // ── Top picks — dual mode ──
