@@ -1637,6 +1637,28 @@ export function useAIAdvisor(portfolio) {
         buyPicks = sectorLimited.slice(0, maxBuyPicks);
       }
 
+      // ── Regime-aware trim ────────────────────────────────────────────────
+      // maxBuyPicks already reflects the INDEX regime (BIST100 daily change).
+      // Now apply the BREADTH+MOMENTUM+MACRO regime (regime.riskMult) on top and
+      // take the MORE conservative count. This shines when the two disagree —
+      // e.g. index up but breadth weak (narrow rally / bull trap) → fewer picks.
+      {
+        const regimeMax = Math.max(2, Math.round(maxBuyPicks * (regime.riskMult ?? 1)));
+        if (regimeMax < buyPicks.length) {
+          pushLog({
+            type: regime.regime === 'BULL' ? 'info' : 'warn',
+            msg: `Rejim filtresi (${regime.regime}): ${buyPicks.length} → ${regimeMax} pick (riskMult ${regime.riskMult})`,
+          });
+          buyPicks = buyPicks.slice(0, regimeMax);
+        }
+        // Tag surfaced picks with the regime + a position-size multiplier that
+        // downstream sizing (calcPosition / paper engine) can honor.
+        for (const p of buyPicks) {
+          p._regime = regime.regime;
+          p._positionSizeMult = regime.riskMult ?? 1;
+        }
+      }
+
       // ── SELL PICKS — short / bearish candidates ──
       // Stocks that are overbought, distributing, or have bearish technicals.
       const sellPicks = results
