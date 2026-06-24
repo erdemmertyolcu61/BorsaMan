@@ -100,10 +100,15 @@ export function extractFiredSignals(ind, prices = []) {
     if (p < ind.lastBL) fired.push('BB_BELOW_LOWER');
   }
 
-  // ── Volume ─────────────────────────────────────────────────────
+  // ── Volume & VPVR ──────────────────────────────────────────────
   if (ind.volRatio != null) {
     if (ind.volRatio > 2.5) fired.push('VOL_EXPLOSIVE');
     else if (ind.volRatio > 1.5) fired.push('VOL_HIGH');
+  }
+  if (ind.volumeProfile && ind.volumeProfile.poc) {
+    const distToPoc = (p - ind.volumeProfile.poc) / ind.volumeProfile.poc * 100;
+    if (distToPoc > 0 && distToPoc < 3) fired.push('VPVR_SUPPORT');
+    else if (distToPoc < 0 && distToPoc > -3) fired.push('VPVR_RESISTANCE');
   }
 
   // ── Pattern detectors (safe wrappers) ─────────────────────────
@@ -680,6 +685,21 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     }
   }
 
+  // ── VPVR (Volume Profile Point of Control) ──
+  if (ind.volumeProfile && ind.volumeProfile.poc) {
+    const poc = ind.volumeProfile.poc;
+    const distToPoc = (p - poc) / poc * 100;
+    if (distToPoc > 0 && distToPoc < 3) {
+      score += 2.5; reasons.push({ t: `VPVR DESTEGI: Fiyat Kurumsal POC maliyetine (${poc.toFixed(2)}) cok yakin — Guclu destek`, c: 'bullish' });
+    } else if (distToPoc < 0 && distToPoc > -3) {
+      score -= 2.5; reasons.push({ t: `VPVR DIRENCI: Fiyat Kurumsal POC maliyetinin (${poc.toFixed(2)}) altinda — Guclu direnc`, c: 'bearish' });
+    } else if (distToPoc >= 3) {
+      score += 0.5; reasons.push({ t: `VPVR: Fiyat ana maliyetlenmenin (${poc.toFixed(2)}) ustunde`, c: 'bullish' });
+    } else if (distToPoc <= -3) {
+      score -= 0.5; reasons.push({ t: `VPVR: Fiyat ana maliyetlenmenin (${poc.toFixed(2)}) altinda`, c: 'bearish' });
+    }
+  }
+
   // Multi-indicator confluence (bonus for INDEPENDENT indicator type alignment)
   // Count unique indicator categories, not raw reason strings
   const bullishTypes = new Set();
@@ -693,7 +713,7 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     else if (/MACD|Histogram/i.test(text)) cat = 'MACD';
     else if (/StochRSI/i.test(text)) cat = 'STOCH';
     else if (/Bollinger|BB/i.test(text)) cat = 'BBAND';
-    else if (/Hacim|hacim/i.test(text)) cat = 'VOL';
+    else if (/Hacim|hacim|VPVR/i.test(text)) cat = 'VOL';
     else if (/MFI|OBV|CMF|VWAP|Wyckoff|Akilli|Birikim|Dagilim/i.test(text)) cat = 'SMART';
     else if (/ADX|DI\s|Trend\s/i.test(text)) cat = 'ADX';
     else if (/TTM|SQUEEZE/i.test(text)) cat = 'TTM';
@@ -1597,11 +1617,22 @@ export function calcPosition(accountSize, riskPct = 2, entry, stop, options = {}
   const maxRiskTL = accountSize * (riskPct / 100);
   let shares = Math.floor(maxRiskTL / riskPerShare);
   
-  // Kelly Criterion adjustment for high confidence signals
+  // Kelly Criterion adjustment for high confidence signals.
+  // Prefer the REAL measured win rate (from useSignalTracker / forward journal)
+  // over static per-type estimates — sizing should track demonstrated edge,
+  // not assumed edge. Falls back to the static table until enough samples exist.
+  let kellySource = null;
   if (useKelly && confidence >= 70) {
-    const stats = estimateSignalPerformance(signalType);
-    const kellyFrac = calcKellyFraction(stats.winRate, stats.avgRR, 0.25);
+    const staticStats = estimateSignalPerformance(signalType);
+    const cls = options.cls || 'buy';
+    const hint = _reliabilityHints[cls];
+    const useMeasured = hint && hint.sampleSize >= 20 && hint.winRate > 0;
+    const winRate = useMeasured ? hint.winRate : staticStats.winRate;
+    // Use the signal's own R/R as the payoff when provided; else the static avg.
+    const avgRR = (options.rr && options.rr > 0) ? options.rr : staticStats.avgRR;
+    const kellyFrac = calcKellyFraction(winRate, avgRR, 0.25);
     if (kellyFrac > 0) {
+      kellySource = useMeasured ? 'measured' : 'estimated';
       const kellyShares = Math.floor(accountSize * kellyFrac / riskPerShare);
       if (kellyShares > shares) {
         shares = kellyShares;
@@ -1654,8 +1685,9 @@ export function calcPosition(accountSize, riskPct = 2, entry, stop, options = {}
     shares, 
     cost, 
     maxLoss, 
-    riskPct: usedRiskPct, 
+    riskPct: usedRiskPct,
     costPct: cost / accountSize * 100,
-    method: useKelly && confidence >= 70 ? 'kelly' : 'fixed'
+    method: kellySource ? `kelly_${kellySource}` : 'fixed',
+    kellySource,
   };
 }

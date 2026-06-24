@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchSingle, fetchBigParaBatchPrices, clearCache as clearFetchCache } from '../utils/fetchEngine.js';
+import { fetchSingle, fetchBigParaBatchPrices, fetchBigParaQuote, clearCache as clearFetchCache } from '../utils/fetchEngine.js';
 import { getUnifiedAnalysis, genSignal, extractFiredSignals } from '../utils/signals.js';
 import { calcAll } from '../utils/indicators.js';
 import { getStockList, SECTORS } from '../utils/constants.js';
@@ -8,6 +8,7 @@ import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
+import { correlationCapFilter } from '../utils/portfolioOptimizer.js';
 
 /**
  * _istanbulParts — returns { day, h, m } in Europe/Istanbul regardless of host TZ.
@@ -47,6 +48,59 @@ const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market
 const SCAN_CONCURRENCY = 20;                    // parallel workers per chunk (701/20=36 chunk, was 14→51 chunk)
 const CHUNK_DELAY_MS = 60;                      // 60ms inter-chunk delay (was 150ms — 51×90ms=4.6s tasarruf)
 const SCAN_UNIVERSE = 'bistall';                // full universe ~648 symbols
+
+// ══════════════════════════════════════════════════════════════════════════════
+// v26 FIX 5 — RECENTLY FAILED PICK MEMORY (Self-feedback / cooldown)
+//
+// SORUN: Sistem stateless — dun onerdigi hisseyi bugun dusmus gorunce "ucuzladi,
+// dip alimi" diye TEKRAR oneriyor. Kendi basarisiz tahminini hatirlamiyor.
+// Kullanici sikayeti (16 May): "Fiyatlarinin dustugunu bilmesine ragmen ayni
+// hisseleri onerdi."
+//
+// COZUM: localStorage'da onerilen her hissenin {oneri fiyati, ilk-oneri tarihi,
+// son-oneri tarihi} tutulur. Yeni taramada bir aday son 3 gunde onerilmis VE
+// o zamandan beri >%3 dusmusse = "basarisiz pick". Bunu tekrar onermek icin
+// GUCLU reversal teyidi gerekir (bugun yesil + OBV birikim + MA20 ustu).
+// Aksi halde cooldown — kullaniciyi zarara dogru ikinci kez itme.
+// ══════════════════════════════════════════════════════════════════════════════
+const PICK_MEMORY_KEY = 'bist_ai_pick_memory';
+const PICK_MEMORY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;  // 7 gun (5 islem gunu) sonra unut
+const PICK_FAIL_LOOKBACK_MS  = 3 * 24 * 60 * 60 * 1000;  // son 3 gun icindeki oneriler izlenir
+const PICK_FAIL_DROP_PCT     = -3;                        // -%3+ dustuyse "basarisiz"
+
+function loadPickMemory() {
+  try {
+    const raw = localStorage.getItem(PICK_MEMORY_KEY);
+    if (!raw) return {};
+    const mem = JSON.parse(raw);
+    const now = Date.now();
+    // Prune: eski kayitlari at
+    const pruned = {};
+    for (const [sym, e] of Object.entries(mem)) {
+      if (e && e.lastRecTs && (now - e.lastRecTs) < PICK_MEMORY_MAX_AGE_MS) {
+        pruned[sym] = e;
+      }
+    }
+    return pruned;
+  } catch { return {}; }
+}
+
+function savePickMemory(mem) {
+  try { localStorage.setItem(PICK_MEMORY_KEY, JSON.stringify(mem)); } catch { /* full */ }
+}
+
+/**
+ * isFailedRepeat — bu hisse yakinda onerildi ve o zamandan beri dustu mu?
+ * @returns { failed: bool, dropPct: number, recPrice: number } | null
+ */
+function checkFailedRepeat(symbol, currentPrice, mem) {
+  const e = mem?.[symbol];
+  if (!e || !e.recPrice || !e.lastRecTs || !(currentPrice > 0)) return null;
+  const age = Date.now() - e.lastRecTs;
+  if (age > PICK_FAIL_LOOKBACK_MS) return null; // 3 gunden eski — cooldown bitti
+  const dropPct = ((currentPrice - e.recPrice) / e.recPrice) * 100;
+  return { failed: dropPct <= PICK_FAIL_DROP_PCT, dropPct, recPrice: e.recPrice };
+}
 
 // ── HTF CONTEXT DERIVATION (sıfır ek fetch — mevcut günlük barlardan) ──────
 // Her 5 günlük bar = 1 haftalık bar proxy.
@@ -336,27 +390,33 @@ function calcTomorrowPotential(result) {
   // Kumulatif yorgunluk: 3 gunde +%15 ustu + haber yoksa ekstra -15
   if (isExhausted && !hasNewsCatalyst) tpScore -= 15;
 
-  // ── PRE-PUMP COIL BONUS (v18) ──
+  // ── PRE-PUMP COIL BONUS (v18 — v27 guncelleme) ──
   // Patlamadan ONCE yakalamak icin: dusuk pump + akilli para birikimi +
   // dusuk volatilite (sikisma) → patlamak uzere olan hisseler.
-  // Bu sayede "dun onerilseydi" senaryosu calisir.
+  // v27: OBV='notr' + CMF>0.03 da kabul edilir — sessiz birikim fazinda OBV henuz
+  // tam 'accumulation' donmemis olabilir ama para girisi zaten baslamis.
+  const obvBuildingUp = result.obvTrend === 'accumulation' ||
+    (result.obvTrend === 'neutral' && (result.cmf || 0) > 0.03);
   const isCoiling = (
     recentPump <= 2 &&                          // Henuz hareket etmemis
     cumulativePump <= 5 &&                      // 3 gun de sakin
-    result.obvTrend === 'accumulation' &&       // OBV birikim
-    (result.cmf || 0) > 0.05                    // Para girisi pozitif
+    obvBuildingUp &&                            // OBV birikim veya notr+CMF+
+    (result.cmf || 0) > 0.03                    // Para girisi en az minimal pozitif
   );
   if (isCoiling) {
-    tpScore += 25;                              // BUYUK bonus — patlamak uzere
+    // Guclu coil (tam OBV birikim + kuvvetli CMF): +25
+    // Zayif coil (OBV notr ama CMF pozitif): +15 (sessiz birikim baslangici)
+    const isStrongCoil = result.obvTrend === 'accumulation' && (result.cmf || 0) > 0.05;
+    tpScore += isStrongCoil ? 25 : 15;
     // TTM Squeeze ek konfirmasyon
     if (result.ttmSqueeze?.squeezeOn) tpScore += 10;
     // Dar bant + birikim = en guclu coil
     if ((result.atrPct || 5) < 3) tpScore += 8;
   }
   // Volume buildup: hacim sessizce 1.3-2x kademeli artiyorsa = akilli para giriyor
-  if (recentPump <= 3 && result.volRatio >= 1.3 && result.volRatio <= 2.0
-      && result.obvTrend === 'accumulation') {
-    tpScore += 12;
+  // v27: OBV notr da kabul — sessiz birikim icin kucuk bonus (tam birikim: +12, notr: +6)
+  if (recentPump <= 3 && result.volRatio >= 1.3 && result.volRatio <= 2.0 && obvBuildingUp) {
+    tpScore += result.obvTrend === 'accumulation' ? 12 : 6;
   }
 
   // ── GUNLUK ARALIK GATI: ATR/price < %2 ise hisse yeterince hareket etmez ──
@@ -600,6 +660,9 @@ export function useAIAdvisor(portfolio) {
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0 });
   const [lastUpdate, setLastUpdate] = useState(null);
+  // v26: Piyasa rejimi (BULL/NEUTRAL/BEAR) — BIST100 gunluk performansina dayanir.
+  // Tarama agresifligini belirler (BEAR=3 pick, NEUTRAL=5, BULL=8).
+  const [marketRegime, setMarketRegime] = useState({ regime: 'NEUTRAL', bistChangePct: 0 });
   const runningRef = useRef(false);
   // Önceki taramadan kalan sektör güç haritası — mevcut taramada sinyal skorunu besler.
   // { 'Teknoloji': 72, 'Banka': 58, ... }
@@ -672,6 +735,42 @@ export function useAIAdvisor(portfolio) {
       try {
         livePriceMap = await fetchBigParaBatchPrices();
       } catch { /* non-fatal */ }
+
+      // ── v26 FIX 2: MARKET REGIME DETECTION ─────────────────────────────────
+      // BIST100 (XU100) endeksinin gunluk performansi sistemin agresifligini belirler.
+      // BULL gunlerde (>+%1): 8 buy pick agresif yakalar
+      // BEAR gunlerde (<-%0.5): yalnizca 3 yuksek-konfeksiyon pick + agresif sell
+      // NEUTRAL: 5 pick orta-konservatif
+      // Sebep: tek hisse skoru endeks dususune karsi koruyamaz; bear gunlerde
+      // tum sektorler asagi gider, en guclu setup'lar bile zarar verir.
+      let marketRegime = 'NEUTRAL';
+      let bistChangePct = 0;
+      try {
+        const bistData = await fetchSingle('XU100', '5d', '1d', true).catch(() => null);
+        if (bistData?.prices?.length >= 2) {
+          const bars = bistData.prices;
+          const yest = bars[bars.length - 2]?.close;
+          const today = bars[bars.length - 1]?.close;
+          if (yest > 0 && today > 0) {
+            bistChangePct = ((today - yest) / yest) * 100;
+            if (bistChangePct > 1) marketRegime = 'BULL';
+            else if (bistChangePct < -0.5) marketRegime = 'BEAR';
+          }
+        }
+      } catch { /* fallback NEUTRAL */ }
+      pushLog({
+        type: marketRegime === 'BEAR' ? 'warn' : 'info',
+        msg: `Piyasa rejimi: ${marketRegime} (BIST100 ${bistChangePct >= 0 ? '+' : ''}${bistChangePct.toFixed(1)}%)`,
+      });
+      setMarketRegime({ regime: marketRegime, bistChangePct });
+      // Rejim-bazli pick limiti: BEAR=3, NEUTRAL=5, BULL=8
+      const maxBuyPicks = marketRegime === 'BULL' ? 8
+                       : marketRegime === 'BEAR' ? 3 : 5;
+
+      // ── v26 FIX 5: Onceki onerilerin hafizasini yukle ───────────────────
+      // Bu tarama boyunca her aday "yakinda onerildi mi + dustu mu" kontrol edilir.
+      const pickMemory = loadPickMemory();
+      let _failedRepeatBlocked = 0; // log icin sayac
 
       const results = [];
       let done = 0;
@@ -802,6 +901,25 @@ export function useAIAdvisor(portfolio) {
                 }
               }
 
+              // ── v26 FIX 3: PREV-DAY CHANGE — 2 GUN TEYIDI ICIN ──────────────
+              // Dunku barin (calcPrices'in son tam barinin) bar-over-bar % degisimi.
+              // Bu deger "2 gun ardisik tek-yonlu hareket" exhaustion tespitinde kullanilir.
+              // Yani: bugun + dun ust uste +%2-3 olan hisse = momentum yorgun = red.
+              // ASTOR/TUPRS gibi gunluk +%1-2 yapan hisseler korunur (ardisik 2 gun
+              // sadece dunku +%2'yi ASMAZ ise gecer).
+              let prevDayChange = 0;
+              if (calcPrices.length >= 2) {
+                // Forming bar varsa: calcPrices'in son tam bari "dun"; sonu icindeki -2 "dunden onceki"
+                // Forming bar yoksa: -1 dun, -2 dunden onceki
+                const yIdx = calcPrices.length - 1;
+                const dyIdx = calcPrices.length - 2;
+                const yClose = calcPrices[yIdx]?.close || 0;
+                const dyClose = calcPrices[dyIdx]?.close || 0;
+                if (dyClose > 0 && yClose > 0) {
+                  prevDayChange = ((yClose - dyClose) / dyClose) * 100;
+                }
+              }
+
               // Cumulative pump: 3-4 GUN ONCEDEN BUGUNE toplam yukselis (live dahil)
               let cumulativePump = todayPumpReal;
               if (calcPrices.length >= 4) {
@@ -918,6 +1036,7 @@ export function useAIAdvisor(portfolio) {
                 volumeProfilePOC: ind.volumeProfile?.poc || null,
                 recentPump,
                 cumulativePump,
+                prevDayChange,  // v26 FIX 3: dunku barin bar-over-bar % degisimi
                 todayPumpReal,  // BigPara live'a dayanan kesin bugun pump'i
                 atrPct,
                 ttmSqueeze: ind.ttmSqueeze || null,
@@ -946,6 +1065,10 @@ export function useAIAdvisor(portfolio) {
                 // Hangi teknik sinyaller bu tarama aninda atesleniyordu?
                 // Paper trade/sinyal kaydi kapaninca bu liste bySignalType win-rate'ini gunceller.
                 firedSignals: sig.firedSignals || extractFiredSignals(ind, calcPrices),
+                // Compact recent close series — used ONLY for live correlation
+                // de-dup of the final pick list. Not persisted (bist_last_ai_picks
+                // maps an explicit field list), so no localStorage bloat.
+                closeSeries: calcPrices.slice(-30).map(b => +((b.close ?? 0)).toFixed(2)),
               };
             }
           } catch (e) {
@@ -1094,6 +1217,28 @@ export function useAIAdvisor(portfolio) {
           return false; // Yüksek devam ihtimali → tavan bile olsa göster
         }
 
+        // ── v26 FIX 1: ORTA PUMP ZONE (tp 5-7%) — sertlestirildi ─────────────
+        // Kullanici geri bildirimi (15 May 2026): dun +5-7% yapan picksler bugun
+        // ekside kapandi. Bu zone "mean reversion" tuzagi — sistem bunu yakalayamadi.
+        // YENI KURAL: tp 5-7% ise SADECE su 2 sart birden saglanirsa kabul:
+        //   (a) Kataliz haber (insider/buyback/fund_inflow/contract)
+        //   (b) En az 4 teknik teyit (OBV/CMF/volRatio/Wyckoff/squeeze/ADX)
+        // Aksi halde: red — yarinki dususe karsi koruma.
+        if (tp >= 5 && tp < 7) {
+          const hasCatalyst = r.newsCategories?.some(c =>
+            ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c));
+          const techConfirms = [
+            r.obvTrend === 'accumulation',
+            (r.cmf || 0) > 0.05,
+            (r.volRatio || 1) >= 1.3,
+            r.wyckoffSpring === true || r.wyckoff === 'Markup',
+            r.ttmSqueeze?.squeezeRelease === true,
+            (r.adx || 0) > 25,
+          ].filter(Boolean).length;
+          // Kataliz YOK ise red; kataliz var ama < 4 teknik teyit ise red
+          if (!hasCatalyst || techConfirms < 4) return true;
+        }
+
         // ── KUMULATIF YORGUNLUK (cp >= 22): yorgunluk belirgin ───────────────
         // v25: cp >= 22% mutlak red KALDIRILDI — 2 gun ust uste tavan bile olsa
         // continuation prob >= 55% ise (haber + akilli para + fundamental) gosterilir.
@@ -1122,6 +1267,7 @@ export function useAIAdvisor(portfolio) {
       // ══════════════════════════════════════════════════════════════════════
       const MIN_DAILY_VOLUME_TL = 2_000_000;       // tam likit esigi
       const EARLY_ENTRY_MIN_VOLUME_TL = 500_000;   // erken alim icin minimum hacim
+      const MICRO_CAP_MIN_VOLUME_TL = 100_000;     // mutlak taban — emrin dolabilmesi icin
 
       // ── PRE-PUMP / ERKEN BIRIKIM TESPITI ──
       // Hisse henuz patlamamis ama akilli para giriyor mu? 8 sinyal kontrol eder.
@@ -1169,8 +1315,11 @@ export function useAIAdvisor(portfolio) {
         if (r.insiderScore != null && r.insiderScore > 3) signals.push('Insider alim');
 
         const count = signals.length;
-        // Erken giris icin 4+ sinyal sart — daha az → dusuk likit + sinyalsiz = riskli
-        return { isEarly: count >= 4, count, signals };
+        // Normal durum: 4+ sinyal sart — dusuk likit + sinyalsiz = riskli
+        // Ultra-tight coil: recentPump <= 1% ise 3 sinyal yeterli —
+        // hisse neredeyse hic hareket etmemis, en guvenilir pre-pump profili
+        const minSignals = recentPump <= 1 ? 3 : 4;
+        return { isEarly: count >= minSignals, count, signals };
       };
 
       // ── v25: NEAR-BREAKOUT TESPITI ──
@@ -1215,7 +1364,7 @@ export function useAIAdvisor(portfolio) {
       };
 
       // ── BUY PICKS ──
-      const buyPicks = results
+      let buyPicks = results
         .filter(r => {
           // v24: atrPct 1.2 → 0.8 — blue-chip hisseler (THYAO, SISE, ASELS) 1.0-1.2 arasi
           // ATR cok dusuk (<0.8) ise gercekten %5 hareket beklenmez
@@ -1228,10 +1377,10 @@ export function useAIAdvisor(portfolio) {
 
           const volTL = r.avgVolumeTL || 0;
 
-          // Cok dusuk hacim → tamamen ele (manuel emir bile zor)
-          if (volTL < EARLY_ENTRY_MIN_VOLUME_TL) return false;
+          // Mutlak taban — emir dolmaz (mikro-cap dahil hepsi erken birikim kapisiyla girebilir)
+          if (volTL < MICRO_CAP_MIN_VOLUME_TL) return false;
 
-          // Dusuk-orta hacim (500K-2M): sadece erken birikim sinyali varsa kabul et
+          // Dusuk hacim (100K-2M): sadece erken birikim sinyali varsa kabul et
           if (volTL < MIN_DAILY_VOLUME_TL) {
             const early = detectEarlyAccumulation(r);
             if (!early.isEarly) return false;
@@ -1301,6 +1450,45 @@ export function useAIAdvisor(portfolio) {
 
           // ── TAVAN/EXHAUSTION GUARD (v19.1 — hard reject, allowance yok) ──
           if (isUnsafeForTomorrow(r)) return false;
+
+          // ── v26 FIX 3: 2-GUN EXHAUSTION GUARD ────────────────────────────────
+          // Bugun + dun ardisik tek-yonlu yukselis = momentum yorgun, yarin red.
+          // Kural: bugun >= 3% VE dun >= 2% VE toplam (bugun + dun) >= 6% ise red.
+          // Sebep: ardisik 2 gun ust uste yukselis sonrasi BIST'te %60+ ihtimalle
+          // duzeltme gelir (kullanici 14 May -> 15 May yasadi).
+          // ASTOR/TUPRS gibi gunluk +%1-2 yapan steady performerler korunur:
+          // bunlar dunku +%2'yi nadir gecer, bugun +%3 olsa bile prevDayChange < 2.
+          // ISTISNA: kataliz haber + insider buy varsa rejected gozetilir (gercek itki).
+          {
+            const todayPump = r.todayPumpReal || r.recentPump || 0;
+            const yestPump = r.prevDayChange || 0;
+            const isDoubleDayPump = todayPump >= 3 && yestPump >= 2 && (todayPump + yestPump) >= 6;
+            if (isDoubleDayPump) {
+              const hasStrongCatalyst = r.hasRecentInsiderBuy
+                || r.newsCategories?.some(c => ['insider_buy', 'buyback', 'fund_inflow'].includes(c));
+              if (!hasStrongCatalyst) return false;
+            }
+          }
+
+          // ── v26 FIX 5: BASARISIZ PICK COOLDOWN ──────────────────────────────
+          // Bu hisse son 3 gunde onerildi VE o zamandan beri >%3 dustuyse:
+          // sistem kendi basarisiz tahminini tekrar etmesin. Yeniden onermek icin
+          // GUCLU reversal teyidi gerekir (bugun belirgin yesil + OBV birikim +
+          // fiyat MA20 ustu). Aksi halde cooldown — "dususe ikinci kez itme".
+          {
+            const curPrice = r.price || r.todayPumpReal != null
+              ? (livePriceMap[r.symbol]?.price || r.price)
+              : r.price;
+            const fr = checkFailedRepeat(r.symbol, curPrice || r.price, pickMemory);
+            if (fr && fr.failed) {
+              const strongReversal =
+                (r.change || 0) > 1.5 &&                       // bugun belirgin yesil
+                r.obvTrend === 'accumulation' &&               // akilli para geri donmus
+                (r.distFromMA20 == null || r.distFromMA20 > 0); // MA20 ustunde
+              if (!strongReversal) { _failedRepeatBlocked++; return false; }
+            }
+          }
+
           // 3 gunde +%15 kumulatif yukselis + haber yoksa ele
           if ((r.cumulativePump || 0) >= 15) {
             const hasCatalystNews = r.newsCategories?.some(c =>
@@ -1402,8 +1590,38 @@ export function useAIAdvisor(portfolio) {
           const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) + momAdjA + earlyBonusA + nearBonusA;
           const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) + momAdjB + earlyBonusB + nearBonusB;
           return scoreB - scoreA;
-        })
-        .slice(0, 8);
+        });
+
+      // ── v26 FIX 4: SEKTOR KONSANTRASYON SINIRI ─────────────────────────────
+      // Onceki gun: 6 picksten 4'u "Diger" sektorden geldi → sistemik risk.
+      // Yeni kural: spesifik sektorlerden max 1, "Diger" (catch-all) max 3.
+      // Sebep: ayni sektorde toplu dusus oldugunda 4 pick ayni anda zarar verir.
+      // ISTISNA: maxBuyPicks 8 ise sectore goz yum (bull regime), 5/3 ise sıkı uygula.
+      {
+        const SECTOR_LIMIT = (sec) => sec === 'Diger' ? 3 : 1;
+        const seenBySector = new Map();
+        const sectorLimited = [];
+        for (const p of buyPicks) {
+          const sec = p.sector || 'Diger';
+          const count = seenBySector.get(sec) || 0;
+          const limit = SECTOR_LIMIT(sec);
+          if (count < limit) {
+            sectorLimited.push(p);
+            seenBySector.set(sec, count + 1);
+          }
+          // Bull rejiminde 8 hedefe ulasilamiyorsa loose mode (max 2 sektor basina)
+          if (sectorLimited.length >= maxBuyPicks) break;
+        }
+        // Eger sektor limiti yuzunden hic pick yoksa veya cok az ise (BEAR'da 0 olabilir)
+        // orijinal listeden tamamla
+        if (sectorLimited.length < Math.min(maxBuyPicks, buyPicks.length)) {
+          for (const p of buyPicks) {
+            if (sectorLimited.length >= maxBuyPicks) break;
+            if (!sectorLimited.includes(p)) sectorLimited.push(p);
+          }
+        }
+        buyPicks = sectorLimited.slice(0, maxBuyPicks);
+      }
 
       // ── SELL PICKS — short / bearish candidates ──
       // Stocks that are overbought, distributing, or have bearish technicals.
@@ -1430,8 +1648,11 @@ export function useAIAdvisor(portfolio) {
         .sort((a, b) => (b.sellPotential || 0) - (a.sellPotential || 0))
         .slice(0, 3); // max 3 sell candidates alongside buy picks
 
-      // ── Fallback: always surface at least 5 buy candidates ──
-      const minBuyCount = 5;
+      // ── Fallback: surface at least N buy candidates ──
+      // v26 FIX 2: Rejim-bazli minimum (BULL=5, NEUTRAL=4, BEAR=2)
+      // Aksi halde fallback BEAR rejimini ezerek tekrar 5'e cikariyor.
+      const minBuyCount = marketRegime === 'BULL' ? 5
+                       : marketRegime === 'BEAR' ? 2 : 4;
       let picks = [...buyPicks, ...sellPicks];
       if (buyPicks.length < minBuyCount) {
         const existingSyms = new Set(picks.map(p => p.symbol));
@@ -1443,9 +1664,20 @@ export function useAIAdvisor(portfolio) {
             if ((r.atrPct || 0) < 0.8) return false;
             if (existingSyms.has(r.symbol)) return false;
             const volTL = r.avgVolumeTL || 0;
-            if (volTL < EARLY_ENTRY_MIN_VOLUME_TL) return false;
+            if (volTL < MICRO_CAP_MIN_VOLUME_TL) return false;
             // TAVAN/EXHAUSTION GUARD — fallbackBuys: hard reject (v19.1)
             if (isUnsafeForTomorrow(r)) return false;
+            // v26 FIX 5: Basarisiz pick cooldown — fallback path da uygular
+            {
+              const cp = livePriceMap[r.symbol]?.price || r.price;
+              const fr = checkFailedRepeat(r.symbol, cp, pickMemory);
+              if (fr && fr.failed) {
+                const strongReversal = (r.change || 0) > 1.5
+                  && r.obvTrend === 'accumulation'
+                  && (r.distFromMA20 == null || r.distFromMA20 > 0);
+                if (!strongReversal) return false;
+              }
+            }
             // Tam likit veya erken birikim ile dusuk likit kabul edilir
             if (volTL >= MIN_DAILY_VOLUME_TL) return true;
             const early = detectEarlyAccumulation(r);
@@ -1776,9 +2008,15 @@ export function useAIAdvisor(portfolio) {
         const liqComponent = liquidityScore * 0.08;
         const healthComponent = momentumHealth * 0.10;
 
+        // ── MACRO RISK ADJUSTMENT ──
+        let macroAdj = 0;
+        if (macroCtx?.scoreAdjust) {
+          macroAdj = isSell ? -macroCtx.scoreAdjust : macroCtx.scoreAdjust;
+        }
+
         let confidence = Math.round(
           techComponent + potentialComponent + sectorComponent +
-          newsComponent + entryComponent + liqComponent + healthComponent
+          newsComponent + entryComponent + liqComponent + healthComponent + macroAdj
         );
 
         // TAVAN CEZASI: tavan hisselerin confidence'ini continuation prob'a gore asagi cek.
@@ -1818,6 +2056,7 @@ export function useAIAdvisor(portfolio) {
             entry: Math.round(entryComponent),
             liquidity: Math.round(liqComponent),
             momentumHealth: Math.round(healthComponent),
+            macro: Math.round(macroAdj),
           },
         };
       };
@@ -1947,9 +2186,30 @@ export function useAIAdvisor(portfolio) {
         }
       }
 
+      // ── Correlation de-dup (concentration risk, #8) ──
+      // Sector caps catch obvious clustering, but two names in DIFFERENT sectors
+      // can still move together (corr > 0.90 = effectively one bet). Demote the
+      // lower-confidence duplicate to overflow — never delete — and annotate why,
+      // mirroring how stale/adverse picks are surfaced rather than hidden.
+      let primaryBuys = diversifiedBuys;
+      try {
+        const withSeries = diversifiedBuys.map(p => ({ ...p, series: p.closeSeries }));
+        const { dropped } = correlationCapFilter(withSeries, 0.90);
+        if (dropped.length) {
+          const dropMap = new Map(dropped.map(d => [d.symbol, d]));
+          primaryBuys = [];
+          for (const p of diversifiedBuys) {
+            const d = dropMap.get(p.symbol);
+            if (d) overflowBuys.push({ ...p, _corrDup: true, _corrWith: d.conflictsWith, _corrVal: d.corr });
+            else primaryBuys.push(p);
+          }
+          pushLog({ type: 'warn', msg: `${dropped.length} pick yuksek korelasyon (>0.90) ile alt sıraya alındı — aynı bahis tekrarını onler` });
+        }
+      } catch { /* correlation de-dup best-effort */ }
+
       // Try to fill picks list with diverse sectors first, then overflow
       const sellsInPicks = picks.filter(x => x.cls === 'sell');
-      picks = [...diversifiedBuys, ...overflowBuys, ...sellsInPicks];
+      picks = [...primaryBuys, ...overflowBuys, ...sellsInPicks];
 
       // ── FINAL SORT (v25) ──
       // 3 Bucket sistemi:
@@ -1998,13 +2258,64 @@ export function useAIAdvisor(portfolio) {
           return (b.continuationProbability || 0) - (a.continuationProbability || 0);
         }
 
-        // Normal yarisma: effective confidence ile sirala
-        // (yuksek devamlı pump picks normal picks ile yarisir)
-        return effConf(b) - effConf(a);
+        // Erken birikim / near-breakout: nihai sirada da once kalsin
+        // buyPicks.sort()'ta +12/+14 bonus verildi ama final sort
+        // bunlari siler — burada ayni bonusu yeniden uyguluyoruz.
+        const earlyConfBonus = (pick) => {
+          if (pick._nearBreakoutPick) return 15; // Kirilim hazir: en yuksek oncelik
+          if (pick._earlyPick) return 10;         // Erken birikim: ikinci oncelik
+          return 0;
+        };
+
+        // Normal yarisma: effective confidence + erken birikim bonusu
+        return (effConf(b) + earlyConfBonus(b)) - (effConf(a) + earlyConfBonus(a));
       });
 
       // Cap final picks at 10
       picks = picks.slice(0, 10);
+
+      // ── v26 FIX 6: FINAL PICK PER-SYMBOL FIYAT REFRESH ──────────────────────
+      // SORUN: Market kapaliyken batch (fetchBigParaBatchPrices) son=0 -> price=0
+      // donduruyor (v22). Scan o zaman Yahoo'nun gecikmeli kapanisini kullaniyor
+      // -> JANTS 18.74 gibi BAYAT fiyat persist ediliyor.
+      // COZUM: Sadece final 10 pick icin per-symbol fetchBigParaQuote cagir.
+      // Per-symbol "hisseyuzeysel" endpoint'i kapanis = BUGUNKU dogru kapanis/canli
+      // fiyat (batch'ten FARKLI, dogru semantik). 10 cagri ~2-3s, kabul edilebilir.
+      // Stop/target mutlak TL seviyeleri sabit; sadece % ve rr yeniden hesaplanir.
+      try {
+        const priceResults = await Promise.allSettled(
+          picks.map(p => fetchBigParaQuote(p.symbol)
+            .then(q => ({ sym: p.symbol, q }))
+            .catch(() => ({ sym: p.symbol, q: null })))
+        );
+        const freshPrices = {};
+        for (const res of priceResults) {
+          if (res.status === 'fulfilled' && res.value?.q?.price > 0) {
+            freshPrices[res.value.sym] = res.value.q;
+          }
+        }
+        for (const p of picks) {
+          const q = freshPrices[p.symbol];
+          if (!q || !(q.price > 0)) continue;
+          const newPrice = q.price;
+          // Sadece anlamli sapma varsa guncelle (>%0.1) — gereksiz noise yok
+          if (Math.abs(newPrice - (p.price || 0)) / (p.price || 1) > 0.001) {
+            p.price = newPrice;
+            if (q.change != null && isFinite(q.change)) p.change = q.change;
+            // Stop/target mutlak TL; % ve rr guncel fiyattan yeniden hesap
+            if (p.stop && newPrice > 0) {
+              p.stopPct = ((p.stop - newPrice) / newPrice) * 100;
+            }
+            if (p.target && newPrice > 0) {
+              p.targetPct = ((p.target - newPrice) / newPrice) * 100;
+            }
+            const riskD = Math.abs(newPrice - (p.stop || newPrice * 0.95));
+            const rewD  = Math.abs((p.target || newPrice * 1.10) - newPrice);
+            if (riskD > 0) p.rr = rewD / riskD;
+            p._priceRefreshed = true;
+          }
+        }
+      } catch { /* price refresh best-effort — scan continues with batch prices */ }
 
       // ── Market news enrichment: fetch borsa haberleri, eslestir + sentiment ──
       // Sadece top 10 pick + universe filtrelenir; tum tarama icin haber cekmiyoruz.
@@ -2111,6 +2422,7 @@ export function useAIAdvisor(portfolio) {
               _nearBreakoutPick: p._nearBreakoutPick, _nearBreakoutSignals: p._nearBreakoutSignals, _nearBreakoutCount: p._nearBreakoutCount,
               _emergencyPick: p._emergencyPick,
               recentPump: p.recentPump, cumulativePump: p.cumulativePump,
+              prevDayChange: p.prevDayChange, // v26 FIX 3: 2-day exhaustion icin
               todayPumpReal: p.todayPumpReal,
               continuationProbability: p.continuationProbability,
               rsi: p.rsi, mfi: p.mfi, cmf: p.cmf, volRatio: p.volRatio,
@@ -2154,9 +2466,30 @@ export function useAIAdvisor(portfolio) {
           }));
         } catch { /* localStorage full or unavailable */ }
       }
-      
+
+      // ── v26 FIX 5: Pick hafizasini guncelle ─────────────────────────────────
+      // Onerilen her BUY pick'in oneri fiyati + tarihi kaydedilir. Bir sonraki
+      // tarama bu hisseyi "yakinda onerildi mi + dustu mu" diye kontrol eder.
+      try {
+        const now = Date.now();
+        const buyFinal = (picks || []).filter(p => p.cls !== 'sell');
+        for (const p of buyFinal) {
+          const prev = pickMemory[p.symbol];
+          pickMemory[p.symbol] = {
+            recPrice:   p._livePrice || p.price || prev?.recPrice || 0,
+            firstRecTs: prev?.firstRecTs || now,
+            lastRecTs:  now,
+            recCount:   (prev?.recCount || 0) + 1,
+          };
+        }
+        savePickMemory(pickMemory);
+      } catch { /* memory update best-effort */ }
+
       const modeLabel = isAfterHours ? 'Kapanis Sonrasi (Yarin Icin)' : 'Canli';
       pushLog({ type: 'ok', msg: `${modeLabel} tarama: ${results.length} hisse, ${buyPicks.length} AL / ${sellPicks.length} SAT firsat` });
+      if (_failedRepeatBlocked > 0) {
+        pushLog({ type: 'warn', msg: `${_failedRepeatBlocked} hisse "tekrar dusus" cooldown'una takildi (onceden onerildi + dustu)` });
+      }
 
       // ── Strict event dispatch for ALL downstream systems ──
       // Subscribers: useSignalTracker, usePaperTrading, usePaperTradeML,
@@ -2252,6 +2585,7 @@ export function useAIAdvisor(portfolio) {
     scanning,
     scanProgress,
     lastUpdate,
+    marketRegime,    // v26 FIX 2: { regime: 'BULL'|'NEUTRAL'|'BEAR', bistChangePct }
     manualScan,
     runScan,
     setGlobalMarket,

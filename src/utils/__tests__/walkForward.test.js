@@ -1,5 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import { runWalkForward, compareStrategiesWalkForward } from '../walkForward.js';
+import { runWalkForward, compareStrategiesWalkForward, walkForwardGate } from '../walkForward.js';
+
+describe('walkForwardGate', () => {
+  const stable = { verdict: 'stable', summary: { numWindows: 4, pctProfitableOOS: 75 } };
+  const borderline = { verdict: 'borderline', summary: { numWindows: 4, pctProfitableOOS: 50 } };
+  const overfit = { verdict: 'overfit', summary: { numWindows: 4, pctProfitableOOS: 25 } };
+
+  it('passes only a stable verdict by default', () => {
+    expect(walkForwardGate(stable).pass).toBe(true);
+    expect(walkForwardGate(borderline).pass).toBe(false);
+    expect(walkForwardGate(overfit).pass).toBe(false);
+  });
+
+  it('can optionally accept borderline', () => {
+    expect(walkForwardGate(borderline, { allowBorderline: true }).pass).toBe(true);
+    expect(walkForwardGate(overfit, { allowBorderline: true }).pass).toBe(false);
+  });
+
+  it('fails on insufficient data or too few windows', () => {
+    expect(walkForwardGate({ verdict: 'insufficient_data' }).pass).toBe(false);
+    expect(walkForwardGate({ verdict: 'stable', summary: { numWindows: 1, pctProfitableOOS: 80 } }).pass).toBe(false);
+  });
+
+  it('always returns a reasons array explaining the decision', () => {
+    expect(Array.isArray(walkForwardGate(stable).reasons)).toBe(true);
+    expect(walkForwardGate(overfit).reasons[0]).toMatch(/overfit/);
+  });
+});
 
 // Generate deterministic synthetic OHLC bars
 function genPrices(n, { trend = 0, vol = 1, start = 100, seed = 1 } = {}) {

@@ -7,6 +7,7 @@ import { useSignalTracker, setSignalNotificationHandler } from './hooks/useSigna
 import { useNotifications } from './hooks/useNotifications.jsx';
 import { usePaperTrading } from './hooks/usePaperTrading.js';
 import { usePaperTradeML } from './hooks/usePaperTradeML.js';
+import { useForwardTestJournal } from './hooks/useForwardTestJournal.js';
 import { runFreshRegimeReset } from './utils/resetStorage.js';
 import PremiumHeader from './components/Layout/PremiumHeader.jsx';
 import AnalyzeTab from './components/Analyze/AnalyzeTab.jsx';
@@ -19,6 +20,7 @@ import AlertLog from './components/AlertLog/AlertLog.jsx';
 import Tabs from './components/Tabs/Tabs.jsx';
 import MobileNav from './components/MobileNav/MobileNav.jsx';
 import ScanHistoryDrawer from './components/AIAdvisor/ScanHistoryDrawer.jsx';
+import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
 
 export default function App() {
   const state = useAppState();
@@ -28,6 +30,14 @@ export default function App() {
   const notifications = useNotifications();
   const paperTrading = usePaperTrading();
   const paperML = usePaperTradeML();
+  // Immutable daily prediction ledger — measures real next-day accuracy.
+  // Read-only ground truth; does not feed back into scoring (keeps it unbiased).
+  const forwardJournal = useForwardTestJournal();
+  // Expose for inspection until a dedicated accuracy panel lands:
+  //   __bistForwardJournal.stats  → next-day directional hit rate, expectancy, etc.
+  useEffect(() => {
+    window.__bistForwardJournal = forwardJournal;
+  }, [forwardJournal]);
   const [watchlist, setWatchlist] = useState(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem('bist_watchlist') || '[]');
@@ -58,6 +68,12 @@ export default function App() {
   // ── One-time fresh regime reset (clears all tracking history on epoch bump) ──
   useEffect(() => {
     runFreshRegimeReset();
+    // One-time reset per user request to clean the signal tracker
+    if (!localStorage.getItem('bist_tracker_reset_v3')) {
+      localStorage.removeItem('bist_signal_history_v2');
+      localStorage.setItem('bist_tracker_reset_v3', '1');
+      window.location.reload();
+    }
   }, []);
 
   // ── Shared callback: TradesTab scan results flow to all systems ──
@@ -72,25 +88,32 @@ export default function App() {
     if (!advisor?.topPicks || advisor.topPicks === lastPicksRef.current) return;
     lastPicksRef.current = advisor.topPicks;
     for (const pick of advisor.topPicks) {
-      if (pick.score >= 5 && pick.cls === 'buy') {
+      if (pick.cls === 'buy') {
         signalTracker.recordSignal({
           symbol: pick.symbol,
           cls: pick.cls,
           signal: pick.signal,
           score: pick.score,
-          conf: pick.conf,
-          price: pick.price,
-          entry: pick.entry,
+          confidence: pick.confidence,
+          score100: pick.confidence,
+          price: pick.price || pick.entry || pick.currentPrice,
+          entry: pick.entry || pick.price,
           stop: pick.stop,
-          target: pick.target,
+          target: pick.target || pick.t1,
           rr: pick.rr,
           source: 'advisor',
           sector: pick.sector,
+          grade: pick.grade,
+          tier: pick.tier,
+          liquidity: pick.liquidityScore || pick.liquidity,
           firedSignals: pick.firedSignals || [],
+          mlConfidenceBoost: pick.mlConfidenceBoost,
+          mlMatchedCount: pick.mlMatchedCount,
+          mlBestRule: pick.mlBestRule,
         });
 
         // Desktop notification for high-score advisor picks
-        if (pick.score >= 7.5) {
+        if (pick.score >= 7.5 || pick.confidence >= 75) {
           notifications.notifyAdvisorPick(pick);
         }
       }
@@ -240,6 +263,7 @@ export default function App() {
       </div>
 
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>
+        <ForwardAccuracyPanel journal={forwardJournal} />
         <SignalsTab
           tracker={signalTracker}
           onAnalyze={handleAIAnalyze}

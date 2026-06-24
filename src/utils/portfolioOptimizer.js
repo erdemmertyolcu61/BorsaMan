@@ -198,7 +198,74 @@ export function optimizePortfolio(seriesByAsset, opts = {}) {
     minVariance: decorate(minVar),
     targetReturn: decorate(nearestTarget),
     frontier,
+    // Concentration risk: positions that move together don't diversify. Surfaced
+    // straight from the covariance matrix — no extra data needed.
+    correlationWarnings: highCorrelationPairs(symbols, covMatrix, opts.corrThreshold ?? 0.80),
   };
+}
+
+/**
+ * highCorrelationPairs — derive correlation from a covariance matrix and return
+ * the pairs whose absolute correlation exceeds `threshold`. Two highly-correlated
+ * holdings are effectively one bet; flag them so the user can de-duplicate.
+ * @returns array of { a, b, corr } sorted by descending |corr|
+ */
+export function highCorrelationPairs(symbols, covMatrix, threshold = 0.80) {
+  const out = [];
+  if (!Array.isArray(symbols) || !Array.isArray(covMatrix)) return out;
+  const n = symbols.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const denom = Math.sqrt((covMatrix[i]?.[i] || 0) * (covMatrix[j]?.[j] || 0));
+      if (denom <= 0) continue;
+      const corr = covMatrix[i][j] / denom;
+      if (Math.abs(corr) >= threshold) {
+        out.push({ a: symbols[i], b: symbols[j], corr: +corr.toFixed(3) });
+      }
+    }
+  }
+  return out.sort((x, y) => Math.abs(y.corr) - Math.abs(x.corr));
+}
+
+/**
+ * correlationCapFilter — greedy de-duplication for a candidate pick list.
+ * Walks candidates in priority order (best first) and drops any whose return
+ * series correlates above `threshold` with an already-accepted pick. Keeps the
+ * portfolio of recommendations from being many copies of the same bet.
+ * @param candidates array of { symbol, series: number[] } in priority order
+ * @returns { kept: [...], dropped: [{ symbol, conflictsWith, corr }] }
+ */
+export function correlationCapFilter(candidates, threshold = 0.85) {
+  const kept = [];
+  const dropped = [];
+  for (const c of candidates || []) {
+    if (!c?.series || c.series.length < 5) { kept.push(c); continue; }
+    let conflict = null;
+    for (const k of kept) {
+      if (!k?.series || k.series.length < 5) continue;
+      const corr = pearson(c.series, k.series);
+      if (corr != null && Math.abs(corr) >= threshold) { conflict = { with: k.symbol, corr: +corr.toFixed(3) }; break; }
+    }
+    if (conflict) dropped.push({ symbol: c.symbol, conflictsWith: conflict.with, corr: conflict.corr });
+    else kept.push(c);
+  }
+  return { kept, dropped };
+}
+
+// Pearson correlation on two equal-length-aligned numeric series (tail-aligned).
+function pearson(a, b) {
+  const n = Math.min(a.length, b.length);
+  if (n < 5) return null;
+  const xa = a.slice(a.length - n);
+  const xb = b.slice(b.length - n);
+  const ma = mean(xa), mb = mean(xb);
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < n; i++) {
+    const u = xa[i] - ma, v = xb[i] - mb;
+    num += u * v; da += u * u; db += v * v;
+  }
+  const denom = Math.sqrt(da * db);
+  return denom > 0 ? num / denom : null;
 }
 
 /**

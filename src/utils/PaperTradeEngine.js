@@ -17,6 +17,8 @@
 // THIS engine focuses specifically on ML forward-testing with fixed rules.
 // ════════════════════════════════════════════════════════════════════
 
+import { applyEntryCost, applyExitCost, liquiditySlippagePct } from './tradingCosts.js';
+
 const STORAGE_KEY = 'bist_paper_ml_engine_v1';
 const START_CAPITAL = 100_000;
 const MAX_POSITIONS = 3;          // TOP 3 ML picks only
@@ -62,24 +64,46 @@ export class PaperTradeEngine {
     if (this._initialized) return this;
 
     if (this._isElectron) {
-      // Load from SQLite
-      const portfolio = await this._api.getPortfolio();
-      const openTrades = await this._api.getOpenTrades();
-      const closedTrades = await this._api.getClosedTrades(200);
-      const stats = await this._api.getStats();
+      try {
+        const portfolio    = await this._api.getPortfolio();
 
-      this._state = {
-        cash: portfolio?.cash ?? START_CAPITAL,
-        startCapital: portfolio?.start_capital ?? START_CAPITAL,
-        startDate: portfolio?.start_date ?? Date.now(),
-        openTrades: openTrades || [],
-        closedTrades: closedTrades || [],
-        stats: stats || {},
-        peakEquity: portfolio?.peak_equity ?? START_CAPITAL,
-        maxDrawdown: portfolio?.max_drawdown ?? 0,
-      };
+        // Stub mode: better-sqlite3 not installed → main.cjs registers stub handlers
+        // that return { _stubMode: true } as a sentinel. Fall back to localStorage so
+        // existing user trades are preserved rather than starting from a blank state.
+        if (portfolio?._stubMode) {
+          console.log('[PaperML] Stub IPC detected (better-sqlite3 unavailable) — using localStorage');
+          this._isElectron = false;
+          const saved = loadLocalState();
+          this._state = saved || {
+            cash: START_CAPITAL, startCapital: START_CAPITAL, startDate: Date.now(),
+            openTrades: [], closedTrades: [], stats: {}, peakEquity: START_CAPITAL, maxDrawdown: 0,
+          };
+        } else {
+          const openTrades   = await this._api.getOpenTrades();
+          const closedTrades = await this._api.getClosedTrades(200);
+          const stats        = await this._api.getStats();
+
+          this._state = {
+            cash:         portfolio?.cash          ?? START_CAPITAL,
+            startCapital: portfolio?.start_capital ?? START_CAPITAL,
+            startDate:    portfolio?.start_date    ?? Date.now(),
+            openTrades:   openTrades   || [],
+            closedTrades: closedTrades || [],
+            stats:        stats        || {},
+            peakEquity:   portfolio?.peak_equity   ?? START_CAPITAL,
+            maxDrawdown:  portfolio?.max_drawdown  ?? 0,
+          };
+        }
+      } catch (err) {
+        console.warn('[PaperML] SQLite IPC failed, falling back to localStorage:', err?.message);
+        this._isElectron = false;
+        const saved = loadLocalState();
+        this._state = saved || {
+          cash: START_CAPITAL, startCapital: START_CAPITAL, startDate: Date.now(),
+          openTrades: [], closedTrades: [], stats: {}, peakEquity: START_CAPITAL, maxDrawdown: 0,
+        };
+      }
     } else {
-      // localStorage fallback
       const saved = loadLocalState();
       this._state = saved || {
         cash: START_CAPITAL,
@@ -107,6 +131,10 @@ export class PaperTradeEngine {
   subscribe(fn) {
     this._listeners.add(fn);
     return () => this._listeners.delete(fn);
+  }
+
+  getSnapshot() {
+    return this._buildSnapshot();
   }
 
   _emit() {
@@ -265,7 +293,10 @@ export class PaperTradeEngine {
     }
 
     const currentPrice = price;
-    const entry = currentPrice;
+    // Realistic fill: a buyer crosses the spread and pays UP. Without this the
+    // forward test idealizes entries and overstates returns.
+    const legSlippage = liquiditySlippagePct(pick.liquidity);
+    const entry = applyEntryCost(currentPrice, 'buy', legSlippage);
 
     // 33% max capital allocation
     const sizeTl = Math.min(s.cash * MAX_POS_PCT, s.cash);
@@ -355,10 +386,13 @@ export class PaperTradeEngine {
     if (!trade) return;
 
     const entry = trade.entry_price;
-    const pnlTl = (exitPrice - entry) / entry * trade.size_tl;
+    // Realistic exit: closing a long sells DOWN through the spread. Combined
+    // with the entry-side cost in _openTrade, this models full round-trip friction.
+    const fillPrice = applyExitCost(exitPrice, 'buy');
+    const pnlTl = (fillPrice - entry) / entry * trade.size_tl;
 
     if (this._isElectron) {
-      await this._api.closeTrade(tradeId, exitPrice, reason);
+      await this._api.closeTrade(tradeId, fillPrice, reason);
     }
 
     // Update local state
@@ -384,10 +418,10 @@ export class PaperTradeEngine {
       const closedTrade = {
         ...trade,
         status: 'CLOSED',
-        exit_price: exitPrice,
+        exit_price: Math.round(fillPrice * 100) / 100,
         exit_reason: reason,
         pnl_tl: Math.round(pnlTl * 100) / 100,
-        pnl_pct: Math.round((exitPrice - entry) / entry * 10000) / 100,
+        pnl_pct: Math.round((fillPrice - entry) / entry * 10000) / 100,
         closed_at: Date.now(),
         held_ms: Date.now() - trade.opened_at,
       };

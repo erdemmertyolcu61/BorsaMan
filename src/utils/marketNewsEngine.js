@@ -22,15 +22,28 @@
 import { fetchRss } from './NewsEngine.js';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+// High-impact fast path (#9): when the last pull contained a high-impact catalyst
+// (insider_buy / buyback / contract / risk ...), the news environment is "hot" —
+// expire the cache much sooner so a fresh catalyst is picked up in ~1 min instead
+// of being masked for 5. RSS latency is independent of price-feed latency, so
+// reacting to fresh catalysts faster is a real, cheap edge.
+const HIGH_IMPACT_TTL_MS = 60 * 1000;
 const _cache = new Map();
+
+export function _hasHighImpact(data) {
+  return Array.isArray(data) && data.some(it => it && it.impact === 'high');
+}
 
 function _cacheGet(k) {
   const v = _cache.get(k);
   if (!v) return null;
-  if (Date.now() - v.ts > CACHE_TTL_MS) { _cache.delete(k); return null; }
+  const ttl = v.hasHighImpact ? HIGH_IMPACT_TTL_MS : CACHE_TTL_MS;
+  if (Date.now() - v.ts > ttl) { _cache.delete(k); return null; }
   return v.data;
 }
-function _cacheSet(k, data) { _cache.set(k, { ts: Date.now(), data }); }
+function _cacheSet(k, data) {
+  _cache.set(k, { ts: Date.now(), data, hasHighImpact: _hasHighImpact(data) });
+}
 
 // ──────────────────────────────────────────────────────────────
 // RSS source registry — eklenip cikarilabilir.

@@ -151,6 +151,45 @@ export function runWalkForward(prices, strategy = 'signal', opts = {}) {
 }
 
 /**
+ * walkForwardGate — promotion gate (#5).
+ *
+ * Discipline rule: a strategy or threshold change does NOT go live until its
+ * walk-forward verdict is acceptable. This is the single function CI / a
+ * pre-deploy script should call to decide pass/fail — it stops hand-tuned
+ * "vNN" thresholds from shipping on the strength of an overfit in-sample fit.
+ *
+ * @param result output of runWalkForward (or an object with { verdict, summary })
+ * @param opts.allowBorderline accept 'borderline' too (default false → only 'stable')
+ * @param opts.minWindows require at least this many windows (default 3)
+ * @returns {{ pass: boolean, verdict: string, reasons: string[] }}
+ */
+export function walkForwardGate(result, opts = {}) {
+  const allowBorderline = opts.allowBorderline ?? false;
+  const minWindows = opts.minWindows ?? 3;
+  const reasons = [];
+
+  const verdict = result?.verdict || 'insufficient_data';
+  const summary = result?.summary || null;
+
+  if (!summary || verdict === 'insufficient_data') {
+    return { pass: false, verdict, reasons: ['Yetersiz veri — walk-forward penceresi uretilemedi'] };
+  }
+
+  if (summary.numWindows < minWindows) {
+    reasons.push(`Cok az pencere (${summary.numWindows} < ${minWindows}) — sonuc istatistiksel olarak zayif`);
+  }
+
+  const acceptable = verdict === 'stable' || (allowBorderline && verdict === 'borderline');
+  if (!acceptable) {
+    reasons.push(`Verdict '${verdict}' — ${allowBorderline ? "'stable' veya 'borderline'" : "'stable'"} gerekli`);
+  }
+
+  const pass = acceptable && reasons.length === 0;
+  if (pass) reasons.push(`Gecti — verdict '${verdict}', ${summary.numWindows} pencere, %${summary.pctProfitableOOS.toFixed(0)} OOS-pozitif`);
+  return { pass, verdict, reasons };
+}
+
+/**
  * compareStrategiesWalkForward — birden fazla stratejiyi
  * walk-forward ile karsilastirir, en saglam olani isaretler.
  */

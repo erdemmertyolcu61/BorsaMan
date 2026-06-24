@@ -4,7 +4,19 @@ import {
   extractSymbols,
   indexBySymbol,
   formatNewsForPrompt,
+  _hasHighImpact,
 } from '../marketNewsEngine.js';
+
+describe('_hasHighImpact (news fast-path trigger)', () => {
+  it('detects a high-impact item in the list', () => {
+    expect(_hasHighImpact([{ impact: 'low' }, { impact: 'high' }])).toBe(true);
+  });
+  it('is false when no high-impact item and on bad input', () => {
+    expect(_hasHighImpact([{ impact: 'low' }, {}])).toBe(false);
+    expect(_hasHighImpact(null)).toBe(false);
+    expect(_hasHighImpact([])).toBe(false);
+  });
+});
 
 describe('extractSymbols', () => {
   it('finds 4-6 letter uppercase tickers', () => {

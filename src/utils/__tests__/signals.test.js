@@ -89,6 +89,23 @@ describe('calcPosition', () => {
     const gradeX = calcPosition(10000, 2, 100, 95, { setupGrade: 'Z' });
     expect(gradeX.shares).toBe(base.shares);
   });
+
+  it('Kelly uses MEASURED win rate when a trustworthy sample exists', () => {
+    // Strong measured edge → Kelly tag becomes "measured"
+    setSignalReliabilityHints({ buy: { winRate: 0.7, sampleSize: 40 } });
+    const r = calcPosition(100000, 2, 100, 95, { useKelly: true, confidence: 80, cls: 'buy', rr: 2.5 });
+    expect(r.kellySource).toBe('measured');
+    expect(r.method).toBe('kelly_measured');
+    // reset so we don't leak the hint into other tests
+    setSignalReliabilityHints({ buy: null });
+  });
+
+  it('Kelly falls back to estimated stats when sample is too small', () => {
+    setSignalReliabilityHints({ buy: { winRate: 0.7, sampleSize: 5 } });
+    const r = calcPosition(100000, 2, 100, 95, { useKelly: true, confidence: 80, cls: 'buy' });
+    expect(r.kellySource).toBe('estimated');
+    setSignalReliabilityHints({ buy: null });
+  });
 });
 
 // ── genSignal output contract ─────────────────────────────────────────────

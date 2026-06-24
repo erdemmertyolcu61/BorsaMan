@@ -1,8 +1,9 @@
 import { calcAll, calcChandelierExit } from './indicators.js';
 import { genSignal } from './signals.js';
+import { TOTAL_COST_PCT } from './tradingCosts.js';
 
-// Total round-trip cost (commission + spread + slippage estimate)
-export const TOTAL_COST_PCT = 0.003;
+// Re-exported for backward compatibility — single source of truth lives in tradingCosts.js
+export { TOTAL_COST_PCT };
 
 export function runBacktest(prices, strategy = 'signal') {
   const trades = [];
