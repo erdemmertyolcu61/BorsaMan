@@ -124,7 +124,20 @@ export default function App() {
   //     fills the panel) rather than advisor.topPicks state, which can be empty.
   useEffect(() => {
     const handler = (e) => {
-      for (const pick of (e.detail?.topPicks || [])) recordAdvisorPick(pick, { notify: true });
+      const topPicks = e.detail?.topPicks || [];
+      // Defense in depth: if topPicks somehow arrives empty, fall back to the
+      // top buy-side results so the tracker is never left empty after a scan.
+      const source = topPicks.length
+        ? topPicks
+        : (e.detail?.results || [])
+            .filter(r => r && r.cls !== 'sell' && (r.score || 0) >= 45)
+            .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+            .slice(0, 8);
+      let recorded = 0;
+      for (const pick of source) {
+        if (pick && pick.symbol && pick.cls !== 'sell') { recordAdvisorPick(pick, { notify: true }); recorded++; }
+      }
+      console.info(`[SignalTracker] advisor-scan-complete → ${recorded} pick recorded (topPicks=${topPicks.length})`);
     };
     window.addEventListener('advisor-scan-complete', handler);
     return () => window.removeEventListener('advisor-scan-complete', handler);
