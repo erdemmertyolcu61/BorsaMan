@@ -866,6 +866,10 @@ export function calcAll(prices) {
     cmf,
     adx: adxData.adx, plusDI: adxData.plusDI, minusDI: adxData.minusDI,
     ttmSqueeze, chandelier, candlePatterns,
+    // ATR(14) scalar — consumers read ind.atr (e.g. atrPct daily-range gate in
+    // useAIAdvisor). Was missing from the result, so every atrPct came out 0 and
+    // ALL buy/fallback/emergency tiers (which gate on atrPct) rejected everything.
+    atr: calcATR(prices, 14),
   };
 
   result.wyckoffPhase = detectWyckoffPhase(prices, result);
