@@ -1223,9 +1223,9 @@ export function useAIAdvisor(portfolio) {
           if (prob == null) return true;
 
           let requiredProb;
-          if (tp >= 15) requiredProb = 58;       // Devre kesici bolgesi: çok yüksek devam gereksin
-          else if (tp >= 12) requiredProb = 50;  // Gap-up bolgesi: yüksek devam gereksin
-          else requiredProb = 38;                // 7-12%: standart eşik
+          if (tp >= 9.5) requiredProb = 75;      // Neredeyse tam tavan: mutlak red veya efsanevi devam puani
+          else if (tp >= 8) requiredProb = 65;   // Tavana cok yakin: cok yuksek devam ihtimali
+          else requiredProb = 55;                // 7-8%: standart esik yukseltildi
 
           if (prob < requiredProb) return true;
           return false; // Yüksek devam ihtimali → tavan bile olsa göster
@@ -1584,10 +1584,11 @@ export function useAIAdvisor(portfolio) {
             const obvOk = r.obvTrend === 'accumulation';
             const cmfOk = (r.cmf || 0) > 0.05;
             const techConfirm = (volOk ? 1 : 0) + (obvOk ? 1 : 0) + (cmfOk ? 1 : 0);
-            // Tavan zone (>=9): ceza devam (ertesi gun geri cekilir)
-            if (rp >= 9) return -Math.min(20, rp * 2);
-            // 7-9 zone: hafif ceza, teyit varsa noter
-            if (rp >= 7) return techConfirm >= 2 ? -3 : -10;
+            // Tavan zone (>=8): isUnsafeForTomorrow filtresini gecebilmisse (yani devam ihtimali %65-%75 uzerindeyse) gercek bir Tavan Serisi (Streak) adayidir.
+            // Siralamada dibe atma, sadece kucuk bir FOMO cezasi ver.
+            if (rp >= 8) return techConfirm >= 3 ? -5 : -12;
+            // 6-8 zone: ceza, teyit varsa hafiflet
+            if (rp >= 6) return techConfirm >= 2 ? -5 : -15;
             // SAGLIKLI MOMENTUM 4-7%: TEYITLI ise +6, teyitsiz -2
             if (rp >= 4) return techConfirm >= 2 ? +6 : -2;
             // SAGLIKLI MOMENTUM 2-4%: teyitli +4
@@ -1596,11 +1597,11 @@ export function useAIAdvisor(portfolio) {
           };
           const momAdjA = calcMomentumAdj(a);
           const momAdjB = calcMomentumAdj(b);
-          const earlyBonusA = a._earlyPick ? 12 : 0;
-          const earlyBonusB = b._earlyPick ? 12 : 0;
-          // v25: Near-breakout (coil + breakout-ready) — canlida da +18 bonus
-          const nearBonusA = a._nearBreakoutPick ? 18 : 0;
-          const nearBonusB = b._nearBreakoutPick ? 18 : 0;
+          const earlyBonusA = a._earlyPick ? 28 : 0; // Erken tespitleri TEPEDE goster
+          const earlyBonusB = b._earlyPick ? 28 : 0;
+          // v25: Near-breakout (coil + breakout-ready) — canlida da +18 bonus -> +35'e cikarildi
+          const nearBonusA = a._nearBreakoutPick ? 35 : 0; // Kırılıma en yakinlari EN TEPEDE goster
+          const nearBonusB = b._nearBreakoutPick ? 35 : 0;
           const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) + momAdjA + earlyBonusA + nearBonusA;
           const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) + momAdjB + earlyBonusB + nearBonusB;
           return scoreB - scoreA;
@@ -2610,20 +2611,29 @@ export function useAIAdvisor(portfolio) {
     runScan({ universe: SCAN_UNIVERSE });
   }, [runScan]);
 
-  // ── AUTO-SCAN LOOP — Market açıkken 15 dakika, kapalıyken one-time ──
-  // v26: Market kapalıyken (afterHours) de tarama yap, yarn predictions göster
+  // ── AUTO-SCAN LOOP (Kullanici istegi uzerine degistirildi) ──
+  // Artik her 15 dakikada bir surekli tarama YAPILMAZ.
+  // Sadece BIST acilisinda (09:55) ve kapanisindan sonra (18:15) 1'er kez otomatik tarama yapilir.
+  // Geri kalan zamanlarda kullanici \"TARA / YENILE\" butonuna basarsa manuel tarama yapilir.
   useEffect(() => {
-    // ONE-TIME scan at mount (afterHours mode)
-    const isAfterHours = !isMarketOpen();
-    runScan({ universe: SCAN_UNIVERSE, afterHours: isAfterHours });
+    const iv = setInterval(() => {
+      const { day, h, m } = _istanbulParts();
+      
+      // Hafta sonu ise otomatik tarama yok
+      if (day < 1 || day > 5) return;
 
-    // Regular interval ONLY if market is open
-    if (isMarketOpen()) {
-      const iv = setInterval(() => {
-        if (!runningRef.current) runScan({ universe: SCAN_UNIVERSE });
-      }, AUTO_SCAN_INTERVAL_MS);
-      return () => clearInterval(iv);
-    }
+      // Sadece 09:55 ve 18:15 saatlerinde tam 1 kez calisacak (Dakikada bir calistigi icin o dakikanin icinde yakalar)
+      const isOpenTime = (h === 9 && m === 55);
+      const isCloseTime = (h === 18 && m === 15);
+
+      if (isOpenTime || isCloseTime) {
+        if (!runningRef.current) {
+          runScan({ universe: SCAN_UNIVERSE, afterHours: isCloseTime });
+        }
+      }
+    }, 60000); // Dakikada bir kontrol et
+
+    return () => clearInterval(iv);
   }, [runScan]);
 
   return {

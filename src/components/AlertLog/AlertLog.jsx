@@ -81,25 +81,31 @@ export default function AlertLog({ alertLog, onAnalyze, advisor, livePrice, port
 
   return (
     <div className="alert-log" style={{
-      position: 'fixed', bottom: 32, right: 16, zIndex: 950,
-      background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6,
-      width: open ? 420 : 180, maxHeight: open ? 480 : 36,
-      overflow: 'hidden', transition: 'width 0.25s, max-height 0.25s',
+      position: 'relative', zIndex: 950,
       fontSize: 11,
     }}>
       {/* Header */}
       <div onClick={() => setOpen(o => !o)} style={{
-        padding: '8px 12px', cursor: 'pointer', userSelect: 'none',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        background: 'var(--bg3)', borderBottom: '1px solid var(--border)',
-      }}>
-        <span style={{ fontWeight: 700, color: 'var(--yellow)', fontSize: 11 }}>
-          Uyarilar ({alerts.length})
-        </span>
-        <span style={{ color: 'var(--t3)', fontSize: 10 }}>{open ? '▼' : '▲'}</span>
+        padding: '6px 12px', cursor: 'pointer', userSelect: 'none',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        background: open ? 'var(--bg3)' : 'rgba(255,160,0,0.1)', 
+        border: '1px solid var(--orange)', borderRadius: 8,
+        color: 'var(--orange)', fontSize: 11, fontWeight: 600,
+        transition: 'all 0.2s',
+      }}
+      onMouseOver={e => !open && (e.currentTarget.style.filter = 'brightness(1.2)')}
+      onMouseOut={e => !open && (e.currentTarget.style.filter = 'none')}
+      >
+        <span>⚠️</span> UYARILAR ({alerts.length})
       </div>
 
       {open && (
+        <div style={{ 
+          position: 'absolute', top: '100%', right: 0, marginTop: 8,
+          background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6,
+          width: 420, maxHeight: 480, overflow: 'hidden',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
+        }}>
         <div style={{ padding: 8, maxHeight: 440, overflowY: 'auto' }}>
           {/* Controls */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -209,6 +215,7 @@ export default function AlertLog({ alertLog, onAnalyze, advisor, livePrice, port
               ))}
             </div>
           )}
+          </div>
         </div>
       )}
     </div>

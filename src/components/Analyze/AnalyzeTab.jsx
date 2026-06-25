@@ -64,6 +64,7 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
   const [fundamentals, setFundamentals] = useState(null);
   const [bilanco, setBilanco] = useState(null);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [showJarvisModal, setShowJarvisModal] = useState(false);
   const [pendingOrder, setPendingOrder] = useState(null);
   const [mcData, setMcData] = useState(null);
 
@@ -276,16 +277,14 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
         </div>
         <div className="divider" />
         <div style={{ padding: '0 10px' }}>
-          <ChatPanel
-            symbol={gData?.symbol}
-            ind={gInd}
-            sig={gSig}
-            fundamentals={fundamentals}
-            bilanco={bilanco}
-            log={log}
-            advisorData={advisorData}
-            intradayScan={intradayScan}
-          />
+          <button 
+            className="btn btn-go" 
+            style={{ width: '100%', background: 'linear-gradient(135deg, var(--purple), #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            disabled={loading || !gData} 
+            onClick={() => setShowJarvisModal(true)}
+          >
+            <span style={{ fontSize: 16 }}>🤖</span> JARVIS AI ANALİZİ
+          </button>
         </div>
         <div className="divider" />
         <div className="disc">Bu uygulama yatırım tavsiyesi vermez.</div>
@@ -451,7 +450,7 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
                   fontSize: 9, color: '#ffd700',
                 }}>
                   🎯 ML +{(gSig.mlConfidenceBoost || 0).toFixed(1)} · {gSig.mlMatchedCount} kural eşleşti
-                  {gSig.mlBestRule && <div style={{ fontSize: 8, color: '#fbbf24', marginTop: 1 }}>{gSig.mlBestRule}</div>}
+                  {gSig.mlBestRule && <div style={{ fontSize: 8, color: '#fbbf24', marginTop: 1 }}>{typeof gSig.mlBestRule === 'string' ? gSig.mlBestRule : gSig.mlBestRule.setupName || JSON.stringify(gSig.mlBestRule)}</div>}
                 </div>
               )}
               {gSig.unifiedSource && (
@@ -610,6 +609,32 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
         )}
         <div className="disc">Teknik analiz gecmis veriye dayanir.</div>
       </div>
+
+      {/* JARVIS MODAL */}
+      {showJarvisModal && (
+        <div className="modal-overlay" onClick={() => setShowJarvisModal(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ width: '90%', maxWidth: 800, height: '85vh', display: 'flex', flexDirection: 'column', borderRadius: 12, padding: 0, position: 'relative', background: 'var(--bg0)' }}>
+            <button 
+              onClick={() => setShowJarvisModal(false)} 
+              style={{ position: 'absolute', top: 12, right: 12, zIndex: 100, background: 'rgba(255,255,255,0.1)', border: '1px solid var(--border)', color: 'var(--t1)', fontSize: 18, cursor: 'pointer', width: 32, height: 32, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}
+            >
+              ✕
+            </button>
+            <div style={{ flex: 1, padding: 14, overflowY: 'auto' }}>
+              <ChatPanel
+                symbol={gData?.symbol}
+                ind={gInd}
+                sig={gSig}
+                fundamentals={fundamentals}
+                bilanco={bilanco}
+                log={log}
+                advisorData={advisorData}
+                intradayScan={intradayScan}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

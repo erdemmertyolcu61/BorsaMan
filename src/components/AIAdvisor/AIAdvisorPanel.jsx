@@ -256,7 +256,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     marketRegime = null, // v26 FIX 2: { regime, bistChangePct }
   } = advisor;
 
-  const [open, setOpen] = useState(true); // start expanded so user always sees it
+  const [open, setOpen] = useState(typeof window !== 'undefined' && window.innerWidth > 768); // start expanded on desktop, collapsed on mobile
   const [dismissed, setDismissed] = useState(false);
 
   // ── Cached picks: use live if available, fall back to localStorage ──
@@ -618,7 +618,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       borderTop: '2px solid transparent',
       borderImage: 'linear-gradient(90deg, #06b6d4, #8b5cf6, #06b6d4) 1',
       transition: 'max-height 0.28s ease',
-      maxHeight: open ? 235 : 40, overflow: 'hidden',
+      maxHeight: open ? 400 : 40, overflow: 'hidden',
       boxShadow: '0 -8px 32px rgba(0, 230, 230, 0.12), 0 -4px 24px rgba(0,0,0,0.6)',
     }}>
       {/* Animated top accent line */}
@@ -799,7 +799,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       {/* ── Card strip ── */}
       <div style={{
         display: 'flex', gap: 0, overflowX: 'auto', overflowY: 'hidden',
-        height: 185, alignItems: 'stretch', padding: '8px 12px', boxSizing: 'border-box',
+        minHeight: 185, height: 'auto', alignItems: 'stretch', padding: '8px 12px', boxSizing: 'border-box',
         scrollbarWidth: 'thin',
       }}>
         {/* Empty / loading state */}
@@ -866,7 +866,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           </div>
         )}
 
-        {hasPicks && picks.map((p, idx) => {
+        {hasPicks && [...picks].sort((a, b) => (b.score || 0) - (a.score || 0)).map((p, idx) => {
           const isSell = p.cls === 'sell';
           const accent = isSell ? 'var(--red)' : 'var(--green)';
           const accentDim = isSell ? '#ff444418' : '#00e68618';
@@ -1001,7 +1001,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
               onClick={() => onAnalyze && onAnalyze(p.symbol)}
               title={tooltipLines.join('\n')}
               style={{
-                flexShrink: 0, width: 235,
+                flexShrink: 0, width: typeof window !== 'undefined' && window.innerWidth <= 768 ? '85vw' : 290,
                 background: cardBg,
                 borderLeft: `4px solid ${accent}`,
                 borderRight: '1px solid rgba(255,255,255,0.06)',
@@ -1015,7 +1015,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
               }}
             >
               {/* Row 1: symbol + sector + signal + grade + early */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', paddingRight: 65 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                   <span style={{ fontWeight: 800, fontSize: 15, color: '#ffffff', letterSpacing: 0.3 }}>{p.symbol}</span>
                   {/* Grade badge — A/B/C/D */}
@@ -1066,6 +1066,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       background: 'linear-gradient(90deg, #7c3aed, #db2777)',
                       color: '#fff', letterSpacing: 0.3,
                       boxShadow: '0 0 6px rgba(124,58,237,0.5)',
+                      maxWidth: '100%',
                     }} title={[
                       '🤖 ML KAPI AÇTI',
                       'Bu hisse standart likit/skor filtrelerini GEÇEMEDI.',
@@ -1075,17 +1076,6 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       'Küçük pozisyon ile gir — slipaj riski var',
                     ].join('\n')}>
                       🤖 ML KAPISI
-                    </span>
-                  )}
-                  {/* v25: TAVAN AMA DEVAM ROZETI — yuksek devam ihtimali (>=50%) */}
-                  {p.cls === 'buy' && (p.todayPumpReal || p.recentPump || 0) >= 7 &&
-                   p.continuationProbability != null && p.continuationProbability >= 50 && (
-                    <span style={{
-                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
-                      background: 'linear-gradient(90deg, #10b981, #059669)',
-                      color: '#fff', letterSpacing: 0.3,
-                    }} title={`Tavan/yüksek pump ama devam ihtimali yüksek (%${p.continuationProbability})`}>
-                      ⚡ DEVAM %{p.continuationProbability}
                     </span>
                   )}
                   {/* INSIDER BUY rozeti — yonetici/ortak alimi tespit edildi */}
@@ -1284,7 +1274,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       📈 HTF UYUM
                     </span>
                   )}
-                  <span style={{ fontSize: 10, color: '#a8b3c7', fontWeight: 600, marginLeft: 2 }}>{p.sector}</span>
+                  <div style={{ flexBasis: '100%', height: 0 }}></div>
+                  <span style={{ fontSize: 10, color: '#a8b3c7', fontWeight: 600, marginLeft: 2, marginTop: 2 }}>{p.sector}</span>
                 </div>
                 <span style={{
                   fontSize: 10, fontWeight: 800, padding: '3px 7px', borderRadius: 3,
@@ -1335,7 +1326,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   livePriceForPct'ten hesaplandığı için kart hep güncel görünür. */}
 
               {/* Row 3: stop + target */}
-              <div style={{ display: 'flex', gap: 10, fontSize: 11, marginTop: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginTop: 6 }}>
                 <span>
                   <span style={{ color: '#ff5470', fontWeight: 700 }}>
                     Stop: {p.stop ? p.stop.toFixed(2) : '-'}
@@ -1359,7 +1350,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   borderRadius: 3,
                   border: `1px solid ${p.mlBestRule.winRate >= 75 ? 'rgba(255,215,0,0.25)' : 'rgba(6,182,212,0.25)'}`,
                   color: p.mlBestRule.winRate >= 75 ? '#ffd700' : '#06d6f0',
-                  display: 'flex', alignItems: 'center', gap: 4,
+                  display: 'flex', alignItems: 'center', gap: 4, maxWidth: '100%',
                   letterSpacing: 0.2,
                 }}>
                   <span>🎯</span>
@@ -1386,7 +1377,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
 
               {/* Row 4: hold text */}
               <div style={{ fontSize: 10, color: '#a8b3c7', fontWeight: 600, marginTop: 5, letterSpacing: 0.2 }}>
-                {p.holdText || (isSell ? 'Kısa pozisyon' : '1-3 gün (kısa vade)')}
+                {p.holdText || (isSell ? 'Kısa poz.' : '1-3 gün')}
                 {p._alreadyHolding && <span style={{ color: '#ff9a3c', marginLeft: 5, fontWeight: 800 }}>●portföy</span>}
               </div>
 

@@ -256,7 +256,16 @@ export default function App() {
 
   return (
     <>
-      <PremiumHeader badge={state.badge} notifications={notifications} />
+      <PremiumHeader 
+        badge={state.badge} 
+        notifications={notifications} 
+        alertLog={alertLog}
+        advisor={advisor}
+        livePrice={livePrice}
+        portfolio={state.portfolio}
+        scanHistory={scanHistory}
+        onAnalyze={handleAIAnalyze}
+      />
 
       <AIAdvisorPanel
         advisor={advisor}
@@ -317,8 +326,6 @@ export default function App() {
         <PaperTradingPanel paperTrading={paperTrading} paperML={paperML} />
       </div>
 
-      <AlertLog alertLog={alertLog} onAnalyze={handleAIAnalyze} advisor={advisor} livePrice={livePrice} portfolio={state.portfolio} />
-      <ScanHistoryDrawer history={scanHistory} onAnalyze={handleAIAnalyze} />
       <AIAdvisorDetailPanel
         advisor={advisor}
         portfolio={state.portfolio}

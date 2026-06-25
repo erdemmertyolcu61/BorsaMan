@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { isProxyAvailable } from '../../utils/proxyEngine.js';
 import ProxySettings from '../Common/ProxySettings.jsx';
+import AlertLog from '../AlertLog/AlertLog.jsx';
+import ScanHistoryDrawer from '../AIAdvisor/ScanHistoryDrawer.jsx';
 import { NotificationSettings } from '../../hooks/useNotifications.jsx';
 
-export default function Header({ badge, notifications, onAnalyze }) {
+export default function Header({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze }) {
   const [clock, setClock] = useState('--:--:--');
   const [mktOpen, setMktOpen] = useState(false);
   const [showProxySettings, setShowProxySettings] = useState(false);
@@ -43,7 +45,9 @@ export default function Header({ badge, notifications, onAnalyze }) {
           <div className="logo">BIST<span> · AI Trading Terminal</span></div>
           <div className={`badge ${badge.cls}`}>{badge.text}</div>
         </div>
-        <div className="hdr-r">
+        <div className="hdr-r" style={{ display: 'flex', alignItems: 'center' }}>
+          <ScanHistoryDrawer history={scanHistory} onAnalyze={onAnalyze} />
+          <AlertLog alertLog={alertLog} onAnalyze={onAnalyze} advisor={advisor} livePrice={livePrice} portfolio={portfolio} />
           {notifications && (
             <button
               onClick={() => setShowNotificationSettings(true)}

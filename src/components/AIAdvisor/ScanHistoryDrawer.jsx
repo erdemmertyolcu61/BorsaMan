@@ -17,19 +17,17 @@ export default function ScanHistoryDrawer({ history = [], onAnalyze }) {
         <div 
           onClick={() => setIsOpen(true)}
           style={{
-            position: 'fixed',
-            bottom: 24,
-            left: 24,
-            zIndex: 1100,
-            background: 'rgba(13, 17, 23, 0.9)',
-            border: '1px solid rgba(0, 229, 255, 0.3)',
-            borderRadius: 30,
-            padding: '8px 16px',
+            position: 'relative',
+            background: 'rgba(0, 229, 255, 0.1)',
+            border: '1px solid var(--cyan)',
+            borderRadius: 8,
+            padding: '6px 12px',
             display: 'flex',
             alignItems: 'center',
-            gap: 10,
+            gap: 6,
+            marginRight: 10,
             cursor: 'pointer',
-            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.5), 0 0 10px rgba(0, 229, 255, 0.1)',
+            /* no big shadow */
             transition: 'all 0.3s ease',
             backdropFilter: 'blur(8px)',
             animation: 'pillFadeIn 0.5s ease-out'

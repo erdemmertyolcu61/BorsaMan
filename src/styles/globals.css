@@ -17,3 +17,25 @@
 body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 .main{height:calc(100vh - 86px - var(--advisor-panel-height,0px) - 12px)}
 
+/* ── PWA / Mobile Overrides ────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Enforce minimum readability font sizes */
+  .ind-n { font-size: 11px !important; }
+  .stable { font-size: 12px !important; }
+  .ai-box { font-size: 13px !important; }
+  .lbl { font-size: 12px !important; }
+  .trade-title { font-size: 12px !important; }
+  .a-item { font-size: 12px !important; }
+  .conf-txt, .sig-lbl { font-size: 12px !important; }
+  .disc { font-size: 11px !important; }
+  
+  /* Ensure touch targets meet minimum 44px height */
+  .btn, .qs, .sf-btn, .tab, .mobile-nav-item, select.inp, input.inp, .s-sym, .hdr-icon-btn {
+    min-height: 44px !important;
+  }
+  
+  /* Ensure body has enough padding for MobileNav and Safe Area */
+  body {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}

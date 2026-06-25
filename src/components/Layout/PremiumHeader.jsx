@@ -28,7 +28,7 @@ function formatClock(d) {
   return { date, time };
 }
 
-export default function PremiumHeader({ badge, notifications }) {
+export default function PremiumHeader({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze }) {
   const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [unread, setUnread] = useState(0);
