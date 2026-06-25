@@ -38,7 +38,8 @@ export async function fetchAllForeignRatios() {
   if (cached && cached.ratios) return cached.ratios;
 
   try {
-    const url = `${PROXY_BASE_URL}/api/proxy?source=isyatirim_yabanci`;
+    const baseUrl = PROXY_BASE_URL || 'https://proxy-delta-mocha-43.vercel.app';
+    const url = `${baseUrl}/api/proxy?source=isyatirim_yabanci`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`IsYatirim yabanci fail: ${res.status}`);
     const html = await res.text();
@@ -84,7 +85,7 @@ export async function fetchForeignRatio(symbol) {
 
 // EVDS API Key Management
 export function getEvdsApiKey() {
-  return localStorage.getItem('bist_evds_api_key') || '';
+  return localStorage.getItem('bist_evds_api_key') || '84B4bchcFt';
 }
 
 export function setEvdsApiKey(key) {
@@ -112,7 +113,8 @@ export async function fetchMarketForeignFlow() {
     
     // TP.ODEMGZS.YURTDISI is usually weekly net flow in USD millions.
     // The proxy maps series=...
-    const url = `${PROXY_BASE_URL}/api/proxy?source=tcmb_evds&series=TP.SI.YABANCI.HS.NET&startdate=${start}&enddate=${end}&evds_key=${evdsKey}`;
+    const baseUrl = PROXY_BASE_URL || 'https://proxy-delta-mocha-43.vercel.app';
+    const url = `${baseUrl}/api/proxy?source=tcmb_evds&series=TP.SI.YABANCI.HS.NET&startdate=${start}&enddate=${end}&evds_key=${evdsKey}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`EVDS fail: ${res.status}`);
     const json = await res.json();
@@ -138,9 +140,9 @@ export async function fetchMarketForeignFlow() {
       setCache(data);
       return marketFlow;
     }
-    return null;
+    return { error: 'EVDS veri dondurmedi.' };
   } catch (err) {
     logError(err, 'fetchMarketForeignFlow');
-    return null;
+    return { error: 'TCMB EVDS engeli (WAF) veya yanit alinamadi.' };
   }
 }

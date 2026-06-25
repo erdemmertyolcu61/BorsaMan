@@ -297,6 +297,8 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
           </button>
         </div>
         <div className="divider" />
+        <MacroPanel />
+        <div className="divider" />
         <div className="disc">Bu uygulama yatırım tavsiyesi vermez.</div>
       </div>
 

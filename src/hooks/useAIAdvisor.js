@@ -1602,8 +1602,13 @@ export function useAIAdvisor(portfolio) {
           // v25: Near-breakout (coil + breakout-ready) — canlida da +18 bonus -> +35'e cikarildi
           const nearBonusA = a._nearBreakoutPick ? 35 : 0; // Kırılıma en yakinlari EN TEPEDE goster
           const nearBonusB = b._nearBreakoutPick ? 35 : 0;
-          const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) + momAdjA + earlyBonusA + nearBonusA;
-          const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) + momAdjB + earlyBonusB + nearBonusB;
+          
+          // ML Boost'un sıralamada etkili olması için çarpılarak puana eklenmesi
+          const mlBonusA = (a.mlConfidenceBoost || 0) * 5;
+          const mlBonusB = (b.mlConfidenceBoost || 0) * 5;
+
+          const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) + momAdjA + earlyBonusA + nearBonusA + mlBonusA;
+          const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) + momAdjB + earlyBonusB + nearBonusB + mlBonusB;
           return scoreB - scoreA;
         });
 

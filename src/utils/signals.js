@@ -1419,15 +1419,55 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     reasons.push({ t: 'TEYIT NOTU: ' + bearishTypes.size + ' bagimsiz dusus teyidi', c: 'neutral' });
   }
 
-  // Hold duration estimate (short-term based on T1)
+  // ── ADVANCED HOLD DURATION ESTIMATE (GERCEKCI VADE TAHMINI) ──
   let holdBars = null, holdText = '';
   if (atr && atr > 0) {
-    holdBars = Math.max(1, Math.ceil(Math.abs((t1 - p) / atr)));
-    if (holdBars <= 1) holdText = 'Intraday (gun ici)';
-    else if (holdBars <= 3) holdText = '1-3 gun (kisa vade)';
-    else if (holdBars <= 10) holdText = '1-2 hafta';
-    else if (holdBars <= 25) holdText = '2-5 hafta';
-    else holdText = '1-3 ay';
+    // 1. Base duration to reach average target (T1 + T2)/2
+    const targetDistance = Math.abs(((t1 + t2) / 2) - p);
+    let baseBars = targetDistance / atr;
+
+    // 2. Regime adjustment (Trendler dalgalıdır ve düzeltme ile ilerler, Range ise hızlı çarpar döner)
+    if (typeof regimeIsTrend !== 'undefined' && regimeIsTrend) baseBars *= 1.4;
+    else if (typeof regimeIsTrend !== 'undefined' && !regimeIsTrend && typeof regimeIsVolatile !== 'undefined' && !regimeIsVolatile) baseBars *= 0.8; // Range
+    if (typeof regimeIsVolatile !== 'undefined' && regimeIsVolatile) baseBars *= 0.6; // Hizli hareket
+
+    // 3. Momentum acceleration
+    const rocVal = ind.lastROC10 || 0;
+    if (rocVal > 10 || rocVal < -10) baseBars *= 0.7; // Aşırı momentum hedefe varışı hızlandırır
+
+    // 4. Setup Type Context Base (Yapısal kurulumlar uzun, tepkiler kısa sürer)
+    const isStructural = bullishTypes.has('wyckoff_spring') || bullishTypes.has('wyckoff_markup') || 
+                         bearishTypes.has('wyckoff_distribution') || bullishTypes.has('golden_cross') || 
+                         ind.wyckoffPhase === 'accumulation';
+    
+    const isTrendFollow = bullishTypes.has('supertrend') || bearishTypes.has('supertrend') ||
+                          bullishTypes.has('ichimoku') || bearishTypes.has('ichimoku') ||
+                          bullishTypes.has('macd') || bearishTypes.has('macd') ||
+                          bullishTypes.has('trix') || bearishTypes.has('trix');
+
+    const isMeanReversion = bullishTypes.has('rsi') || bearishTypes.has('rsi') || 
+                            bullishTypes.has('williams') || bearishTypes.has('williams') ||
+                            bullishTypes.has('bollinger') || bearishTypes.has('bollinger');
+
+    // Structural -> taban 15 gun
+    // TrendFollow -> taban 7 gun
+    // MeanReversion -> taban 2 gun
+    let contextualBars = baseBars;
+    if (isStructural) contextualBars = Math.max(baseBars, 15);
+    else if (isTrendFollow) contextualBars = Math.max(baseBars, 7);
+    else if (isMeanReversion) contextualBars = Math.min(baseBars, 5);
+
+    holdBars = Math.max(1, Math.ceil(contextualBars));
+
+    // Yalnızca gerçekten yüksek hacimli ve kısa hedefli işlemleri "Gün İçi" olarak etiketle
+    const isRealIntraday = holdBars <= 1 && ind.volRatio > 2.0 && ind.dayHighLowRange > 0.3;
+
+    if (isRealIntraday) holdText = 'Gün İçi (Scalp / T-0)';
+    else if (holdBars <= 3) holdText = '1-3 gün (Kısa Vade Tepki)';
+    else if (holdBars <= 8) holdText = '3-8 gün (Swing Trade)';
+    else if (holdBars <= 21) holdText = '1-3 hafta (Orta Vade Trend)';
+    else if (holdBars <= 45) holdText = '3-6 hafta (Yapısal Formasyon)';
+    else holdText = '6+ hafta (Orta-Uzun Vade)';
   }
 
   // Long-term investment perspective
