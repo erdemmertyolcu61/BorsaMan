@@ -32,7 +32,7 @@ const ALLOWED_DOMAINS = [
 
 const ALLOWED_SOURCES = new Set([
   'yahoo', 'yahoo_fund', 'bigpara', 'bigpara_list',
-  'isyatirim', 'isyatirim_fin', 'foreks', 'default',
+  'isyatirim', 'isyatirim_fin', 'isyatirim_yabanci', 'foreks', 'tcmb_evds', 'default',
 ]);
 
 const ALLOWED_ORIGINS = [
@@ -138,6 +138,19 @@ function buildSourceUrl(query) {
     }
     case 'isyatirim_fin':
       return `https://www.isyatirim.com.tr/_layouts/15/IsYatirim.Website/Common/Data.aspx/MaliTablo?companyCode=${symbol}&exchange=TRY&financialGroup=XI_29&year1=2024&period1=12&year2=2023&period2=12&year3=2022&period3=12&year4=&period4=`;
+    case 'isyatirim_yabanci': {
+      // Yabancı Oran endpoint. Expected format: ?date=24.06.2026 or similar, or scrape HTML page. 
+      // We will proxy the HTML page and let client parse it if necessary, or just use BigPara yabancı
+      return `https://www.isyatirim.com.tr/tr-tr/analiz/hisse/Sayfalar/yabanci-oranlari.aspx`;
+    }
+    case 'tcmb_evds': {
+      // EVDS requires API key
+      const series = query.series || 'bie_ypgircik';
+      const start = query.startdate || '01-01-2024';
+      const end = query.enddate || formatDateISY(new Date());
+      const keyStr = query.evds_key ? `&key=${query.evds_key}` : '';
+      return `https://evds2.tcmb.gov.tr/service/evds/series=${series}&startDate=${start}&endDate=${end}&type=json${keyStr}`;
+    }
     case 'foreks': {
       const last = query.last || '252';
       const period = query.period || '1440';

@@ -98,6 +98,16 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
       const extraContext = { kapSentiment };
       const { ind, sig } = getUnifiedAnalysis(s, data, extraContext);
 
+      // ── Foreign Ratio Fetch ──
+      try {
+        const { fetchForeignRatio } = await import('../../utils/foreignFlowEngine.js');
+        const fr = await fetchForeignRatio(s);
+        if (fr) {
+          sig.foreignRatio = fr.ratio;
+          sig.foreignChangeWeek = fr.changeWeek;
+        }
+      } catch (err) {}
+
       // ── ML Confluence: STRICTLY INHERIT from AI Advisor first ──
       // Single Analysis must produce IDENTICAL signal to bulk Advisor scan.
       // Priority order:

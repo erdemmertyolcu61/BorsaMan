@@ -4,12 +4,17 @@ import { getUpcomingEvents, getRateDecisionImpact, getEventTypeConfig, getImpact
 export default function MacroPanel() {
   const [events, setEvents] = useState(null);
   const [indicators, setIndicators] = useState(null);
+  const [foreignFlow, setForeignFlow] = useState(null);
   const [impacts] = useState(() => getRateDecisionImpact());
   const [expanded, setExpanded] = useState(true);
 
   useEffect(() => {
     getLiveIndicators().then(data => setIndicators(data));
     getLiveEvents().then(data => setEvents(data));
+    import('../../utils/foreignFlowEngine.js')
+      .then(m => m.fetchMarketForeignFlow())
+      .then(data => setForeignFlow(data))
+      .catch(() => {});
   }, []);
 
   const now = new Date();
@@ -68,6 +73,38 @@ export default function MacroPanel() {
                   </div>
                 );
               })
+            )}
+          </div>
+
+          {/* Foreign Flow Section */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
+              <span>Yabancı Para Girişi (TCMB EVDS)</span>
+              {foreignFlow && <span style={{ color: foreignFlow.latestWeeklyFlow >= 0 ? 'var(--green)' : 'var(--red)' }}>Son Hafta: {foreignFlow.latestWeeklyFlow > 0 ? '+' : ''}{foreignFlow.latestWeeklyFlow}M $</span>}
+            </div>
+            {!foreignFlow ? (
+              <div style={{ fontSize: 10, color: 'var(--t3)', padding: '10px', textAlign: 'center', background: 'var(--bg3)', borderRadius: 8 }}>
+                Veri bekleniyor... (API anahtarı girilmemiş olabilir)
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', height: 40 }}>
+                {foreignFlow.flows.slice(-8).map((f, i) => {
+                  const h = Math.min(40, Math.max(8, Math.abs(f.valueUSD) / 10));
+                  return (
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }} title={`${f.date}: $${f.valueUSD}M`}>
+                      <span style={{ fontSize: 7, fontWeight: 700, color: f.valueUSD >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                        {f.valueUSD > 0 ? '+' : ''}{Math.round(f.valueUSD)}
+                      </span>
+                      <div style={{
+                        width: '100%', height: h, borderRadius: 3,
+                        background: f.valueUSD >= 0
+                          ? 'linear-gradient(180deg, rgba(74,222,128,.8), rgba(74,222,128,.3))'
+                          : 'linear-gradient(180deg, rgba(248,113,113,.8), rgba(248,113,113,.3))',
+                      }} />
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
 

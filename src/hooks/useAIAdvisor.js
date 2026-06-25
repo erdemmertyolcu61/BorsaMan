@@ -2376,6 +2376,25 @@ export function useAIAdvisor(portfolio) {
         }
       } catch { /* news enrichment is best-effort */ }
 
+      // ── FOREIGN FLOW ENRICHMENT ──
+      try {
+        const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');
+        const foreignMap = await fetchAllForeignRatios();
+        for (const p of picks) {
+          const fr = foreignMap[p.symbol];
+          if (fr) {
+            p.foreignRatio = fr.ratio;
+            p.foreignChangeWeek = fr.changeWeek;
+            
+            // Akıllı para (smart money) girişi: yabancı takas haftalık artışı >= 0.5% ise bonus
+            if (fr.changeWeek >= 0.5) {
+               p.confidence = Math.min(100, (p.confidence || 50) + 5);
+               if (p.confidenceBreakdown) p.confidenceBreakdown.potential += 5;
+            }
+          }
+        }
+      } catch { /* best effort */ }
+
       // ── INSIDER TRADING ENRICHMENT (v22) ──
       // Top picks'in iceriden islem verilerini cek; insider buy = en guclu kataliz sinyali.
       // KAP'tan yonetici/ortak alim-satim verileri parse edilir.
