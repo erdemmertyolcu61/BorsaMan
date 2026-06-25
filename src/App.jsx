@@ -87,10 +87,15 @@ export default function App() {
   // Takibi. recordSignal dedups (4h, symbol+cls+source), so calling it from both
   // the live scan event AND the cached-picks seed below never double-records.
   const recordAdvisorPick = useCallback((pick, opts = {}) => {
-    if (!pick || pick.cls !== 'buy' || !pick.symbol) return;
+    // The "AI EN İYİ FIRSATLAR" list surfaces buy OPPORTUNITIES, but many entries
+    // carry an internal cls of 'hold'/'TUT' (genSignal gives most momentum names
+    // TUT; buyPicks still accepts them at score>=45). They are presented to the
+    // user as AL picks, so record everything that isn't an explicit sell and
+    // normalize cls to 'buy'. Filtering on cls==='buy' was dropping most picks.
+    if (!pick || !pick.symbol || pick.cls === 'sell') return;
     signalTracker.recordSignal({
       symbol: pick.symbol,
-      cls: pick.cls,
+      cls: 'buy',
       signal: pick.signal,
       score: pick.score,
       confidence: pick.confidence,
