@@ -2544,11 +2544,18 @@ export function useAIAdvisor(portfolio) {
         finalPicks = [...(buyPicks || []), ...(sellPicks || [])].slice(0, 10);
         console.warn('[AI Advisor] picks[] was empty — falling back to buyPicks+sellPicks');
       } else if (Array.isArray(results) && results.length > 0) {
-        finalPicks = results
-          .filter(r => r?.cls === 'buy' || r?.cls === 'sell')
-          .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
-          .slice(0, 10);
-        console.warn('[AI Advisor] picks[] AND buyPicks/sellPicks empty — derived from results');
+        // BUY-SIDE FIRST. The old fallback sorted ALL results by confidence, which
+        // let high-confidence SELLS dominate the list (e.g. VESTL/sell at #1) — so
+        // the panel and signal tracker filled with sells instead of opportunities.
+        // Surface the best non-sell candidates (score>=45) first, then a few sells.
+        const buyish = results
+          .filter(r => r && r.cls !== 'sell' && (r.score || 0) >= 45)
+          .sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+        const sellish = results
+          .filter(r => r && r.cls === 'sell')
+          .sort((a, b) => (a.confidence || 0) - (b.confidence || 0));
+        finalPicks = [...buyish, ...sellish].slice(0, 10);
+        console.warn(`[AI Advisor] picks[] empty — derived ${buyish.length} buy-side + ${sellish.length} sell from results`);
       }
 
       const allResults = Array.isArray(results) ? results : [];
@@ -2559,6 +2566,16 @@ export function useAIAdvisor(portfolio) {
         sellPicks: Array.isArray(sellPicks) ? sellPicks.length : -1,
         results: allResults.length,
       });
+      // Diagnostic: when buyPicks/picks come out empty, this reveals whether the
+      // VOLUME data is the cause (all tiers gate on avgVolumeTL). If volPos≈0 while
+      // results is large, the data source returned bars without volume.
+      if (!Array.isArray(picks) || picks.length === 0 || (Array.isArray(buyPicks) && buyPicks.length === 0)) {
+        const volPos = allResults.filter(r => (r.avgVolumeTL || 0) > 0).length;
+        const vol200k = allResults.filter(r => (r.avgVolumeTL || 0) >= 200_000).length;
+        const atrOk = allResults.filter(r => (r.atrPct || 0) >= 0.4).length;
+        const buyCls = allResults.filter(r => r.cls === 'buy').length;
+        console.warn('[AI Advisor] EMPTY-PICKS DIAGNOSTIC:', { results: allResults.length, volPositive: volPos, volGte200k: vol200k, atrGte0p4: atrOk, clsBuy: buyCls });
+      }
       if (finalPicks.length > 0) {
         console.log('[AI Advisor] First topPick:', {
           symbol: finalPicks[0].symbol,
