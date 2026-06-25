@@ -24,7 +24,7 @@ let _inflight = null;    // dedupe parallel calls
 // Son bilinen PPK kararlari. Gercek veri cekilemezse bunu donar +
 // `isStale: true` flag ile UI rozetinde uyari.
 const TCMB_FALLBACK = {
-  rate: 42.5,
+  rate: 50.0,
   lastDecision: '2026-04-17',
   nextMeeting: '2026-05-15',  // PPK takvimi (TCMB.gov.tr)
   isStale: true,

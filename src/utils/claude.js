@@ -77,6 +77,7 @@ export function buildExpertPrompt(symbol, analysis = {}, market = {}, portfolio 
     setup = [], wyckoff, sector, holdText,
     mcProfitProb, mcMedian,
     fundamentals = {},
+    foreignRatio, foreignChangeWeek,
   } = analysis;
 
   const {
@@ -121,7 +122,7 @@ Kural: BEAR_TREND'te AL sinyallerine agir supheyle yaklas. OVERBOUGHT'ta karli s
 6) RISK (x1.2): Stop=${fmt(stop)}  ATR-multiple=${atr && stop && price ? fmt(Math.abs(price - stop) / atr, 1) : '-'}
 7) POZISYON (x1.0): Giris=${fmt(entry)}  T1=${fmt(target)}  T2=${fmt(targetT2)}  T3=${fmt(targetT3)}  Uzun=${fmt(longTerm)}  R/R=1:${fmt(rr, 2)}  Vade=${holdText || '-'}
 
-AKILLI PARA: MFI=${fmt(mfi, 0)} OBV=${obv?.trend || '-'}
+AKILLI PARA: MFI=${fmt(mfi, 0)} OBV=${obv?.trend || '-'} YabanciTakas=${fmt(foreignRatio)}% (Haftalik: ${foreignChangeWeek > 0 ? '+' : ''}${fmt(foreignChangeWeek)}%)
 SETUPLAR: ${setupList || '-'}
 MONTE CARLO: P(kar)=%${fmt(mcProfitProb, 0)}  Medyan=${fmt(mcMedian)}${portfolioBlock}
 
@@ -163,7 +164,8 @@ export function buildDailyPicksPrompt(picks = [], market = {}) {
       const head = p.newsHeadline ? ` "${p.newsHeadline.slice(0, 40)}"` : '';
       newsStr = ` HABER${cats}=${sign}${p.newsScore?.toFixed?.(1) ?? p.newsScore}(${p.newsCount})${head}`;
     }
-    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} R/R=1:${p.rr?.toFixed(2)} RSI=${p.rsi?.toFixed(0)}${kapStr}${newsStr}`;
+    let foreignStr = p.foreignRatio != null ? ` Yabanci=%${p.foreignRatio.toFixed(1)}(${p.foreignChangeWeek > 0 ? '+' : ''}${p.foreignChangeWeek?.toFixed(1) || 0})` : '';
+    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} R/R=1:${p.rr?.toFixed(2)} RSI=${p.rsi?.toFixed(0)}${kapStr}${newsStr}${foreignStr}`;
   }).join('\n');
 
   return `Sen BIST gunluk strateji uzmanisin. Bugun icin en iyi firsatlari sirala.

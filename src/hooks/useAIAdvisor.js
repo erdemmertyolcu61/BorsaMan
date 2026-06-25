@@ -738,9 +738,9 @@ export function useAIAdvisor(portfolio) {
       } catch { /* non-fatal */ }
 
       // ── v26 FIX 2: MARKET REGIME DETECTION ─────────────────────────────────
-      // BIST100 (XU100) endeksinin gunluk performansi sistemin agresifligini belirler.
-      // BULL gunlerde (>+%1): 8 buy pick agresif yakalar
-      // BEAR gunlerde (<-%0.5): yalnizca 3 yuksek-konfeksiyon pick + agresif sell
+      // BIST100 (XU100) endeksinin gunluk performansi sistemin agresiflig
+      // Kullanıcı her durumda en iyi 8 fırsatı görmek istiyor.
+      const maxBuyPicks = 8;
       // NEUTRAL: 5 pick orta-konservatif
       // Sebep: tek hisse skoru endeks dususune karsi koruyamaz; bear gunlerde
       // tum sektorler asagi gider, en guclu setup'lar bile zarar verir.
@@ -764,10 +764,7 @@ export function useAIAdvisor(portfolio) {
         msg: `Piyasa rejimi: ${marketRegime} (BIST100 ${bistChangePct >= 0 ? '+' : ''}${bistChangePct.toFixed(1)}%)`,
       });
       setMarketRegime({ regime: marketRegime, bistChangePct });
-      // Rejim-bazli pick limiti: BEAR=3, NEUTRAL=5, BULL=8
-      const maxBuyPicks = marketRegime === 'BULL' ? 8
-                       : marketRegime === 'BEAR' ? 3 : 5;
-
+      // Rejim-bazli pick limiti kapatildi, kullanici her zaman 8 pick gormek istiyor.
       // ── v26 FIX 5: Onceki onerilerin hafizasini yukle ───────────────────
       // Bu tarama boyunca her aday "yakinda onerildi mi + dustu mu" kontrol edilir.
       const pickMemory = loadPickMemory();
@@ -1602,8 +1599,13 @@ export function useAIAdvisor(portfolio) {
           // v25: Near-breakout (coil + breakout-ready) — canlida da +18 bonus -> +35'e cikarildi
           const nearBonusA = a._nearBreakoutPick ? 35 : 0; // Kırılıma en yakinlari EN TEPEDE goster
           const nearBonusB = b._nearBreakoutPick ? 35 : 0;
-          const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) + momAdjA + earlyBonusA + nearBonusA;
-          const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) + momAdjB + earlyBonusB + nearBonusB;
+          
+          // ML Boost'un sıralamada etkili olması için çarpılarak puana eklenmesi
+          const mlBonusA = (a.mlConfidenceBoost || 0) * 5;
+          const mlBonusB = (b.mlConfidenceBoost || 0) * 5;
+
+          const scoreA = (a.score || 0) + ((a.momentumScore || 0) * 0.2) + momAdjA + earlyBonusA + nearBonusA + mlBonusA;
+          const scoreB = (b.score || 0) + ((b.momentumScore || 0) * 0.2) + momAdjB + earlyBonusB + nearBonusB + mlBonusB;
           return scoreB - scoreA;
         });
 
@@ -1660,36 +1662,14 @@ export function useAIAdvisor(portfolio) {
         }
       }
 
-      // ── SELL PICKS — short / bearish candidates ──
-      // Stocks that are overbought, distributing, or have bearish technicals.
-      const sellPicks = results
-        .filter(r => {
-          if ((r.atrPct || 0) < 1.0) return false;
-          if (r.cls !== 'sell') return false;
-          if ((r.avgVolumeTL || 0) < MIN_DAILY_VOLUME_TL) return false;
-          // Must have bearish score + at least one confirming bearish signal
-          if (r.score > 44) return false;
-          if ((r.rr || 0) < 1.2) return false;
-          const isOverbought = (r.rsi || 50) > 62;
-          const hasDistribution = r.obvTrend === 'distribution' || (r.cmf || 0) < -0.05;
-          const hasBearishTech = r.supertrend?.trend === 'DOWN' || r.ichimoku?.cloudPosition === 'below';
-          const hasNegativeNews = r.newsCategories?.some(c => ['risk', 'downgrade'].includes(c));
-          return isOverbought || hasDistribution || hasBearishTech || hasNegativeNews;
-        })
-        .map(r => normalizeStopTarget({
-          ...r,
-          sellPotential: calcSellPotential(r),
-          _alreadyHolding: bullishPortfolio.includes(r.symbol),
-          _scanMode: isAfterHours ? 'afterHours' : 'intraday',
-        }))
-        .sort((a, b) => (b.sellPotential || 0) - (a.sellPotential || 0))
-        .slice(0, 3); // max 3 sell candidates alongside buy picks
+      // ── SELL PICKS ──
+      // Kullanıcı talebi: "AI en iyi fırsatlarda sadece en güçlü 8 AL göstersin, Güçlü Sat listesini gösterme."
+      const sellPicks = [];
 
       // ── Fallback: surface at least N buy candidates ──
       // v26 FIX 2: Rejim-bazli minimum (BULL=5, NEUTRAL=4, BEAR=2)
       // Aksi halde fallback BEAR rejimini ezerek tekrar 5'e cikariyor.
-      const minBuyCount = marketRegime === 'BULL' ? 5
-                       : marketRegime === 'BEAR' ? 2 : 4;
+      const minBuyCount = 8;
       let picks = [...buyPicks, ...sellPicks];
       if (buyPicks.length < minBuyCount) {
         const existingSyms = new Set(picks.map(p => p.symbol));
@@ -2376,6 +2356,25 @@ export function useAIAdvisor(portfolio) {
         }
       } catch { /* news enrichment is best-effort */ }
 
+      // ── FOREIGN FLOW ENRICHMENT ──
+      try {
+        const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');
+        const foreignMap = await fetchAllForeignRatios();
+        for (const p of picks) {
+          const fr = foreignMap[p.symbol];
+          if (fr) {
+            p.foreignRatio = fr.ratio;
+            p.foreignChangeWeek = fr.changeWeek;
+            
+            // Akıllı para (smart money) girişi: yabancı takas haftalık artışı >= 0.5% ise bonus
+            if (fr.changeWeek >= 0.5) {
+               p.confidence = Math.min(100, (p.confidence || 50) + 5);
+               if (p.confidenceBreakdown) p.confidenceBreakdown.potential += 5;
+            }
+          }
+        }
+      } catch { /* best effort */ }
+
       // ── INSIDER TRADING ENRICHMENT (v22) ──
       // Top picks'in iceriden islem verilerini cek; insider buy = en guclu kataliz sinyali.
       // KAP'tan yonetici/ortak alim-satim verileri parse edilir.
@@ -2413,6 +2412,22 @@ export function useAIAdvisor(portfolio) {
           }
         }
       } catch { /* insider enrichment is best-effort */ }
+
+      // ── v29 FIX: Ensure all AI Advisor "Buy" picks explicitly say "AL" ──
+      // Bazı hisseler _earlyPick, _mlOverride vb. özel sebeplerle "buyPicks" listesine girse de
+      // orijinal genSignal çıktıları "TUT" (cls='hold') olabiliyor.
+      // AIAdvisorPanel bunları zorla "AL" olarak gösterirken, localStorage'a "TUT" kaydediliyordu.
+      // Bu da Tekil Analiz sekmesi ile panelin senkronizasyonunu bozuyordu.
+      picks = picks.map(p => {
+        if (p.cls !== 'sell') {
+          let sig = p.signal || 'AL';
+          if (!sig.includes('AL') && !sig.includes('SAT')) sig = 'AL';
+          else if (sig.includes('TUT')) sig = 'AL';
+          
+          return { ...p, cls: 'buy', signal: sig };
+        }
+        return p;
+      });
 
       setScanResults(results);
       setTopPicks(picks);

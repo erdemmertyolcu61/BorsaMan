@@ -9,12 +9,12 @@ function DataFreshnessBadge() {
 
   useEffect(() => {
     if (!isTelemetryEnabled()) return;
-    
+
     const update = () => {
       const m = getMetrics();
       setFreshness(m.lastFetch);
     };
-    
+
     update();
     const interval = setInterval(update, 30000); // Update every 30s
     return () => clearInterval(interval);
@@ -30,8 +30,8 @@ function DataFreshnessBadge() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderLeft: '1px solid var(--border)', paddingLeft: 10 }}>
       <span style={{ fontSize: 10, color: 'var(--t3)' }}>Veri:</span>
-      <span style={{ 
-        fontSize: 10, 
+      <span style={{
+        fontSize: 10,
         fontWeight: 600,
         color: isFresh ? 'var(--green)' : isStale ? 'var(--red)' : 'var(--yellow)'
       }}>
@@ -49,9 +49,9 @@ function SourceHealthBadge() {
     const update = () => {
       try {
         setHealth(getSourceHealth());
-      } catch {}
+      } catch { }
     };
-    
+
     update();
     const interval = setInterval(update, 30000);
     return () => clearInterval(interval);
@@ -66,8 +66,8 @@ function SourceHealthBadge() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderLeft: '1px solid var(--border)', paddingLeft: 10 }}>
       <span style={{ fontSize: 10, color: 'var(--t3)' }}>Kaynak:</span>
-      <span style={{ 
-        fontSize: 10, 
+      <span style={{
+        fontSize: 10,
         fontWeight: 600,
         color: hasIssues ? 'var(--yellow)' : 'var(--green)'
       }}>
@@ -84,21 +84,21 @@ function StaleWarningBadge() {
     const update = () => {
       try {
         setFreshness(getAllDataFreshness());
-      } catch {}
+      } catch { }
     };
-    
+
     update();
     const interval = setInterval(update, 60000);
     return () => clearInterval(interval);
   }, []);
 
   const staleSources = Object.entries(freshness).filter(([_, f]) => f.stale);
-  
+
   if (staleSources.length === 0) return null;
 
   return (
-    <div style={{ 
-      display: 'flex', alignItems: 'center', gap: 4, 
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 4,
       borderLeft: '1px solid var(--red)', paddingLeft: 10,
       background: 'rgba(255,0,0,0.1)', borderRadius: 4, padding: '2px 8px'
     }}>
@@ -237,7 +237,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
       }}>
         {scanning ? 'TARANIYOR...' : 'TARA'}
       </button>
-      
+
     </div>
   );
 }
@@ -282,7 +282,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           return safe;
         }
       }
-    } catch {}
+    } catch { }
     return [];
   });
   // Ref to latest displayPicks — read inside async doLivePriceUpdate without stale closure
@@ -296,7 +296,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         const d = JSON.parse(saved);
         return { ts: d.ts, scanned: d.scanned, sentiment: d.sentiment, buys: d.buys, sells: d.sells };
       }
-    } catch {}
+    } catch { }
     return null;
   });
 
@@ -361,9 +361,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       // v27: TOP 5 garantisi — eger panel-side filter picks 5'in altina dusurduyse,
       // scanResults'tan kalan eksikleri doldur (emergency rozetiyle).
       // 3-tier permissive cascade: strict → relaxed → ultra-relaxed
-      if (safe.length < 5 && Array.isArray(scanResults) && scanResults.length > 0) {
+      if (safe.length < 8 && Array.isArray(scanResults) && scanResults.length > 0) {
         const have = new Set(safe.map(p => p.symbol));
-        const need = 5 - safe.length;
+        const need = 8 - safe.length;
         const sortByConf = (a, b) => (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
         const buildFiller = (rows) => rows
           .filter(r => !have.has(r.symbol))
@@ -415,12 +415,12 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
       };
       let pool = scanResults.filter(r => !isUnsafe(r) && (r.score || 0) >= 45 && (r.avgVolumeTL || 0) >= 1_000_000);
-      if (pool.length < 5) {
+      if (pool.length < 8) {
         const have = new Set(pool.map(p => p.symbol));
         const t2 = scanResults.filter(r => !have.has(r.symbol) && (r.avgVolumeTL || 0) >= 200_000 && r.cls !== 'sell');
         pool = [...pool, ...t2];
       }
-      if (pool.length < 5) {
+      if (pool.length < 8) {
         const have2 = new Set(pool.map(p => p.symbol));
         const t3 = scanResults.filter(r => !have2.has(r.symbol));
         pool = [...pool, ...t3];
@@ -446,7 +446,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     } else {
       setDisplayPicks([]);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUpdate]); // Sadece scan bitisinde calis — topPicks/scanResults bunu takip etmesin
 
   // Load fresh meta from localStorage when scan updates it
@@ -458,7 +458,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           const d = JSON.parse(saved);
           if (d?.ts) setCachedMeta({ ts: d.ts, scanned: d.scanned, sentiment: d.sentiment, buys: d.buys, sells: d.sells });
         }
-      } catch {}
+      } catch { }
     };
     window.addEventListener('advisor-scan-complete', handler);
     return () => window.removeEventListener('advisor-scan-complete', handler);
@@ -515,9 +515,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         const adverseRise = (p.cls === 'sell') && (divPct > 3 || todayChg > 2.5);
         return {
           ...p,
-          _livePrice:      live.price,
-          _liveChange:     todayChg,
-          _divergencePct:  divPct,
+          _livePrice: live.price,
+          _liveChange: todayChg,
+          _divergencePct: divPct,
           _isStaleAdverse: adverseDrop || adverseRise,
           _divergenceWarn: Math.abs(divPct) > 6,
         };
@@ -682,8 +682,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             const cfg = r === 'BULL'
               ? { bg: 'rgba(16,232,122,0.18)', fg: '#10e87a', border: 'rgba(16,232,122,0.5)', icon: '🐂' }
               : r === 'BEAR'
-              ? { bg: 'rgba(244,63,94,0.18)', fg: '#ff5470', border: 'rgba(244,63,94,0.5)', icon: '🐻' }
-              : { bg: 'rgba(176,188,205,0.15)', fg: '#b0bccd', border: 'rgba(176,188,205,0.4)', icon: '⚖️' };
+                ? { bg: 'rgba(244,63,94,0.18)', fg: '#ff5470', border: 'rgba(244,63,94,0.5)', icon: '🐻' }
+                : { bg: 'rgba(176,188,205,0.15)', fg: '#b0bccd', border: 'rgba(176,188,205,0.4)', icon: '⚖️' };
             return (
               <span
                 title={`BIST100: ${c >= 0 ? '+' : ''}${c.toFixed(2)}% — ${r === 'BULL' ? 'agresif tarama (8 pick)' : r === 'BEAR' ? 'savunma modu (3 pick + sell odakli)' : 'konservatif (5 pick)'}`}
@@ -736,7 +736,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             {sellCount > 0 && <span style={{ color: '#ff5470', fontWeight: 800 }}> · {sellCount} SAT</span>}
           </span>
           {/* Sentinel symbols preview (collapsed) */}
-          {!open && picks.slice(0, 5).map(p => {
+          {!open && picks.slice(0, 8).map(p => {
             const isSell = p.cls === 'sell';
             return (
               <span key={p.symbol} style={{
@@ -771,8 +771,10 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           )}
           <span
             onClick={() => setOpen(o => !o)}
-            style={{ color: 'var(--t2)', fontSize: 12, cursor: 'pointer',
-              transition: 'transform 0.28s', transform: open ? 'rotate(180deg)' : 'rotate(0)' }}
+            style={{
+              color: 'var(--t2)', fontSize: 12, cursor: 'pointer',
+              transition: 'transform 0.28s', transform: open ? 'rotate(180deg)' : 'rotate(0)'
+            }}
           >▲</span>
           <span
             onClick={() => setDismissed(true)}
@@ -799,7 +801,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       {/* ── Card strip ── */}
       <div style={{
         display: 'flex', gap: 0, overflowX: 'auto', overflowY: 'hidden',
-        minHeight: 185, height: 'auto', alignItems: 'stretch', padding: '8px 12px', boxSizing: 'border-box',
+        minHeight: 165, height: 'auto', alignItems: 'stretch', padding: '6px 12px', boxSizing: 'border-box',
         scrollbarWidth: 'thin',
       }}>
         {/* Empty / loading state */}
@@ -859,14 +861,14 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   )}
                 </div>
                 <div style={{ fontSize: 9, color: 'var(--t3)' }}>
-                  Tarama tamamlandığında en yüksek skorlu 5+ hisse otomatik olarak burada görünecek.
+                  Tarama tamamlandığında en yüksek skorlu 8+ hisse otomatik olarak burada görünecek.
                 </div>
               </>
             )}
           </div>
         )}
 
-        {hasPicks && [...picks].sort((a, b) => (b.score || 0) - (a.score || 0)).map((p, idx) => {
+        {hasPicks && [...picks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 8).map((p, idx) => {
           const isSell = p.cls === 'sell';
           const accent = isSell ? 'var(--red)' : 'var(--green)';
           const accentDim = isSell ? '#ff444418' : '#00e68618';
@@ -884,8 +886,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           const signalLabel = isSell
             ? 'GÜÇLÜ SAT'
             : p.signal?.includes('GÜÇLÜ') ? 'GÜÇLÜ AL'
-            : p.signal?.includes('SAT') ? 'SAT'
-            : 'AL';
+              : p.signal?.includes('SAT') ? 'SAT'
+                : 'AL';
 
           // Guven kirilimi tooltip metni — kullanici hover ile gorebilsin
           const breakdown = p.confidenceBreakdown;
@@ -974,19 +976,19 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           // v6: Renk-kodlu tazelik pill (her zaman gorunur, kullanici tooltip'i acmadan da fark eder)
           const pickAge = p._scanTs ? (() => {
             const mins = Math.floor((Date.now() - p._scanTs) / 60000);
-            if (mins < 5)  return { label: '● TAZE',         color: '#10e87a', bg: 'rgba(16,232,122,0.18)', border: 'rgba(16,232,122,0.45)' };
-            if (mins < 15) return { label: `⚠ ${mins}dk`,    color: '#ff9a3c', bg: 'rgba(255,154,60,0.18)', border: 'rgba(255,154,60,0.45)' };
-            if (mins < 60) return { label: `🔴 ${mins}dk`,   color: '#ff5470', bg: 'rgba(244,63,94,0.18)',  border: 'rgba(244,63,94,0.45)' };
-            return                  { label: `🔴 ${Math.floor(mins/60)}s ESKI`, color: '#ff5470', bg: 'rgba(244,63,94,0.25)', border: 'rgba(244,63,94,0.6)' };
+            if (mins < 5) return { label: '● TAZE', color: '#10e87a', bg: 'rgba(16,232,122,0.18)', border: 'rgba(16,232,122,0.45)' };
+            if (mins < 15) return { label: `⚠ ${mins}dk`, color: '#ff9a3c', bg: 'rgba(255,154,60,0.18)', border: 'rgba(255,154,60,0.45)' };
+            if (mins < 60) return { label: `🔴 ${mins}dk`, color: '#ff5470', bg: 'rgba(244,63,94,0.18)', border: 'rgba(244,63,94,0.45)' };
+            return { label: `🔴 ${Math.floor(mins / 60)}s ESKI`, color: '#ff5470', bg: 'rgba(244,63,94,0.25)', border: 'rgba(244,63,94,0.6)' };
           })() : null;
 
           // Top 5 cards get a subtle glow accent
           const topClass = idx === 0 ? 'ai-pick-top1'
             : idx === 1 ? 'ai-pick-top2'
-            : idx === 2 ? 'ai-pick-top3'
-            : idx === 3 ? 'ai-pick-top4'
-            : idx === 4 ? 'ai-pick-top5'
-            : '';
+              : idx === 2 ? 'ai-pick-top3'
+                : idx === 3 ? 'ai-pick-top4'
+                  : idx === 4 ? 'ai-pick-top5'
+                    : '';
           // Premium gradient background based on signal type
           const cardBg = p._fallback
             ? 'linear-gradient(180deg, #14192410 0%, #0d111c 100%)'
@@ -1001,12 +1003,12 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
               onClick={() => onAnalyze && onAnalyze(p.symbol)}
               title={tooltipLines.join('\n')}
               style={{
-                flexShrink: 0, width: typeof window !== 'undefined' && window.innerWidth <= 768 ? '85vw' : 290,
+                flexShrink: 0, width: typeof window !== 'undefined' && window.innerWidth <= 768 ? '85vw' : 400,
                 background: cardBg,
                 borderLeft: `4px solid ${accent}`,
                 borderRight: '1px solid rgba(255,255,255,0.06)',
                 borderRadius: 5,
-                padding: '11px 13px',
+                padding: '9px 11px',
                 marginRight: 7,
                 cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
@@ -1126,9 +1128,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       sadece historical backtest degil canli forward-test ile de
                       kalibre. */}
                   {(p.mlMatchedCount || 0) > 0 && p.mlBestRule && (() => {
-                    const paperW = p.mlBestRule.paperWinCount  || 0;
+                    const paperW = p.mlBestRule.paperWinCount || 0;
                     const paperL = p.mlBestRule.paperLossCount || 0;
-                    const total  = p.mlBestRule.totalCount     || 0;
+                    const total = p.mlBestRule.totalCount || 0;
                     const paperSamples = paperW + paperL;
                     if (paperSamples < 1 || total < 3) return null;
                     const liveShare = paperSamples / total;
@@ -1158,16 +1160,16 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                     // Devam rengi: > 38% yesil, 27-38% sari, < 27% kirmizi
                     const cpColor = cp == null ? '#fff'
                       : cp >= 38 ? '#10e87a'
-                      : cp >= 27 ? '#fbbf24'
-                      : '#ff5470';
+                        : cp >= 27 ? '#fbbf24'
+                          : '#ff5470';
                     const cpBg = cp == null ? 'rgba(244,63,94,0.25)'
                       : cp >= 38 ? 'rgba(16,232,122,0.15)'
-                      : cp >= 27 ? 'rgba(251,191,36,0.15)'
-                      : 'rgba(244,63,94,0.25)';
+                        : cp >= 27 ? 'rgba(251,191,36,0.15)'
+                          : 'rgba(244,63,94,0.25)';
                     const cpBorder = cp == null ? 'rgba(244,63,94,0.5)'
                       : cp >= 38 ? 'rgba(16,232,122,0.5)'
-                      : cp >= 27 ? 'rgba(251,191,36,0.5)'
-                      : 'rgba(244,63,94,0.5)';
+                        : cp >= 27 ? 'rgba(251,191,36,0.5)'
+                          : 'rgba(244,63,94,0.5)';
                     return (
                       <span style={{
                         fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
@@ -1207,7 +1209,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       "bu hisse son günlerde büyük hareket yaptı, bu yüzden sıralamada geride kalabilir" uyarısı */}
                   {(() => {
                     const todayP = p.todayPumpReal || 0;
-                    const histP  = p.recentPump    || 0;
+                    const histP = p.recentPump || 0;
                     // Sadece bugün düz/az (+%3 alti) ama tarihsel max belirgin yüksekse göster
                     if (histP > todayP + 4 && histP >= 6 && todayP < 3) {
                       return (
@@ -1292,8 +1294,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 // v22: Scan fiyatı strikethrough kaldırıldı — sadece güncel (live)
                 // fiyat gösterilir. Kullanıcı talebi: bayat referans gösterme.
                 const displayPrice = p._livePrice || p.price || 0;
-                const hasLive      = p._livePrice != null && p._livePrice > 0;
-                const liveChg      = p._liveChange ?? p.change ?? 0;
+                const hasLive = p._livePrice != null && p._livePrice > 0;
+                const liveChg = p._liveChange ?? p.change ?? 0;
                 return (
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, marginTop: 6 }}>
                     {/* Ana fiyat: live fiyat (bold beyaz) */}
@@ -1401,10 +1403,10 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   fontSize: 10, fontWeight: 900,
                   background: idx === 0 ? 'linear-gradient(135deg, #ffd700, #ff9d00)'
                     : idx === 1 ? 'linear-gradient(135deg, #c0c0c0, #808080)'
-                    : idx === 2 ? 'linear-gradient(135deg, #cd7f32, #8b4513)'
-                    : idx === 3 ? 'linear-gradient(135deg, #10b981, #059669)'
-                    : idx === 4 ? 'linear-gradient(135deg, #3b82f6, #1d4ed8)'
-                    : 'rgba(0,0,0,0.4)',
+                      : idx === 2 ? 'linear-gradient(135deg, #cd7f32, #8b4513)'
+                        : idx === 3 ? 'linear-gradient(135deg, #10b981, #059669)'
+                          : idx === 4 ? 'linear-gradient(135deg, #3b82f6, #1d4ed8)'
+                            : 'rgba(0,0,0,0.4)',
                   color: idx <= 4 ? (idx <= 2 ? '#000' : '#fff') : 'var(--t3)',
                   padding: '1px 5px', borderRadius: 3,
                   border: idx <= 4 ? 'none' : '1px solid rgba(255,255,255,0.05)',

@@ -38,12 +38,14 @@ export async function getLiveIndicators() {
   const usdtryTrend = ctx?.usdtry
     ? (ctx.usdtry.change5d >= 0 ? 'yukselis' : 'dusus')
     : 'yukselis';
-  const tcmbRate = ctx?.tcmb?.rate ?? 42.5;
+  const tcmbRate = ctx?.tcmb?.rate ?? 50.0;
+  const vixVal = ctx?.vix?.value ?? 0;
+  const brentVal = ctx?.brent?.value ?? 0;
   return {
-    policyRate: { label: 'TCMB Faiz', value: tcmbRate, unit: '%', trend: 'dusus' },
-    tufe:       { label: 'TUFE',      value: 38.1,     unit: '%', trend: 'dusus' },
+    policyRate: { label: 'TCMB Faiz', value: tcmbRate, unit: '%', trend: 'yatay' },
+    vix:        { label: 'VIX',       value: vixVal,   unit: '', trend: ctx?.vix?.change5d >= 0 ? 'yukselis' : 'dusus' },
     usdtry:     { label: 'USDTRY',    value: usdtryVal, unit: '', trend: usdtryTrend },
-    bist100:    { label: 'BIST100',   value: 10245,    unit: '',  trend: 'yukselis' },
+    brent:      { label: 'BRENT',     value: brentVal, unit: '$', trend: ctx?.brent?.change5d >= 0 ? 'yukselis' : 'dusus' },
   };
 }
 
