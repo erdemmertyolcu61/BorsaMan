@@ -618,9 +618,6 @@ function _buildRacers(targetUrl, ms) {
   const publicProxies = [
     { label: 'corsproxy.io',   url: 'https://corsproxy.io/?' + encodeURIComponent(targetUrl) },
     { label: 'codetabs',       url: 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl) },
-    { label: 'thingproxy',     url: 'https://thingproxy.freeboard.io/fetch/' + targetUrl },
-    { label: 'corsproxy.org',  url: 'https://proxy.cors.sh/' + targetUrl },
-    { label: 'cors.lol',       url: 'https://api.cors.lol/?url=' + encodeURIComponent(targetUrl) },
   ];
   for (const p of publicProxies) {
     if (!_isCircuitOpen(p.label)) racers.push({ ...p, timeout: ms });

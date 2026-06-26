@@ -207,6 +207,40 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
         sig.t1 = cachedPick.target;
       }
 
+      // ── v30 FIX: SYNC HOLD TEXT AND LONG TERM VIEW WITH FINAL AI DECISION ──
+      // Orijinal teknik sinyal "TUT" veya "IZLE" iken, AI Advisor/ML hisseyi "AL" olarak terfi ettirmisse, 
+      // kullanicida celiski yaratmamak icin "Tutma Suresi" ve "Uzun Vadeli Gorunum"u de AI karariyla senkronize ediyoruz.
+      if (sig.cls === 'buy' && sig.longTermView?.recommendation && 
+         (sig.longTermView.recommendation.includes('IZLE') || sig.longTermView.recommendation.includes('UZAK DUR') || sig.longTermView.recommendation.includes('NOTR'))) {
+        sig.longTermView = {
+          recommendation: 'YUKSELIS POTANSIYELI (AI ONAYLI)',
+          color: 'var(--cyan)',
+          horizon: '1-3 ay',
+          reason: 'Makro uzun vadeli ortalamalar henuz net bir trend gostermese de, AI Uzman ve ML kurallari erken alim veya hacim kirilimi tespit etti.'
+        };
+        if (sig.holdText && (sig.holdText.includes('1-3 gün') || sig.holdText.includes('Gün İçi'))) {
+          sig.holdText = '2-5 hafta (Erken Yakalama / Trend Donusu)';
+        }
+      } else if (sig.cls === 'sell' && sig.longTermView?.recommendation && 
+                (sig.longTermView.recommendation.includes('AL') || sig.longTermView.recommendation.includes('TUT'))) {
+        sig.longTermView = {
+          recommendation: 'KISA VADELI DUZELTME RISKI',
+          color: 'var(--orange)',
+          horizon: '1-4 hafta',
+          reason: 'Uzun vadeli trend guclu kalsa da, AI Uzman asiri alim, tukenis veya dagilim tuzagi tespit etti. Kar realizasyonu riski yuksek.'
+        };
+      }
+      
+      if (cachedPick?._earlyPick) {
+         sig.holdText = '3-6 hafta (Erken Birikim Beklentisi)';
+         sig.longTermView = {
+            recommendation: 'ERKEN BIRIKIM FIRSATI',
+            color: 'var(--purple)',
+            horizon: '1-3 ay',
+            reason: 'Hisse henuz yatay veya dusus bandinda gorunse de, Akilli Para (OBV/CMF) ve hacim birikimi sinyalleri cok guclu. Trend patlamasi oncesi potansiyel firsat.'
+         };
+      }
+
       setGData(data); setGInd(ind); setGSig(sig);
       // Picks panel ile sync icin event dispatch — cache picks bayat ise kullanici gorur
       try {

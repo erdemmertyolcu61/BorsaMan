@@ -12,6 +12,7 @@
 
 import { logError } from './errorLogger.js';
 import { buildMacroPromptLine } from './macroContextEngine.js';
+import { PROXY_BASE_URL } from './fetchEngine.js';
 
 const API_KEY_STORAGE = 'claude_api_key';
 const PROXY_CLAUDE_ENDPOINT = '/api/claude'; // relative — served by proxy server
@@ -289,7 +290,12 @@ async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAU
   if (tools && tools.length) payload.tools = tools;
 
   try {
-    const res = await fetch(PROXY_CLAUDE_ENDPOINT, {
+    const baseUrl = PROXY_BASE_URL || '';
+    if (!baseUrl) {
+      return { error: 'CORS Proxy URL ayarlanmamis. Ayarlardan Vercel Proxy URL\'nizi girin.' };
+    }
+    const endpoint = baseUrl.replace(/\/+$/, '') + PROXY_CLAUDE_ENDPOINT;
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -388,6 +394,61 @@ export async function askDailyPicks(picks, market) {
     temperature: DEFAULT_TEMPERATURE,
     maxTokens: 900,
   });
+}
+
+// ── Daily Market Intelligence (News & Events) ──────────────────────────────
+export async function askMarketIntel(newsList = []) {
+  const newsText = newsList.map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
+
+  const prompt = `Sen BIST (Borsa Istanbul) istihbarat sefisin.
+Sana asagida bugunun bazi RSS haberlerini verdim. Ancak bu yeterli degil.
+Senden IKI GOREVIN var:
+1. "web_search" aracini kullanarak bugunun (son 24 saat) "Borsa Istanbul araci kurum raporlari", "BIST 100 uzman yorumlari", "Hisse model portfoy guncellemeleri" gibi aramalar yap. Finans uzmanlarinin, analistlerin ve kurumlarin hangi hisselere AL verdigini veya hedef fiyat yukselttigini bul.
+2. Bu topladigin verileri ve asagidaki RSS haberlerini birlestirip bana detayli bir JSON raporu dondur.
+
+=== BUGUNUN RSS HABERLERI ===
+${newsText || 'Haber yok.'}
+
+=== CIKTI FORMATI ===
+SADECE gecerli bir JSON dondur, baska metin yazma.
+JSON formati su sekilde olmali:
+{
+  "newsMarkdown": "Günün en önemli 3 finans/ekonomi haberi ve etkileri. Sadece haberler. 1-2 paragraf.",
+  "expertMarkdown": "Web aramasindan buldugun ARACI KURUM / UZMAN yorumlari. Hangi uzman hangi hisse icin ne demis? Liste halinde.",
+  "impacts": [
+    {
+      "symbol": "ASELS",
+      "impact": 15, // Pozitif haber/yorum icin +10 ile +20 arasi, negatif icin -10 ile -20 arasi
+      "reason": "Ziraat Yatirim hedef fiyatini yukseltti ve model portfoyune ekledi."
+    }
+  ]
+}
+
+- impacts dizisine en cok etkilenen max 6 hisseyi ekle.
+- Sadece JSON dondur.`;
+
+  const result = await callClaude({
+    prompt,
+    systemPrompt: 'Sen BIST piyasa istihbarati analistisin. Istenilen formati (JSON) kesinlikle bozma.',
+    temperature: 0.6,
+    maxTokens: 1500,
+    tools: [{
+      type: 'web_search_20241020',
+      name: 'web_search',
+      max_uses: 3,
+    }],
+    useCache: false
+  });
+
+  if (result.error) return { error: result.error };
+  try {
+    const m = result.text.match(/\\{[\s\S]*\\}/);
+    if (!m) return JSON.parse(result.text); // Try direct parse
+    return JSON.parse(m[0]);
+  } catch (e) {
+    console.error("Market Intel JSON Parse Error:", e, result.text);
+    return null;
+  }
 }
 
 // ── Strategy code generation (natural-language → JS filter) ───────────────

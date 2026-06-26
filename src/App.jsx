@@ -21,6 +21,7 @@ import Tabs from './components/Tabs/Tabs.jsx';
 import MobileNav from './components/MobileNav/MobileNav.jsx';
 import ScanHistoryDrawer from './components/AIAdvisor/ScanHistoryDrawer.jsx';
 import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
+import MarketIntelPanel from './components/MarketIntel/MarketIntelPanel.jsx';
 
 export default function App() {
   const state = useAppState();
@@ -275,6 +276,10 @@ export default function App() {
       />
 
       <Tabs activeTab={state.activeTab} onTabChange={state.setActiveTab} />
+
+      <div className={`tab-content ${state.activeTab === 'intel' ? 'active' : ''}`}>
+        <MarketIntelPanel />
+      </div>
 
       <div className={`tab-content ${state.activeTab === 'analyze' ? 'active' : ''}`}>
         <AnalyzeTab

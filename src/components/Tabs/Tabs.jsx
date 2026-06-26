@@ -1,5 +1,6 @@
 export default function Tabs({ activeTab, onTabChange }) {
   const tabs = [
+    { id: 'intel',    label: '🌍 İstihbarat' },
     { id: 'analyze',  label: '◉ Tekil Analiz' },
     { id: 'trades',   label: '★ Günlük İntraday Trade' },
     { id: 'signals',  label: '◈ Sinyal Takibi' },

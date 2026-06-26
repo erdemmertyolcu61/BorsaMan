@@ -51,6 +51,9 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
+      }).catch((err) => {
+        // Return a generic response instead of throwing to avoid console pollution
+        return new Response('', { status: 502, statusText: 'Bad Gateway (sw.js fetch failed)' });
       });
     })
   );

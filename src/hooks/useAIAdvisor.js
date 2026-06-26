@@ -2356,6 +2356,10 @@ export function useAIAdvisor(portfolio) {
         }
       } catch { /* news enrichment is best-effort */ }
 
+      // ── Custom Events & Market Intel Enrichment ──
+      // (User requested: do not add points to stocks, keep system independent)
+      // Removed point injection logic.
+
       // ── FOREIGN FLOW ENRICHMENT ──
       try {
         const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');

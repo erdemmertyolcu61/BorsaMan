@@ -1,15 +1,26 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { PROXY_BASE_URL, setProxyBaseUrl, getProxyStats } from '../../utils/fetchEngine.js';
+import { getApiKey, setApiKey } from '../../utils/claude.js';
+import { getGeminiApiKey, setGeminiApiKey } from '../../utils/gemini.js';
 
 export default function ProxySettings() {
   const [url, setUrl] = useState(PROXY_BASE_URL || '');
+  const [claudeKey, setClaudeKey] = useState('');
+  const [geminiKey, setGeminiKey] = useState('');
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const stats = getProxyStats();
 
+  useEffect(() => {
+    setClaudeKey(getApiKey());
+    setGeminiKey(getGeminiApiKey());
+  }, []);
+
   const save = () => {
     setProxyBaseUrl(url.trim());
+    setApiKey(claudeKey.trim());
+    setGeminiApiKey(geminiKey.trim());
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -42,6 +53,44 @@ export default function ProxySettings() {
       border: '1px solid var(--border)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 14 }}>🤖</span>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
+          Claude API Anahtari (Anthropic)
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 16 }}>
+        <input
+          className="inp"
+          type="password"
+          value={claudeKey}
+          onChange={e => setClaudeKey(e.target.value)}
+          onBlur={save}
+          placeholder="sk-ant-api03-..."
+          style={{ flex: 1, fontSize: 10, padding: 7 }}
+        />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 14 }}>✨</span>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
+          Gemini API Anahtari (Haberler Icin)
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 16 }}>
+        <input
+          className="inp"
+          type="password"
+          value={geminiKey}
+          onChange={e => setGeminiKey(e.target.value)}
+          onBlur={save}
+          placeholder="AIzaSy..."
+          style={{ flex: 1, fontSize: 10, padding: 7 }}
+        />
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 14 }}>🌐</span>
         <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
           CORS Proxy Ayarlari
@@ -59,6 +108,7 @@ export default function ProxySettings() {
           className="inp"
           value={url}
           onChange={e => setUrl(e.target.value)}
+          onBlur={save}
           placeholder="https://your-proxy.vercel.app"
           style={{ flex: 1, fontSize: 10, padding: 7 }}
         />

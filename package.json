@@ -72,6 +72,7 @@
     "@capacitor/core": "^8.3.0",
     "@capacitor/ios": "^8.3.0",
     "@capacitor/local-notifications": "^8.0.2",
+    "@google/generative-ai": "^0.24.1",
     "app-builder-bin": "^5.0.0-alpha.12",
     "better-sqlite3": "^12.9.0",
     "borsajs": "^0.3.0",

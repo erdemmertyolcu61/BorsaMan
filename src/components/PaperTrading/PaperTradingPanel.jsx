@@ -340,7 +340,7 @@ function MLForwardTestPanel({ paperML }) {
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                       <span style={{ fontSize: 8, color: 'var(--t3)' }}>
-                        {new Date(trade.opened_at).toLocaleDateString('tr-TR')}
+                        {new Date(trade.opened_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
                       </span>
                       <button onClick={() => closeTrade(trade.id, cur)} style={{
                         fontSize: 9, padding: '3px 9px', borderRadius: 4, cursor: 'pointer',
@@ -380,7 +380,7 @@ function MLForwardTestPanel({ paperML }) {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: 'var(--t3)' }}>
-                    {['Sembol', 'ML Boost', 'Giris', 'Cikis', 'Neden', 'P&L TL', 'P&L %', 'Lot', 'Sure', 'ML Kural'].map(h => (
+                    {['Sembol', 'ML Boost', 'Zaman', 'Giris', 'Cikis', 'Neden', 'P&L TL', 'P&L %', 'Lot', 'Sure', 'ML Kural'].map(h => (
                       <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 600, letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -404,6 +404,10 @@ function MLForwardTestPanel({ paperML }) {
                             color: (t.ml_confidence || 0) >= 5 ? '#ffd700' : '#06b6d4',
                             border: `1px solid ${(t.ml_confidence || 0) >= 5 ? 'rgba(255,215,0,0.3)' : 'rgba(6,182,212,0.3)'}`,
                           }}>+{(t.ml_confidence || 0).toFixed(1)}</span>
+                        </td>
+                        <td style={{ padding: '7px 10px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>
+                          <div style={{ fontSize: 8 }}>{new Date(t.opened_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                          <div style={{ fontSize: 8 }}>{t.closed_at ? new Date(t.closed_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</div>
                         </td>
                         <td style={{ padding: '7px 10px', color: 'var(--t2)' }}>{t.entry_price?.toFixed(2)}</td>
                         <td style={{ padding: '7px 10px', color: 'var(--t2)' }}>{t.exit_price?.toFixed(2)}</td>
@@ -668,7 +672,7 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
                     <PosProgressBar pos={pos} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                       <span style={{ fontSize: 8, color: 'var(--t3)' }}>
-                        {new Date(pos.openedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(pos.openedAt).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
                         {pos.source === 'advisor_auto' ? ' · AUTO' : pos.source === 'manual' ? ' · MANUEL' : ''}
                       </span>
                       <button onClick={() => closePosition(pos.symbol, cur)} style={{
@@ -708,7 +712,7 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: 'var(--t3)' }}>
-                    {['Sembol', 'Giris', 'Cikis', 'Neden', 'P&L TL', 'P&L %', 'Lot', 'Sure', 'Conf'].map(h => (
+                    {['Sembol', 'Zaman', 'Giris', 'Cikis', 'Neden', 'P&L TL', 'P&L %', 'Lot', 'Sure', 'Conf'].map(h => (
                       <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 600, letterSpacing: 0.3, whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -725,6 +729,10 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
                         <td style={{ padding: '7px 10px', fontWeight: 700, color: 'var(--t1)' }}>
                           {t.symbol}
                           {t._earlyPick && <span style={{ marginLeft: 4, fontSize: 7, color: '#a78bfa' }}>ERKEN</span>}
+                        </td>
+                        <td style={{ padding: '7px 10px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>
+                          <div style={{ fontSize: 8 }}>{new Date(t.openedAt).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+                          <div style={{ fontSize: 8 }}>{t.closedAt ? new Date(t.closedAt).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</div>
                         </td>
                         <td style={{ padding: '7px 10px', color: 'var(--t2)' }}>{t.entry?.toFixed(2)}</td>
                         <td style={{ padding: '7px 10px', color: 'var(--t2)' }}>{t.exit?.toFixed(2)}</td>
