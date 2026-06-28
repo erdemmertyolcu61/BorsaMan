@@ -200,3 +200,36 @@ describe('setSignalReliabilityHints', () => {
     expect(unchanged.score).toBe(baseline.score);
   });
 });
+
+// ── NaN / Infinity guards (math safety) ──────────────────────────────────
+describe('NaN/Infinity guards', () => {
+  const flatPrices = Array.from({ length: 220 }, (_, i) => ({
+    date: new Date(2024, 0, i + 1),
+    open: 100, high: 100, low: 100, close: 100, volume: 1000,
+  }));
+
+  const shortPrices = Array.from({ length: 5 }, (_, i) => ({
+    date: new Date(2024, 0, i + 1),
+    open: 50 + i, high: 51 + i, low: 49 + i, close: 50 + i, volume: 500,
+  }));
+
+  it('flat prices (H=L=C) → genSignal returns finite score and rr', () => {
+    const ind = calcAll(flatPrices);
+    const sig = genSignal(ind, flatPrices);
+    expect(Number.isFinite(sig.score)).toBe(true);
+    expect(sig.rr === null || Number.isFinite(sig.rr)).toBe(true);
+  });
+
+  it('short series (5 bars) → no NaN in output', () => {
+    const ind = calcAll(shortPrices);
+    const sig = genSignal(ind, shortPrices);
+    expect(Number.isFinite(sig.score)).toBe(true);
+  });
+
+  it('collapsed Bollinger bands → bollPct is null or finite', () => {
+    const ind = calcAll(flatPrices);
+    const sig = genSignal(ind, flatPrices);
+    const bp = sig.bollPct;
+    expect(bp === null || bp === undefined || Number.isFinite(bp)).toBe(true);
+  });
+});

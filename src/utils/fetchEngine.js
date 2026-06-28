@@ -269,11 +269,14 @@ export async function fetchBigParaBatchPrices() {
     const json = JSON.parse(text);
     const prices = {};
     const list = json?.data || json || [];
+    let attempted = 0, skipped = 0;
     if (Array.isArray(list)) {
       for (const item of list) {
+        attempted++;
         const sym = (item.symbol || item.kod || item.hpiKod || '').replace('.E', '').replace('.IS', '');
-        if (!sym) continue;
-        
+        if (!sym) { skipped++; continue; }
+
+        let priceObj;
         // IsYatirim format
         if (item.symbol) {
           const sonFiyat = parseFloat(item.last || item.dayClose || 0);
@@ -283,7 +286,7 @@ export async function fetchBigParaBatchPrices() {
           if (kapanisFiy > 0 && sonFiyat > 0) {
             change = ((sonFiyat - kapanisFiy) / kapanisFiy) * 100;
           }
-          prices[sym] = {
+          priceObj = {
             price: liveF,
             son: sonFiyat,
             prevClose: kapanisFiy,
@@ -293,25 +296,30 @@ export async function fetchBigParaBatchPrices() {
             low: parseFloat(item.low || 0),
             open: parseFloat(item.open || 0),
           };
-          continue;
+        } else {
+          // BigPara format (fallback if another proxy returned it)
+          const sonFiyat   = parseFloat(item.son || 0);
+          const kapanisFiy = parseFloat(item.kapanis || 0);
+          const liveF = sonFiyat > 0 ? sonFiyat : 0;
+          priceObj = {
+            price:     liveF,
+            son:       sonFiyat,
+            prevClose: kapanisFiy,
+            change:    parseFloat(item.yuzde || item.yuzdeDegisim || item.degisim || 0),
+            volume:    parseInt(item.hacim || item.hacimLot || 0),
+            high:      parseFloat(item.yuksek || 0),
+            low:       parseFloat(item.dusuk || 0),
+            open:      parseFloat(item.acilis || 0),
+          };
         }
-
-        // BigPara format (fallback if another proxy returned it)
-        const sonFiyat   = parseFloat(item.son || 0);
-        const kapanisFiy = parseFloat(item.kapanis || 0);
-        const liveF = sonFiyat > 0 ? sonFiyat : 0;
-        prices[sym] = {
-          price:     liveF,
-          son:       sonFiyat,
-          prevClose: kapanisFiy,
-          change:    parseFloat(item.yuzde || item.yuzdeDegisim || item.degisim || 0),
-          volume:    parseInt(item.hacim || item.hacimLot || 0),
-          high:      parseFloat(item.yuksek || 0),
-          low:       parseFloat(item.dusuk || 0),
-          open:      parseFloat(item.acilis || 0),
-        };
+        if (!Number.isFinite(priceObj.price) || priceObj.price <= 0) { skipped++; continue; }
+        prices[sym] = priceObj;
       }
     }
+    if (attempted > 0 && skipped / attempted > 0.10) {
+      console.warn(`[fetchEngine] Batch: ${skipped}/${attempted} sembol atlandı (${(skipped/attempted*100).toFixed(1)}%)`);
+    }
+    prices._meta = { attempted, succeeded: attempted - skipped, skipped, ts: Date.now() };
     if (Object.keys(prices).length > 50) {
       _batchPriceCache = { ts: Date.now(), data: prices };
       recordSourceSuccess('bigpara', Date.now() - t0);

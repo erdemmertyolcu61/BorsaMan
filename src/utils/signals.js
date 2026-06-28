@@ -10,6 +10,12 @@ import { applyCalibrationToScore } from './signalCalibration.js';
 // price-check cycle. genSignal reads them to self-attenuate when
 // the system is consistently losing on a signal class.
 // ══════════════════════════════════════════════════════════════════
+function safeDivide(num, den, fallback = 0) {
+  if (!den || !Number.isFinite(den)) return fallback;
+  const r = num / den;
+  return Number.isFinite(r) ? r : fallback;
+}
+
 const _reliabilityHints = {};
 
 /**
@@ -1516,13 +1522,16 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   let dailyRange = 0, avgDailyPct = 0;
   if (prices && prices.length >= 5) {
     const ranges = [];
-    for (let di = Math.max(0, prices.length - 10); di < prices.length; di++) ranges.push((prices[di].high - prices[di].low) / prices[di].close * 100);
-    avgDailyPct = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+    for (let di = Math.max(0, prices.length - 10); di < prices.length; di++) {
+      const cl = prices[di].close;
+      if (cl > 0) ranges.push((prices[di].high - prices[di].low) / cl * 100);
+    }
+    avgDailyPct = ranges.length > 0 ? ranges.reduce((a, b) => a + b, 0) / ranges.length : 0;
     dailyRange = avgDailyPct;
   }
   const intradayTarget = p * (1 + avgDailyPct * 0.4 / 100);
   const intradayStop = p * (1 - avgDailyPct * 0.25 / 100);
-  const intradayRR = (intradayTarget - p) / (p - intradayStop);
+  const intradayRR = safeDivide(intradayTarget - p, p - intradayStop, 0);
 
   const baseSig = {
     signal, cls, score: score100, rawScore, conf: conf.toFixed(0), reasons,
@@ -1531,7 +1540,7 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     calibration: calibrationInfo,
     ma20pct: ind.lastMA20 ? (p - ind.lastMA20) / ind.lastMA20 * 100 : null,
     ma50pct: ind.lastMA50 ? (p - ind.lastMA50) / ind.lastMA50 * 100 : null,
-    bollPct: ind.lastBU && ind.lastBL ? (p - ind.lastBL) / (ind.lastBU - ind.lastBL) * 100 : null,
+    bollPct: ind.lastBU && ind.lastBL && ind.lastBU !== ind.lastBL ? (p - ind.lastBL) / (ind.lastBU - ind.lastBL) * 100 : null,
     indicators: ind
   };
 

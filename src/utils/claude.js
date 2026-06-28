@@ -18,6 +18,7 @@ const API_KEY_STORAGE = 'claude_api_key';
 const PROXY_CLAUDE_ENDPOINT = '/api/claude'; // relative — served by proxy server
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
 const DEFAULT_TEMPERATURE = 0.6;
+const CLAUDE_TIMEOUT_MS = 60_000;
 
 export function setApiKey(key) {
   if (typeof key === 'string' && key.trim()) {
@@ -289,22 +290,26 @@ async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAU
   };
   if (tools && tools.length) payload.tools = tools;
 
+  let tid;
   try {
     const baseUrl = PROXY_BASE_URL || '';
     if (!baseUrl) {
       return { error: 'CORS Proxy URL ayarlanmamis. Ayarlardan Vercel Proxy URL\'nizi girin.' };
     }
     const endpoint = baseUrl.replace(/\/+$/, '') + PROXY_CLAUDE_ENDPOINT;
+    const controller = new AbortController();
+    tid = setTimeout(() => controller.abort(), CLAUDE_TIMEOUT_MS);
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
-        // Required beta header for prompt caching. Harmless if disabled upstream.
         'anthropic-beta': 'prompt-caching-2024-07-31',
       },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
+    clearTimeout(tid);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       return { error: `Claude HTTP ${res.status}: ${text.slice(0, 200)}` };
@@ -317,6 +322,9 @@ async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAU
       .trim();
     return { text, raw: data };
   } catch (err) {
+    clearTimeout(tid);
+    if (err.name === 'AbortError')
+      return { error: `Claude API zaman asimi (${CLAUDE_TIMEOUT_MS / 1000}s). Tekrar deneyin.` };
     return { error: err.message || String(err) };
   }
 }
