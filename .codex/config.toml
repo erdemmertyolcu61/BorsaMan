@@ -1,3 +1,0 @@
-[mcp_servers.bist-mcp]
-command = "python"
-args = ["custom_bist_mcp.py"]

@@ -85,7 +85,7 @@ export async function fetchForeignRatio(symbol) {
 
 // EVDS API Key Management
 export function getEvdsApiKey() {
-  return localStorage.getItem('bist_evds_api_key') || '84B4bchcFt';
+  return localStorage.getItem('bist_evds_api_key') || '';
 }
 
 export function setEvdsApiKey(key) {

@@ -22,6 +22,7 @@ import MobileNav from './components/MobileNav/MobileNav.jsx';
 import ScanHistoryDrawer from './components/AIAdvisor/ScanHistoryDrawer.jsx';
 import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
 import MarketIntelPanel from './components/MarketIntel/MarketIntelPanel.jsx';
+import DashboardTab from './components/Dashboard/DashboardTab.jsx';
 
 export default function App() {
   const state = useAppState();
@@ -110,6 +111,7 @@ export default function App() {
       sector: pick.sector,
       grade: pick.grade,
       tier: pick.tier,
+      regime: advisor.marketSentiment?.regime || null,
       liquidity: pick.liquidityScore || pick.liquidity,
       firedSignals: pick.firedSignals || [],
       mlConfidenceBoost: pick.mlConfidenceBoost,
@@ -277,6 +279,19 @@ export default function App() {
 
       <Tabs activeTab={state.activeTab} onTabChange={state.setActiveTab} />
 
+      <div className={`tab-content ${state.activeTab === 'dashboard' ? 'active' : ''}`}>
+        <DashboardTab
+          portfolio={state.portfolio}
+          advisor={advisor}
+          signalTracker={signalTracker}
+          forwardJournal={forwardJournal}
+          livePrice={livePrice}
+          alertLog={alertLog}
+          onAnalyze={handleAIAnalyze}
+          onTabChange={state.setActiveTab}
+        />
+      </div>
+
       <div className={`tab-content ${state.activeTab === 'intel' ? 'active' : ''}`}>
         <MarketIntelPanel />
       </div>
@@ -320,7 +335,7 @@ export default function App() {
       </div>
 
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>
-        <ForwardAccuracyPanel journal={forwardJournal} />
+        <ForwardAccuracyPanel journal={forwardJournal} signalTracker={signalTracker} />
         <SignalsTab
           tracker={signalTracker}
           onAnalyze={handleAIAnalyze}

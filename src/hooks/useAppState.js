@@ -37,7 +37,7 @@ function savePortfolio(pf) {
 }
 
 export function useAppState() {
-  const [activeTab, setActiveTab] = useState('analyze');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [badge, setBadge] = useState({ text: 'Hazir', cls: 'ok' });
   const [logs, setLogs] = useState([{ msg: 'Sistem hazir.', cls: 'info' }]);
   const [gData, setGData] = useState(null);

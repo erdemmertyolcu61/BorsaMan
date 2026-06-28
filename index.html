@@ -47,6 +47,20 @@
     @media all and (display-mode: standalone) {
       body { padding-top: env(safe-area-inset-top); }
     }
+    /* PWA splash / loading state before JS loads */
+    #root:empty {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; background: #06090f;
+    }
+    #root:empty::after {
+      content: 'BIST AI';
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: 28px; font-weight: 700; color: #00e676;
+      animation: splashPulse 1.5s ease-in-out infinite;
+    }
+    @keyframes splashPulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+    }
   </style>
 </head>
 <body>

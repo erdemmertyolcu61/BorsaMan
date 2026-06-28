@@ -613,12 +613,16 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
 
   return (
     <div style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 900,
+      position: 'fixed', left: 0, right: 0, zIndex: 900,
+      bottom: typeof window !== 'undefined' && window.innerWidth <= 768
+        ? 'calc(56px + env(safe-area-inset-bottom, 0px))'
+        : 0,
       background: 'linear-gradient(180deg, #0d1320 0%, #0a0e17 100%)',
       borderTop: '2px solid transparent',
       borderImage: 'linear-gradient(90deg, #06b6d4, #8b5cf6, #06b6d4) 1',
       transition: 'max-height 0.28s ease',
-      maxHeight: open ? 400 : 40, overflow: 'hidden',
+      maxHeight: open ? (typeof window !== 'undefined' && window.innerWidth <= 768 ? 260 : 400) : 40,
+      overflow: 'hidden',
       boxShadow: '0 -8px 32px rgba(0, 230, 230, 0.12), 0 -4px 24px rgba(0,0,0,0.6)',
     }}>
       {/* Animated top accent line */}
@@ -801,8 +805,13 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       {/* ── Card strip ── */}
       <div style={{
         display: 'flex', gap: 0, overflowX: 'auto', overflowY: 'hidden',
-        minHeight: 165, height: 'auto', alignItems: 'stretch', padding: '6px 12px', boxSizing: 'border-box',
+        minHeight: typeof window !== 'undefined' && window.innerWidth <= 768 ? 130 : 165,
+        height: 'auto', alignItems: 'stretch',
+        padding: typeof window !== 'undefined' && window.innerWidth <= 768 ? '4px 8px' : '6px 12px',
+        boxSizing: 'border-box',
         scrollbarWidth: 'thin',
+        WebkitOverflowScrolling: 'touch',
+        scrollSnapType: 'x mandatory',
       }}>
         {/* Empty / loading state */}
         {!hasPicks && (
@@ -1003,17 +1012,18 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
               onClick={() => onAnalyze && onAnalyze(p.symbol)}
               title={tooltipLines.join('\n')}
               style={{
-                flexShrink: 0, width: typeof window !== 'undefined' && window.innerWidth <= 768 ? '85vw' : 400,
+                flexShrink: 0, width: typeof window !== 'undefined' && window.innerWidth <= 768 ? '80vw' : 400,
                 background: cardBg,
                 borderLeft: `4px solid ${accent}`,
                 borderRight: '1px solid rgba(255,255,255,0.06)',
                 borderRadius: 5,
-                padding: '9px 11px',
+                padding: typeof window !== 'undefined' && window.innerWidth <= 768 ? '8px 9px' : '9px 11px',
                 marginRight: 7,
                 cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
                 opacity: p._fallback ? 0.82 : 1,
                 position: 'relative',
+                scrollSnapAlign: 'start',
               }}
             >
               {/* Row 1: symbol + sector + signal + grade + early */}

@@ -1,6 +1,13 @@
 node_modules
 release/
+dist/
 dist-final-verify/
 dist-test/
+coverage/
+graphify-out/
+.codex/
 *.exe
 *.msi
+*.db
+*.sqlite
+*.log

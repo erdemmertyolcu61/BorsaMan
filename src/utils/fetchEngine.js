@@ -1,7 +1,16 @@
 // Configurable self-hosted proxy URL (set to your Vercel deployment URL)
-// Auto-load self-hosted proxy URL from localStorage
+// Auto-detect: on Vercel (same origin has /api/proxy), use '' (same-origin).
+// On localhost dev, Vite proxy handles /api/* routes.
+// Manual override via localStorage still works.
 export let PROXY_BASE_URL = '';
-try { PROXY_BASE_URL = localStorage.getItem('bist_proxy_url') || ''; } catch {}
+try {
+  const stored = localStorage.getItem('bist_proxy_url');
+  if (stored) {
+    PROXY_BASE_URL = stored;
+  } else if (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) {
+    PROXY_BASE_URL = location.origin;
+  }
+} catch {}
 export function setProxyBaseUrl(url) {
   PROXY_BASE_URL = (url || '').replace(/\/+$/, ''); // Remove trailing slashes
   try { localStorage.setItem('bist_proxy_url', PROXY_BASE_URL); } catch {}

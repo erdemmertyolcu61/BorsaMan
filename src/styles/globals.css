@@ -16,6 +16,11 @@
    --advisor-panel-height is published by AIAdvisorDetailPanel (235/40/0px). */
 body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 .main{height:calc(100vh - 86px - var(--advisor-panel-height,0px) - 12px)}
+@media (max-width: 768px) {
+  /* On mobile: MobileNav (56px) + safe area + advisor panel */
+  body { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + var(--advisor-panel-height, 0px) + 12px) !important; }
+  .main { height: auto !important; min-height: calc(100vh - 56px); }
+}
 
 /* ── PWA / Mobile Overrides ────────────────────────────────────────── */
 @media (max-width: 768px) {
@@ -28,14 +33,52 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
   .a-item { font-size: 12px !important; }
   .conf-txt, .sig-lbl { font-size: 12px !important; }
   .disc { font-size: 11px !important; }
-  
+
   /* Ensure touch targets meet minimum 44px height */
   .btn, .qs, .sf-btn, .tab, .mobile-nav-item, select.inp, input.inp, .s-sym, .hdr-icon-btn {
     min-height: 44px !important;
   }
-  
+
   /* Ensure body has enough padding for MobileNav and Safe Area */
   body {
     padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
   }
+
+  /* Prevent horizontal overflow on small screens */
+  .sec { padding: 12px !important; overflow-x: hidden; }
+  body { overflow-x: hidden; }
+  #root { overflow-x: hidden; max-width: 100vw; }
+
+  /* Fix tables from overflowing */
+  .stable { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Signal card full width */
+  .sig-card { margin: 10px !important; }
+
+  /* Modal on mobile = full width */
+  .modal-content { width: 96% !important; max-height: 85vh; border-radius: 10px; }
+
+  /* MobileNav smooth transitions */
+  .mobile-nav-item { transition: color 0.15s, transform 0.15s; }
+  .mobile-nav-item:active { transform: scale(0.92); }
+  .mobile-nav-icon { font-size: 22px !important; }
+
+  /* Bottom advisor panel: collapse to smaller on mobile */
+  .advisor-detail-panel { max-height: 180px !important; }
+
+  /* Header compact */
+  .hdr { gap: 8px; flex-wrap: wrap; }
+  .hdr-r { flex-wrap: wrap; justify-content: flex-end; }
+  .hdr-icon-btn { padding: 6px 10px !important; font-size: 10px !important; }
+}
+
+/* ── Extra small phones (< 380px like iPhone SE) ────────────────── */
+@media (max-width: 380px) {
+  .logo { font-size: 14px !important; }
+  .logo span { font-size: 10px !important; }
+  .hdr { padding: 6px 10px !important; }
+  .mobile-nav-item { padding: 6px 8px !important; font-size: 9px !important; }
+  .mobile-nav-icon { font-size: 18px !important; }
+  .trade-box { margin: 0 8px 8px !important; padding: 10px !important; }
+  .sec { padding: 8px !important; }
 }

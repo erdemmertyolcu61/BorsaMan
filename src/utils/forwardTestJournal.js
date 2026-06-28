@@ -88,6 +88,7 @@ export function recordSnapshot(days, eventDetail, now = Date.now()) {
     grade: p.grade || '',
     tier: p.tier || '',
     confidence: p.confidence ?? null,
+    firedSignals: Array.isArray(p.firedSignals) ? p.firedSignals : [],
     // outcome fields, filled during evaluation:
     perf: { d1: null, d3: null, d5: null },
     outcome: null,        // 'TARGET_HIT' | 'STOP_HIT' | 'WIN' | 'LOSS' | 'OPEN'
@@ -101,6 +102,7 @@ export function recordSnapshot(days, eventDetail, now = Date.now()) {
     timestamp: now,
     scanMode: detail.scanMode || 'intraday',
     marketBias: detail.marketContext?.bias || detail.marketContext?.sentiment || null,
+    regime: detail.marketContext?.regime || null,
     avgRSI: detail.marketContext?.avgRSI ?? null,
     predictions,
   };
