@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#06090f"/>
-  <rect x="24" y="24" width="464" height="464" rx="80" fill="#0c1018" stroke="#00e676" stroke-width="3"/>
-  <text x="256" y="220" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="140" font-weight="900" fill="#00e676">BIST</text>
-  <text x="256" y="320" text-anchor="middle" font-family="Arial, sans-serif" font-size="60" font-weight="400" fill="#8892a4">AI Terminal</text>
-  <line x1="100" y1="360" x2="412" y2="360" stroke="#1c2a3f" stroke-width="2"/>
-  <polyline points="120,420 180,390 230,410 280,380 330,400 380,370" fill="none" stroke="#00e676" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="380" cy="370" r="6" fill="#00e676"/>
-</svg>

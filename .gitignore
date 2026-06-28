@@ -6,8 +6,16 @@ dist-test/
 coverage/
 graphify-out/
 .codex/
+.kombai/
+_recovery/
+data/
 *.exe
 *.msi
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.log
+*.original
+.vercel
+.claude/worktrees/
