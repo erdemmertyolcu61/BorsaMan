@@ -22,12 +22,15 @@ const ALLOWED_DOMAINS = [
   'web-paragaranti-pubsub.foreks.com',
   'finans.truncgil.com',
   'bigpara.hurriyet.com.tr',
+  'www.bigpara.com.tr',
   'www.isyatirim.com.tr',
   'www.tcmb.gov.tr',
   'evds2.tcmb.gov.tr',
   'nfs.faireconomy.media',
   'api.genelpara.com',
   'www.kap.org.tr',
+  'biquote.io',
+  'fc.yahoo.com',
 ];
 
 const ALLOWED_SOURCES = new Set([

@@ -936,6 +936,18 @@ export async function fetchBiquoteQuote(symbol) {
   const startTime = Date.now();
 
   try {
+    // Capacitor: biquote.io may CORS-block; try self-proxy first
+    if (_isCapacitor) {
+      const proxyText = await _capacitorProxyFetch(url, 8000);
+      if (proxyText) {
+        const data = JSON.parse(proxyText);
+        if (data?.last) {
+          recordSourceSuccess('biquote', Date.now() - startTime);
+          return { price: parseFloat(data.last), open: parseFloat(data.open), high: parseFloat(data.high), low: parseFloat(data.low), volume: parseFloat(data.volume), change: parseFloat(data.changePercent) || parseFloat(data.change), prevClose: parseFloat(data.previousClose) || parseFloat(data.prevClose), date: new Date(), bid: parseFloat(data.bid), ask: parseFloat(data.ask) };
+        }
+      }
+      return null;
+    }
     const r = await quickFetch(url, 8000);
     if (!r.ok) {
       recordSourceFailure('biquote');
@@ -1239,6 +1251,8 @@ const CRUMB_TTL_MS = 55 * 60 * 1000;
 
 async function ensureYahooCrumb() {
   if (_yahooCrumb.value && Date.now() - _yahooCrumb.ts < CRUMB_TTL_MS) return _yahooCrumb;
+  // Capacitor: crumb auth requires direct CORS requests to Yahoo — not possible in WebView
+  if (_isCapacitor) return _yahooCrumb;
   try {
     // Step 1: Touch fc.yahoo.com to get the consent cookie
     const consentResp = await fetch('https://fc.yahoo.com', {
@@ -1345,24 +1359,29 @@ async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
 
 // Primary fetch: tries Vite proxy → Yahoo direct (crumb) → public CORS proxies
 async function getData(targetUrl, ms = 10000) {
-  const directResult = await tryDirect(targetUrl, ms);
-  if (directResult) return directResult;
+  // Capacitor: skip direct fetch (CORS blocked) → go straight to proxy
+  if (!_isCapacitor) {
+    const directResult = await tryDirect(targetUrl, ms);
+    if (directResult) return directResult;
 
-  const localResult = await tryLocalYahoo(targetUrl, ms);
-  if (localResult) {
-    _proxyStats.total++;
-    _proxyStats.ok++;
-    return localResult;
+    const localResult = await tryLocalYahoo(targetUrl, ms);
+    if (localResult) {
+      _proxyStats.total++;
+      _proxyStats.ok++;
+      return localResult;
+    }
   }
   return getDataViaProxies(targetUrl, ms);
 }
 
 // Fresh fetch with cache-busting
 async function getDataFresh(targetUrl, ms = 10000) {
-  const directResult = await tryDirectNoCache(targetUrl, ms);
-  if (directResult) return directResult;
-  const localResult = await tryLocalYahoo(targetUrl, ms);
-  if (localResult) { _proxyStats.total++; _proxyStats.ok++; return localResult; }
+  if (!_isCapacitor) {
+    const directResult = await tryDirectNoCache(targetUrl, ms);
+    if (directResult) return directResult;
+    const localResult = await tryLocalYahoo(targetUrl, ms);
+    if (localResult) { _proxyStats.total++; _proxyStats.ok++; return localResult; }
+  }
   return getDataViaProxies(targetUrl, ms);
 }
 
