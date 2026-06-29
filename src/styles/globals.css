@@ -20,6 +20,7 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
   /* On mobile: MobileNav (56px) + safe area + advisor panel */
   body { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + var(--advisor-panel-height, 0px) + 12px) !important; }
   .main { height: auto !important; min-height: calc(100vh - 56px); }
+  .center .chart-wrap { height: 320px !important; flex: none !important; }
 }
 
 /* ── PWA / Mobile Overrides ────────────────────────────────────────── */
