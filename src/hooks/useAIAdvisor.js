@@ -45,9 +45,11 @@ export function isMarketClosedForDay() {
   return h * 60 + m >= 1090;                     // >= 18:10
 }
 
+const isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
+
 const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market open
-const SCAN_CONCURRENCY = 30;                    // parallel workers per chunk (648/30=22 chunk)
-const CHUNK_DELAY_MS = 30;                      // 30ms inter-chunk delay
+const SCAN_CONCURRENCY = isCapacitor ? 10 : 30; // mobilde proxy limitlerine takılmamak için 10
+const CHUNK_DELAY_MS = isCapacitor ? 500 : 30;  // mobilde her 10 hissede 500ms bekle
 const SCAN_UNIVERSE = 'bistall';                // full universe ~648 symbols
 
 // ══════════════════════════════════════════════════════════════════════════════

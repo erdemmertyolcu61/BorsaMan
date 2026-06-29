@@ -9,6 +9,9 @@ try {
     PROXY_BASE_URL = stored;
   } else if (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) {
     PROXY_BASE_URL = location.origin;
+  } else if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform()) {
+    // Mobilde public proxy cökmelerini engellemek icin varsayilan Vercel proxy fallback
+    PROXY_BASE_URL = 'https://bist-terminal-proxy.vercel.app';
   }
 } catch {}
 export function setProxyBaseUrl(url) {
@@ -649,6 +652,8 @@ function _buildRacers(targetUrl, ms) {
 
 function isLocalDev() {
   try {
+    const isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
+    if (isCapacitor) return false;
     return location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   } catch { return false; }
 }
