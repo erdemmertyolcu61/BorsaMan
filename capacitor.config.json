@@ -1,5 +1,16 @@
 {
   "appId": "com.erdem.bist",
   "appName": "bist-terminal",
-  "webDir": "dist"
+  "webDir": "dist",
+  "server": {
+    "allowNavigation": [
+      "bist-terminal-proxy.vercel.app",
+      "bigpara.hurriyet.com.tr",
+      "www.isyatirim.com.tr",
+      "query1.finance.yahoo.com",
+      "query2.finance.yahoo.com",
+      "corsproxy.io",
+      "api.codetabs.com"
+    ]
+  }
 }

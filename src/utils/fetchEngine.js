@@ -22,6 +22,9 @@ import { fetchKAPSummaryFinancials } from './kapEngine.js';
 import { logError } from './errorLogger.js';
 import { traceFetch, recordFetchMetric, isTelemetryEnabled } from './telemetry.js';
 import { fetchAsenaxList, fetchWithFallback, fetchBorsajsQuote } from './borsajsAdapter.js';
+
+const _isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
+
 const _cache = {};
 const _inflight = {}; // Request deduplication: prevent parallel fetches for same symbol
 
@@ -248,8 +251,13 @@ export async function fetchBigParaBatchPrices() {
       } catch { }
     }
 
-    // Strategy 3: Direct fetch
-    if (!text) {
+    // Strategy 3: Capacitor → self-proxy (skip direct fetch — CORS blocked in WebView)
+    if (!text && _isCapacitor) {
+      text = await _capacitorProxyFetch(isyatirimUrl, 10000);
+    }
+
+    // Strategy 4: Direct fetch (desktop/web only — CORS fails in Capacitor)
+    if (!text && !_isCapacitor) {
       try {
         const resp = await fetch(isyatirimUrl + '?_t=' + Date.now(), {
           headers: { 'Accept': 'application/json' },
@@ -262,7 +270,7 @@ export async function fetchBigParaBatchPrices() {
       } catch { }
     }
 
-    // Strategy 4: CORS proxy chain
+    // Strategy 5: CORS proxy chain
     if (!text) {
       text = await getDataViaProxies(isyatirimUrl, 10000);
     }
@@ -646,14 +654,35 @@ function _buildRacers(targetUrl, ms) {
 }
 
 // ==========================================
+// CAPACITOR PROXY FETCH — routes through Vercel self-proxy to bypass CORS
+// Direct fetch to IsYatirim/Yahoo/BigPara CORS-fails in WebView; skip it entirely.
+// ==========================================
+async function _capacitorProxyFetch(remoteUrl, ms = 8000) {
+  if (!_isCapacitor || !PROXY_BASE_URL) return null;
+  try {
+    const proxyUrl = PROXY_BASE_URL + '/api/proxy?url=' + encodeURIComponent(remoteUrl);
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const tid = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
+    const resp = await fetch(proxyUrl, {
+      headers: { 'Accept': 'application/json' },
+      signal: ctrl?.signal,
+    });
+    if (tid) clearTimeout(tid);
+    if (!resp.ok) return null;
+    const text = await resp.text();
+    if (text && text.length > 50 && !text.includes('<!DOCTYPE')) return text;
+    return null;
+  } catch { return null; }
+}
+
+// ==========================================
 // LOCAL PROXY ROUTING (Vite dev server)
 // Routes requests through Vite proxy to bypass CORS entirely
 // ==========================================
 
 function isLocalDev() {
   try {
-    const isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
-    if (isCapacitor) return false;
+    if (_isCapacitor) return false;
     return location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   } catch { return false; }
 }
@@ -703,8 +732,13 @@ export async function fetchBigParaQuote(symbol) {
     } catch (e) { logError('fetch', 'Electron remoteFetch failed', e, { symbol: code, severity: 'debug' }); }
   }
 
-  // Strategy 3: Direct fetch with proper browser headers (Web fallback)
-  if (!text) {
+  // Strategy 3: Capacitor → self-proxy (skip direct fetch — CORS blocked in WebView)
+  if (!text && _isCapacitor) {
+    text = await _capacitorProxyFetch(remoteUrl, 8000);
+  }
+
+  // Strategy 4: Direct fetch with proper browser headers (desktop/web only)
+  if (!text && !_isCapacitor) {
     try {
       const fetchOptions = {
         method: 'GET',
@@ -713,7 +747,7 @@ export async function fetchBigParaQuote(symbol) {
       if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) {
         fetchOptions.signal = AbortSignal.timeout(8000);
       }
-      
+
       const r = await fetch(remoteUrl + '?_t=' + Date.now(), fetchOptions);
       if (r.ok) {
         const t = await r.text();
@@ -722,7 +756,7 @@ export async function fetchBigParaQuote(symbol) {
     } catch (e) { logError('fetch', 'BigPara direct fetch failed', e, { symbol: code, severity: 'debug' }); }
   }
 
-  // Strategy 3: CORS proxies as fallback
+  // Strategy 5: CORS proxies as fallback
   if (!text) {
     text = await getDataViaProxies(remoteUrl, 8000);
   }
@@ -782,8 +816,17 @@ export async function fetchBigParaList() {
     }
   }
 
-  // Try each URL with race pattern
-  if (!text) {
+  // Capacitor → self-proxy (skip direct fetch — CORS blocked in WebView)
+  if (!text && _isCapacitor) {
+    text = await _capacitorProxyFetch(remoteUrl, 10000);
+    if (text && text.length > 100) {
+      successSource = 'capacitor-proxy';
+      recordSourceSuccess('bigpara', 0);
+    }
+  }
+
+  // Try each URL with direct fetch (desktop/web only)
+  if (!text && !_isCapacitor) {
     for (const url of altUrls) {
       try {
         const r = await quickFetch(url + '?_t=' + Date.now(), 8000);
@@ -1023,8 +1066,14 @@ async function fetchIsYatirimHistorical(symbol, range) {
     } catch (e) { logError('fetch', 'Electron remoteFetch IsYatirim failed', e, { symbol, severity: 'debug' }); }
   }
 
-  // Strategy 3: Direct fetch with proper headers
-  if (!text) {
+  // Strategy 3: Capacitor → self-proxy (skip direct fetch — CORS blocked in WebView)
+  if (!text && _isCapacitor) {
+    text = await _capacitorProxyFetch(remoteUrl, 8000);
+    if (text) recordSourceSuccess('isyatirim', Date.now() - t0);
+  }
+
+  // Strategy 4: Direct fetch with proper headers (desktop/web only)
+  if (!text && !_isCapacitor) {
     try {
       const r = await quickFetch(remoteUrl, 8000);
       if (r.ok) {
@@ -1037,7 +1086,7 @@ async function fetchIsYatirimHistorical(symbol, range) {
     } catch (e) { logError('fetch', 'IsYatirim direct fetch failed', e, { symbol, severity: 'debug' }); }
   }
 
-  // Strategy 4: CORS proxies as fallback
+  // Strategy 5: CORS proxies as fallback
   if (!text) {
     text = await getDataViaProxies(remoteUrl, 8000);
     if (text) recordSourceSuccess('isyatirim', Date.now() - t0);
@@ -1234,6 +1283,12 @@ function yahooChartUrl(symbol, range, interval, crumb = '', version = 'v8') {
 
 // Yahoo-aware fetch: tries Electron IPC → crumb-auth direct → CORS proxies
 async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
+  // Capacitor: Yahoo direct fetch is CORS-blocked in WebView; use self-proxy instead
+  if (_isCapacitor) {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&includePrePost=false`;
+    return _capacitorProxyFetch(url, ms);
+  }
+
   const t0 = Date.now();
 
   // Strategy 1: Electron IPC Bridge (Production .exe — fastest, bypasses CORS)
