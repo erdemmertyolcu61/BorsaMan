@@ -322,7 +322,7 @@ export class PaperTradeEngine {
       sizeTl:       Math.round(sizeTl * 100) / 100,
       lots,
       mlConfidence: pick.mlConfidenceBoost || 0,
-      mlBestRule:   pick.mlBestRule || null,
+      mlBestRule:   pick.mlBestRule ? (typeof pick.mlBestRule === 'string' ? pick.mlBestRule : JSON.stringify(pick.mlBestRule)) : null,
       mlMatched:    pick.mlMatchedCount || 0,
       confidence:   pick.confidence || 0,
       grade:        pick.grade || '',
@@ -334,9 +334,9 @@ export class PaperTradeEngine {
       openedAt:     Date.now(),
       entryAtrPct:  pick.atrPct || null,
       entryRsi:     pick.rsi || null,
-      entryRegime:  pick.regime || null,
+      entryRegime:  typeof pick.regime === 'string' ? pick.regime : (pick.regime?.regime || null),
       notes:        (pick.mlMatchedCount || 0) > 0
-        ? `ML boost: +${(pick.mlConfidenceBoost || 0).toFixed(1)} | Rule: ${pick.mlBestRule || 'N/A'}`
+        ? `ML boost: +${(pick.mlConfidenceBoost || 0).toFixed(1)} | Rule: ${pick.mlBestRule?.setupName || 'N/A'}`
         : `SMC score: ${(pick.score || 0).toFixed(0)} | Fallback (no ML match)`,
     };
 

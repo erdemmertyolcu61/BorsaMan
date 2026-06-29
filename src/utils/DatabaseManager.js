@@ -685,7 +685,7 @@ function _wrapApi(db) {
         sizeTl:       trade.sizeTl,
         lots:         trade.lots || 0,
         mlConfidence: trade.mlConfidence || null,
-        mlBestRule:   trade.mlBestRule || null,
+        mlBestRule:   trade.mlBestRule ? (typeof trade.mlBestRule === 'string' ? trade.mlBestRule : JSON.stringify(trade.mlBestRule)) : null,
         mlMatched:    trade.mlMatched || 0,
         confidence:   trade.confidence || null,
         grade:        trade.grade || null,
@@ -697,7 +697,7 @@ function _wrapApi(db) {
         openedAt:     trade.openedAt || Date.now(),
         entryAtrPct:  trade.entryAtrPct || null,
         entryRsi:     trade.entryRsi || null,
-        entryRegime:  trade.entryRegime || null,
+        entryRegime:  trade.entryRegime ? (typeof trade.entryRegime === 'string' ? trade.entryRegime : JSON.stringify(trade.entryRegime)) : null,
         notes:        trade.notes || null,
       });
       return info.lastInsertRowid;
