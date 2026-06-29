@@ -2299,7 +2299,12 @@ export function useAIAdvisor(portfolio) {
       // Per-symbol "hisseyuzeysel" endpoint'i kapanis = BUGUNKU dogru kapanis/canli
       // fiyat (batch'ten FARKLI, dogru semantik). 10 cagri ~2-3s, kabul edilebilir.
       // Stop/target mutlak TL seviyeleri sabit; sadece % ve rr yeniden hesaplanir.
+      const _withTimeout = (promise, ms) => Promise.race([
+        promise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('enrichment timeout')), ms)),
+      ]);
       try {
+        await _withTimeout((async () => {
         const priceResults = await Promise.allSettled(
           picks.map(p => fetchBigParaQuote(p.symbol)
             .then(q => ({ sym: p.symbol, q }))
@@ -2315,11 +2320,9 @@ export function useAIAdvisor(portfolio) {
           const q = freshPrices[p.symbol];
           if (!q || !(q.price > 0)) continue;
           const newPrice = q.price;
-          // Sadece anlamli sapma varsa guncelle (>%0.1) — gereksiz noise yok
           if (Math.abs(newPrice - (p.price || 0)) / (p.price || 1) > 0.001) {
             p.price = newPrice;
             if (q.change != null && isFinite(q.change)) p.change = q.change;
-            // Stop/target mutlak TL; % ve rr guncel fiyattan yeniden hesap
             if (p.stop && newPrice > 0) {
               p.stopPct = ((p.stop - newPrice) / newPrice) * 100;
             }
@@ -2332,17 +2335,18 @@ export function useAIAdvisor(portfolio) {
             p._priceRefreshed = true;
           }
         }
+        })(), 15_000);
       } catch { /* price refresh best-effort — scan continues with batch prices */ }
 
       // ── Market news enrichment: fetch borsa haberleri, eslestir + sentiment ──
       // Sadece top 10 pick + universe filtrelenir; tum tarama icin haber cekmiyoruz.
       let newsIndex = {};
       try {
+        await _withTimeout((async () => {
         const universe = picks.map(p => p.symbol);
         if (universe.length) {
           const news = await fetchMarketNews({ universe, maxPerSource: 25 });
           newsIndex = indexBySymbol(news);
-          // Inject per-pick news entry (score, count, top headline)
           for (const r of picks) {
             const e = newsIndex[r.symbol];
             if (e?.count) {
@@ -2354,6 +2358,7 @@ export function useAIAdvisor(portfolio) {
             }
           }
         }
+        })(), 15_000);
       } catch { /* news enrichment is best-effort */ }
 
       // ── Custom Events & Market Intel Enrichment ──
@@ -2362,6 +2367,7 @@ export function useAIAdvisor(portfolio) {
 
       // ── FOREIGN FLOW ENRICHMENT ──
       try {
+        await _withTimeout((async () => {
         const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');
         const foreignMap = await fetchAllForeignRatios();
         for (const p of picks) {
@@ -2369,20 +2375,20 @@ export function useAIAdvisor(portfolio) {
           if (fr) {
             p.foreignRatio = fr.ratio;
             p.foreignChangeWeek = fr.changeWeek;
-            
-            // Akıllı para (smart money) girişi: yabancı takas haftalık artışı >= 0.5% ise bonus
             if (fr.changeWeek >= 0.5) {
                p.confidence = Math.min(100, (p.confidence || 50) + 5);
                if (p.confidenceBreakdown) p.confidenceBreakdown.potential += 5;
             }
           }
         }
+        })(), 15_000);
       } catch { /* best effort */ }
 
       // ── INSIDER TRADING ENRICHMENT (v22) ──
       // Top picks'in iceriden islem verilerini cek; insider buy = en guclu kataliz sinyali.
       // KAP'tan yonetici/ortak alim-satim verileri parse edilir.
       try {
+        await _withTimeout((async () => {
         const insiderSymbols = picks.map(p => p.symbol);
         if (insiderSymbols.length > 0) {
           const insiderMap = await fetchInsiderBatch(insiderSymbols, 5);
@@ -2393,11 +2399,8 @@ export function useAIAdvisor(portfolio) {
               p.insiderNetBuys = ins.insiderNetBuys;
               p.hasRecentInsiderBuy = ins.hasRecentInsiderBuy;
               p.hasRecentInsiderSell = ins.hasRecentInsiderSell;
-              p.insiderTransactions = ins.transactions?.slice(0, 5) || []; // son 5 islem
+              p.insiderTransactions = ins.transactions?.slice(0, 5) || [];
 
-              // ── CONFIDENCE BOOST/PENALTY — insider activity ──
-              // Insider buy = en guclu kataliz (akademik calismalar %5-15 abnormal return gosterir)
-              // Insider sell = dikkat sinyali (her zaman kotu degil ama risk artirici)
               if (ins.score >= 5) {
                 p.confidence = Math.min(100, (p.confidence || 50) + 8);
               } else if (ins.score >= 3) {
@@ -2408,13 +2411,13 @@ export function useAIAdvisor(portfolio) {
                 p.confidence = Math.max(5, (p.confidence || 50) - 3);
               }
 
-              // Insider buy -> newsCategories'e ekle (tavan continuation prob'da da etkili)
               if (ins.hasRecentInsiderBuy && !p.newsCategories?.includes('insider_buy')) {
                 p.newsCategories = [...(p.newsCategories || []), 'insider_buy'];
               }
             }
           }
         }
+        })(), 15_000);
       } catch { /* insider enrichment is best-effort */ }
 
       // ── v29 FIX: Ensure all AI Advisor "Buy" picks explicitly say "AL" ──
