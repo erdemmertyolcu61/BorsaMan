@@ -11,7 +11,7 @@ try {
     PROXY_BASE_URL = location.origin;
   } else if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform()) {
     // Mobilde public proxy cökmelerini engellemek icin varsayilan Vercel proxy fallback
-    PROXY_BASE_URL = 'https://bist-terminal-proxy.vercel.app';
+    PROXY_BASE_URL = 'https://proxy-delta-mocha-43.vercel.app';
   }
 } catch {}
 export function setProxyBaseUrl(url) {

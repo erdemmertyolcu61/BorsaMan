@@ -4,7 +4,7 @@
   "webDir": "dist",
   "server": {
     "allowNavigation": [
-      "bist-terminal-proxy.vercel.app",
+      "proxy-delta-mocha-43.vercel.app",
       "bigpara.hurriyet.com.tr",
       "www.isyatirim.com.tr",
       "query1.finance.yahoo.com",
