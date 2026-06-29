@@ -525,9 +525,9 @@ export async function tryProxy(url, ms = 10000) {
 // Public proxies only used in browser/web mode where Electron IPC is unavailable.
 //
 // Contract: resolves with text payload, OR null if every racer fails.
-const RACE_PER_REQUEST_MS = 7000;   // per-probe timeout
-const RACE_CEILING_MS     = 7500;   // absolute resolve-or-null bound
-const ELECTRON_FAST_MS    = 6000;   // Electron-direct gets shorter timeout (faster fail to fallback)
+const RACE_PER_REQUEST_MS = 5000;   // per-probe timeout
+const RACE_CEILING_MS     = 5500;   // absolute resolve-or-null bound
+const ELECTRON_FAST_MS    = 5000;   // Electron-direct gets shorter timeout (faster fail to fallback)
 
 // Electron-direct fast path — bypasses ALL CORS proxies in desktop mode.
 // Returns { text, source } on success, null on failure.
@@ -1354,7 +1354,7 @@ export async function fetchSingle(symbol, range, interval, scanMode = false) {
 // 800ms is aggressive but user-initiated single analysis needs speed. In Electron
 // with IPC bridge, IsYatirim typically responds in 300-500ms; 800ms catches the
 // 80th percentile before firing the hedge.
-const HEDGE_DELAY_MS = 800;
+const HEDGE_DELAY_MS = 600;
 
 async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
   let p = null;

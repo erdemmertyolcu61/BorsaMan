@@ -46,8 +46,8 @@ export function isMarketClosedForDay() {
 }
 
 const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market open
-const SCAN_CONCURRENCY = 20;                    // parallel workers per chunk (701/20=36 chunk, was 14→51 chunk)
-const CHUNK_DELAY_MS = 60;                      // 60ms inter-chunk delay (was 150ms — 51×90ms=4.6s tasarruf)
+const SCAN_CONCURRENCY = 30;                    // parallel workers per chunk (648/30=22 chunk)
+const CHUNK_DELAY_MS = 30;                      // 30ms inter-chunk delay
 const SCAN_UNIVERSE = 'bistall';                // full universe ~648 symbols
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -775,7 +775,7 @@ export function useAIAdvisor(portfolio) {
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       // Per-sembol hard timeout — tek yavaş sembol tüm chunk'ı bekletmesin.
       // fetchSingle zaten 10s ceiling'e sahip ama timeout kapısı dışarıdan daha güvenli.
-      const withSymTimeout = (fn, ms = 11000) =>
+      const withSymTimeout = (fn, ms = 8000) =>
         Promise.race([fn(), new Promise(r => setTimeout(() => r(null), ms))]);
 
       // Chunk-based scanning (matches original .exe behavior)
@@ -2303,52 +2303,53 @@ export function useAIAdvisor(portfolio) {
         promise,
         new Promise((_, rej) => setTimeout(() => rej(new Error('enrichment timeout')), ms)),
       ]);
-      try {
-        await _withTimeout((async () => {
-        const priceResults = await Promise.allSettled(
-          picks.map(p => fetchBigParaQuote(p.symbol)
-            .then(q => ({ sym: p.symbol, q }))
-            .catch(() => ({ sym: p.symbol, q: null })))
-        );
-        const freshPrices = {};
-        for (const res of priceResults) {
-          if (res.status === 'fulfilled' && res.value?.q?.price > 0) {
-            freshPrices[res.value.sym] = res.value.q;
-          }
-        }
-        for (const p of picks) {
-          const q = freshPrices[p.symbol];
-          if (!q || !(q.price > 0)) continue;
-          const newPrice = q.price;
-          if (Math.abs(newPrice - (p.price || 0)) / (p.price || 1) > 0.001) {
-            p.price = newPrice;
-            if (q.change != null && isFinite(q.change)) p.change = q.change;
-            if (p.stop && newPrice > 0) {
-              p.stopPct = ((p.stop - newPrice) / newPrice) * 100;
+      // ── PARALLEL ENRICHMENT ──
+      // Price refresh, news, foreign flow, insider are independent — run all at once.
+      // Each has its own 12s timeout; total enrichment capped at ~12s instead of ~45s sequential.
+      const enrichTimeout = 12_000;
+      const enrichResults = await Promise.allSettled([
+        // [0] Price refresh
+        _withTimeout((async () => {
+          const priceResults = await Promise.allSettled(
+            picks.map(p => fetchBigParaQuote(p.symbol)
+              .then(q => ({ sym: p.symbol, q }))
+              .catch(() => ({ sym: p.symbol, q: null })))
+          );
+          const freshPrices = {};
+          for (const res of priceResults) {
+            if (res.status === 'fulfilled' && res.value?.q?.price > 0) {
+              freshPrices[res.value.sym] = res.value.q;
             }
-            if (p.target && newPrice > 0) {
-              p.targetPct = ((p.target - newPrice) / newPrice) * 100;
-            }
-            const riskD = Math.abs(newPrice - (p.stop || newPrice * 0.95));
-            const rewD  = Math.abs((p.target || newPrice * 1.10) - newPrice);
-            if (riskD > 0) p.rr = rewD / riskD;
-            p._priceRefreshed = true;
           }
-        }
-        })(), 15_000);
-      } catch { /* price refresh best-effort — scan continues with batch prices */ }
+          for (const p of picks) {
+            const q = freshPrices[p.symbol];
+            if (!q || !(q.price > 0)) continue;
+            const newPrice = q.price;
+            if (Math.abs(newPrice - (p.price || 0)) / (p.price || 1) > 0.001) {
+              p.price = newPrice;
+              if (q.change != null && isFinite(q.change)) p.change = q.change;
+              if (p.stop && newPrice > 0) {
+                p.stopPct = ((p.stop - newPrice) / newPrice) * 100;
+              }
+              if (p.target && newPrice > 0) {
+                p.targetPct = ((p.target - newPrice) / newPrice) * 100;
+              }
+              const riskD = Math.abs(newPrice - (p.stop || newPrice * 0.95));
+              const rewD  = Math.abs((p.target || newPrice * 1.10) - newPrice);
+              if (riskD > 0) p.rr = rewD / riskD;
+              p._priceRefreshed = true;
+            }
+          }
+        })(), enrichTimeout),
 
-      // ── Market news enrichment: fetch borsa haberleri, eslestir + sentiment ──
-      // Sadece top 10 pick + universe filtrelenir; tum tarama icin haber cekmiyoruz.
-      let newsIndex = {};
-      try {
-        await _withTimeout((async () => {
-        const universe = picks.map(p => p.symbol);
-        if (universe.length) {
+        // [1] News
+        _withTimeout((async () => {
+          const universe = picks.map(p => p.symbol);
+          if (!universe.length) return;
           const news = await fetchMarketNews({ universe, maxPerSource: 25 });
-          newsIndex = indexBySymbol(news);
+          const ni = indexBySymbol(news);
           for (const r of picks) {
-            const e = newsIndex[r.symbol];
+            const e = ni[r.symbol];
             if (e?.count) {
               r.newsScore = e.score;
               r.newsCount = e.count;
@@ -2357,68 +2358,57 @@ export function useAIAdvisor(portfolio) {
               r.newsHighImpact = e.highImpact;
             }
           }
-        }
-        })(), 15_000);
-      } catch { /* news enrichment is best-effort */ }
+        })(), enrichTimeout),
 
-      // ── Custom Events & Market Intel Enrichment ──
-      // (User requested: do not add points to stocks, keep system independent)
-      // Removed point injection logic.
-
-      // ── FOREIGN FLOW ENRICHMENT ──
-      try {
-        await _withTimeout((async () => {
-        const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');
-        const foreignMap = await fetchAllForeignRatios();
-        for (const p of picks) {
-          const fr = foreignMap[p.symbol];
-          if (fr) {
-            p.foreignRatio = fr.ratio;
-            p.foreignChangeWeek = fr.changeWeek;
-            if (fr.changeWeek >= 0.5) {
-               p.confidence = Math.min(100, (p.confidence || 50) + 5);
-               if (p.confidenceBreakdown) p.confidenceBreakdown.potential += 5;
+        // [2] Foreign flow
+        _withTimeout((async () => {
+          const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');
+          const foreignMap = await fetchAllForeignRatios();
+          for (const p of picks) {
+            const fr = foreignMap[p.symbol];
+            if (fr) {
+              p.foreignRatio = fr.ratio;
+              p.foreignChangeWeek = fr.changeWeek;
+              if (fr.changeWeek >= 0.5) {
+                p.confidence = Math.min(100, (p.confidence || 50) + 5);
+                if (p.confidenceBreakdown) p.confidenceBreakdown.potential += 5;
+              }
             }
           }
-        }
-        })(), 15_000);
-      } catch { /* best effort */ }
+        })(), enrichTimeout),
 
-      // ── INSIDER TRADING ENRICHMENT (v22) ──
-      // Top picks'in iceriden islem verilerini cek; insider buy = en guclu kataliz sinyali.
-      // KAP'tan yonetici/ortak alim-satim verileri parse edilir.
-      try {
-        await _withTimeout((async () => {
-        const insiderSymbols = picks.map(p => p.symbol);
-        if (insiderSymbols.length > 0) {
+        // [3] Insider trading
+        _withTimeout((async () => {
+          const insiderSymbols = picks.map(p => p.symbol);
+          if (!insiderSymbols.length) return;
           const insiderMap = await fetchInsiderBatch(insiderSymbols, 5);
           for (const p of picks) {
             const ins = insiderMap.get(p.symbol);
-            if (ins) {
-              p.insiderScore = ins.score;
-              p.insiderNetBuys = ins.insiderNetBuys;
-              p.hasRecentInsiderBuy = ins.hasRecentInsiderBuy;
-              p.hasRecentInsiderSell = ins.hasRecentInsiderSell;
-              p.insiderTransactions = ins.transactions?.slice(0, 5) || [];
+            if (!ins) continue;
+            p.insiderScore = ins.score;
+            p.insiderNetBuys = ins.insiderNetBuys;
+            p.hasRecentInsiderBuy = ins.hasRecentInsiderBuy;
+            p.hasRecentInsiderSell = ins.hasRecentInsiderSell;
+            p.insiderTransactions = ins.transactions?.slice(0, 5) || [];
 
-              if (ins.score >= 5) {
-                p.confidence = Math.min(100, (p.confidence || 50) + 8);
-              } else if (ins.score >= 3) {
-                p.confidence = Math.min(100, (p.confidence || 50) + 4);
-              } else if (ins.score <= -5) {
-                p.confidence = Math.max(5, (p.confidence || 50) - 6);
-              } else if (ins.score <= -3) {
-                p.confidence = Math.max(5, (p.confidence || 50) - 3);
-              }
+            if (ins.score >= 5) {
+              p.confidence = Math.min(100, (p.confidence || 50) + 8);
+            } else if (ins.score >= 3) {
+              p.confidence = Math.min(100, (p.confidence || 50) + 4);
+            } else if (ins.score <= -5) {
+              p.confidence = Math.max(5, (p.confidence || 50) - 6);
+            } else if (ins.score <= -3) {
+              p.confidence = Math.max(5, (p.confidence || 50) - 3);
+            }
 
-              if (ins.hasRecentInsiderBuy && !p.newsCategories?.includes('insider_buy')) {
-                p.newsCategories = [...(p.newsCategories || []), 'insider_buy'];
-              }
+            if (ins.hasRecentInsiderBuy && !p.newsCategories?.includes('insider_buy')) {
+              p.newsCategories = [...(p.newsCategories || []), 'insider_buy'];
             }
           }
-        }
-        })(), 15_000);
-      } catch { /* insider enrichment is best-effort */ }
+        })(), enrichTimeout),
+      ]);
+      const enrichFailed = enrichResults.filter(r => r.status === 'rejected').length;
+      if (enrichFailed) console.warn(`[AIAdvisor] ${enrichFailed}/4 enrichment steps failed`);
 
       // ── v29 FIX: Ensure all AI Advisor "Buy" picks explicitly say "AL" ──
       // Bazı hisseler _earlyPick, _mlOverride vb. özel sebeplerle "buyPicks" listesine girse de
