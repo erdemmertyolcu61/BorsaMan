@@ -171,6 +171,11 @@ export default function App() {
     const handler = (e) => {
       const { topPicks, results } = e.detail || {};
 
+      // Consolidated scan-complete notification (works in background tabs)
+      if (topPicks?.length > 0) {
+        notifications.notifyScanComplete(topPicks);
+      }
+
       if (results?.length > 0) {
         const eliteSignals = results.filter(r => r.score >= 8 && r.cls === 'buy');
         if (eliteSignals.length > 0) {
@@ -259,15 +264,16 @@ export default function App() {
 
   return (
     <>
-      <PremiumHeader 
-        badge={state.badge} 
-        notifications={notifications} 
+      <PremiumHeader
+        badge={state.badge}
+        notifications={notifications}
         alertLog={alertLog}
         advisor={advisor}
         livePrice={livePrice}
         portfolio={state.portfolio}
         scanHistory={scanHistory}
         onAnalyze={handleAIAnalyze}
+        onTabChange={state.setActiveTab}
       />
 
       <AIAdvisorPanel

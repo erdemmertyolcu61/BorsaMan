@@ -8,7 +8,6 @@ export default function MobileNav({ activeTab, onTabChange }) {
     { id: 'trades',   label: 'Intraday',icon: '★' },
     { id: 'signals',  label: 'Sinyal',  icon: '◈' },
     { id: 'paper',    label: 'Paper',   icon: '📄' },
-    { id: 'portfolio',label: 'Portföy', icon: '◆' },
   ];
 
   return (

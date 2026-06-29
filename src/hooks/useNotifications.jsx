@@ -268,6 +268,24 @@ export function useNotifications() {
     });
   }, [settings.intraday, settings.silentMode, notify]);
 
+  const notifyScanComplete = useCallback(async (picks) => {
+    if (!settings.advisorPicks || !picks?.length) return null;
+    const buyPicks = picks.filter(p => p.cls === 'buy');
+    if (!buyPicks.length) return null;
+    const top3 = buyPicks.slice(0, 3).map(p => p.symbol).join(', ');
+    return notify({
+      id: `scan-complete-${Date.now()}`,
+      type: 'signal',
+      tag: 'scan-complete',
+      title: '🎯 AI En Iyi Firsatlariniz Geldi!',
+      body: `${buyPicks.length} firsat bulundu: ${top3}. Inceleyin!`,
+      silent: settings.silentMode,
+      urgent: true,
+      cooldownKey: 'scan-complete',
+      cooldownMs: 300000,
+    });
+  }, [settings.advisorPicks, settings.silentMode, notify]);
+
   const notifyPriceAlert = useCallback(async (symbol, price, direction) => {
     return notify({
       id: `price-${symbol}-${direction}`,
@@ -317,6 +335,7 @@ export function useNotifications() {
     notifyStopLoss,
     notifyTargetHit,
     notifyAdvisorPick,
+    notifyScanComplete,
     notifyIntraday,
     notifyPriceAlert,
     requestNotificationPermission,

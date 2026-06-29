@@ -34,9 +34,11 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     return () => ro.disconnect();
   }, [draw]);
 
+  const lastPinchDistRef = useRef(null);
+
   // Mouse handlers for crosshair and dragging
   const handleMouseDown = useCallback((e) => {
-    if (e.button !== 0 || !prices) return; // Only left click
+    if (e.button !== 0 || !prices) return;
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
     const x = e.clientX - rect.left;
@@ -64,7 +66,6 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
       let newStart = dragStart.start + candleShift;
       let newEnd = dragStart.end + candleShift;
 
-      // Bounds check
       if (newStart < 0) {
         newStart = 0;
         newEnd = visibleCount - 1;
@@ -94,7 +95,6 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     if (!isDragging) setIsDragging(false);
   }, [isDragging]);
 
-  // Global mouse up to handle drag release outside canvas
   useEffect(() => {
     if (isDragging) {
       window.addEventListener('mouseup', handleMouseUp);
@@ -102,22 +102,92 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     }
   }, [isDragging, handleMouseUp]);
 
+  // Touch handlers for mobile pan and pinch-to-zoom
+  const handleTouchStart = useCallback((e) => {
+    if (!prices) return;
+    if (e.touches.length === 1) {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const x = e.touches[0].clientX - rect.left;
+      const cur = viewRange || { start: 0, end: prices.length - 1 };
+      setIsDragging(true);
+      setDragStart({ x, start: cur.start, end: cur.end });
+      lastPinchDistRef.current = null;
+    } else if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastPinchDistRef.current = Math.hypot(dx, dy);
+      setIsDragging(false);
+      setDragStart(null);
+    }
+  }, [prices, viewRange]);
+
+  const handleTouchMove = useCallback((e) => {
+    if (!prices) return;
+    e.preventDefault();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    if (e.touches.length === 1 && isDragging && dragStart) {
+      const x = e.touches[0].clientX - rect.left;
+      const w = rect.width;
+      const pLeft = 10, pRight = 65;
+      const drawW = w - pLeft - pRight;
+      const visibleCount = dragStart.end - dragStart.start + 1;
+      const pixelsPerCandle = drawW / visibleCount;
+      const dx = x - dragStart.x;
+      const candleShift = Math.round(-dx / pixelsPerCandle);
+
+      let newStart = dragStart.start + candleShift;
+      let newEnd = dragStart.end + candleShift;
+
+      if (newStart < 0) { newStart = 0; newEnd = visibleCount - 1; }
+      if (newEnd >= prices.length) { newEnd = prices.length - 1; newStart = Math.max(0, newEnd - visibleCount + 1); }
+
+      setViewRange({ start: newStart, end: newEnd });
+    } else if (e.touches.length === 2 && lastPinchDistRef.current != null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / lastPinchDistRef.current;
+      lastPinchDistRef.current = dist;
+
+      const len = prices.length;
+      const cur = viewRange || { start: 0, end: len - 1 };
+      const visible = cur.end - cur.start + 1;
+      const newVisible = Math.round(visible / scale);
+      const clamped = Math.max(12, Math.min(len, newVisible));
+      const center = (cur.start + cur.end) / 2;
+
+      let newStart = Math.round(center - clamped / 2);
+      let newEnd = newStart + clamped - 1;
+      if (newStart < 0) { newStart = 0; newEnd = clamped - 1; }
+      if (newEnd >= len) { newEnd = len - 1; newStart = Math.max(0, newEnd - clamped + 1); }
+
+      if (newStart === 0 && newEnd === len - 1) setViewRange(null);
+      else setViewRange({ start: newStart, end: newEnd });
+    }
+  }, [prices, isDragging, dragStart, viewRange]);
+
+  const handleTouchEnd = useCallback(() => {
+    setIsDragging(false);
+    setDragStart(null);
+    lastPinchDistRef.current = null;
+  }, []);
+
   // Scroll to zoom
   const handleWheel = useCallback((e) => {
     if (!prices) return;
     const len = prices.length;
     const cur = viewRange || { start: 0, end: len - 1 };
     const visible = cur.end - cur.start + 1;
-    // zoom factor: zoom faster when zoomed out, slower when zoomed in
     const zoomIn = e.deltaY < 0;
-    const factor = zoomIn ? 0.15 : 0.15;
+    const factor = 0.15;
     const delta = Math.ceil(visible * factor);
     const newVisible = zoomIn ? Math.max(12, visible - delta) : Math.min(len, visible + delta);
-    
-    // Zoom centered on crosshair if available, else center
+
     let centerIdx;
     if (crosshair) {
-      // Approximate index under mouse
       const rect = canvasRef.current?.getBoundingClientRect();
       const pLeft = 10, pRight = 65;
       const drawW = rect.width - pLeft - pRight;
@@ -131,7 +201,7 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
 
     if (newStart < 0) { newStart = 0; newEnd = newVisible - 1; }
     if (newEnd >= len) { newEnd = len - 1; newStart = Math.max(0, newEnd - newVisible + 1); }
-    
+
     if (newStart === 0 && newEnd === len - 1) setViewRange(null);
     else setViewRange({ start: newStart, end: newEnd });
   }, [prices, viewRange, crosshair]);
@@ -149,15 +219,19 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
 
   return (
     <div className="chart-wrap" ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '520px', position: 'relative', background: 'var(--bg0)' }}>
-      <canvas 
-        ref={canvasRef} 
-        style={{ display: 'block', cursor: isDragging ? 'grabbing' : 'crosshair' }}
+      <canvas
+        ref={canvasRef}
+        style={{ display: 'block', cursor: isDragging ? 'grabbing' : 'crosshair', touchAction: 'none' }}
         onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove} 
+        onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave} 
+        onMouseLeave={handleMouseLeave}
         onWheel={e => { e.preventDefault(); handleWheel(e); }}
         onDoubleClick={handleDoubleClick}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
       />
       {/* Legend */}
       <div style={{

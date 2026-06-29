@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import NotificationSettings from '../Notifications/NotificationSettings.jsx';
 import ProxySettings from '../Common/ProxySettings.jsx';
+import MobileProfilePage from '../MobileProfile/MobileProfilePage.jsx';
 import { isMarketOpen } from '../../hooks/useAIAdvisor.js';
 
 function BellIcon() {
@@ -21,6 +22,15 @@ function SettingsIcon() {
   );
 }
 
+function ProfileIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: 20, height: 20 }}>
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+      <circle cx="12" cy="7" r="4"></circle>
+    </svg>
+  );
+}
+
 function formatClock(d) {
   const pad = (n) => String(n).padStart(2, '0');
   const date = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
@@ -28,9 +38,10 @@ function formatClock(d) {
   return { date, time };
 }
 
-export default function PremiumHeader({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze }) {
+export default function PremiumHeader({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze, onTabChange }) {
   const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMobileProfile, setShowMobileProfile] = useState(false);
   const [unread, setUnread] = useState(0);
   const [now, setNow] = useState(new Date());
   const [marketOpen, setMarketOpen] = useState(isMarketOpen());
@@ -70,51 +81,75 @@ export default function PremiumHeader({ badge, notifications, alertLog, advisor,
         </div>
 
         <div className="hdr-r">
-          {notifications && (
+          {/* Desktop: bell + settings + clock */}
+          <div className="hdr-desktop-only">
+            {notifications && (
+              <button
+                className={`hdr-icon-btn ${isUnread ? 'unread' : ''}`}
+                title="Bildirim Ayarları"
+                onClick={() => setShowNotifSettings(true)}
+                style={!enabled ? { opacity: 0.5 } : {}}
+              >
+                <BellIcon />
+                {unread > 0 && (
+                  <span style={{
+                    position: 'absolute',
+                    top: -6, right: -6,
+                    background: 'var(--orange)',
+                    color: '#000',
+                    borderRadius: '50%',
+                    width: 14, height: 14,
+                    fontSize: 8, fontWeight: 800,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: '0 0 10px rgba(255,145,0,0.4)',
+                    border: '1px solid var(--bg2)'
+                  }}>
+                    {unread > 9 ? '9+' : unread}
+                  </span>
+                )}
+              </button>
+            )}
             <button
-              className={`hdr-icon-btn ${isUnread ? 'unread' : ''}`}
-              title="Bildirim Ayarları"
-              onClick={() => setShowNotifSettings(true)}
-              style={!enabled ? { opacity: 0.5 } : {}}
+              className="hdr-icon-btn"
+              title="Ayarlar"
+              onClick={() => setShowSettings(true)}
             >
-              <BellIcon />
-              {unread > 0 && (
-                <span style={{
-                  position: 'absolute',
-                  top: -6, right: -6,
-                  background: 'var(--orange)',
-                  color: '#000',
-                  borderRadius: '50%',
-                  width: 14, height: 14,
-                  fontSize: 8, fontWeight: 800,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  boxShadow: '0 0 10px rgba(255,145,0,0.4)',
-                  border: '1px solid var(--bg2)'
-                }}>
-                  {unread > 9 ? '9+' : unread}
-                </span>
-              )}
+              <SettingsIcon />
+              <span style={{ marginLeft: 2 }}>AYARLAR</span>
             </button>
-          )}
-          <button
-            className="hdr-icon-btn"
-            title="Ayarlar"
-            onClick={() => setShowSettings(true)}
-          >
-            <SettingsIcon />
-            <span style={{ marginLeft: 2 }}>AYARLAR</span>
-          </button>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
-            color: 'var(--t2)', marginLeft: 6,
-          }}>
-            <span style={{ color: marketOpen ? 'var(--green)' : 'var(--t3)', fontWeight: 700 }}>
-              {marketOpen ? '● Piyasa Açık' : '○ Piyasa Kapalı'}
-            </span>
-            <span style={{ color: 'var(--t3)' }}>|</span>
-            <span className="clock">{date} {time}</span>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 10, fontFamily: 'JetBrains Mono, monospace',
+              color: 'var(--t2)', marginLeft: 6,
+            }}>
+              <span style={{ color: marketOpen ? 'var(--green)' : 'var(--t3)', fontWeight: 700 }}>
+                {marketOpen ? '● Piyasa Açık' : '○ Piyasa Kapalı'}
+              </span>
+              <span style={{ color: 'var(--t3)' }}>|</span>
+              <span className="clock">{date} {time}</span>
+            </div>
           </div>
+
+          {/* Mobile: profile icon only */}
+          <button
+            className="hdr-icon-btn hdr-mobile-only"
+            title="Profil"
+            onClick={() => setShowMobileProfile(true)}
+            style={{ position: 'relative' }}
+          >
+            <ProfileIcon />
+            {isUnread && (
+              <span style={{
+                position: 'absolute',
+                top: -4, right: -4,
+                background: 'var(--orange)',
+                borderRadius: '50%',
+                width: 10, height: 10,
+                boxShadow: '0 0 8px rgba(255,145,0,0.5)',
+                border: '1px solid var(--bg2)',
+              }} />
+            )}
+          </button>
         </div>
       </header>
 
@@ -158,6 +193,15 @@ export default function PremiumHeader({ badge, notifications, alertLog, advisor,
             <ProxySettings />
           </div>
         </div>
+      )}
+
+      {showMobileProfile && (
+        <MobileProfilePage
+          notifications={notifications}
+          portfolio={portfolio}
+          onTabChange={(tab) => { setShowMobileProfile(false); onTabChange?.(tab); }}
+          onClose={() => setShowMobileProfile(false)}
+        />
       )}
     </>
   );
