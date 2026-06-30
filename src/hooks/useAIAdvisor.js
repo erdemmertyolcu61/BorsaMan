@@ -385,9 +385,11 @@ function calcTomorrowPotential(result) {
     else if (strongSignals >= 2) tpScore -= 22;
     else                         tpScore -= 35;
   } else if (recentPump > 5) {
-    tpScore -= 10;
+    tpScore -= 18;
   } else if (recentPump > 3) {
-    tpScore -= 3;
+    tpScore -= 10;
+  } else if (recentPump > 2) {
+    tpScore -= 4;
   }
 
   // Kumulatif yorgunluk: 3 gunde +%15 ustu + haber yoksa ekstra -15
@@ -436,10 +438,14 @@ function calcTomorrowPotential(result) {
     if ((result.cmf || 0) < -0.05) tpScore -= 8; // Ek CMF negatif cezasi
   }
 
-  // ── EXHAUSTION CEZASI (v21) ──
+  // ── EXHAUSTION CEZASI (v28 — sertlestirildi) ──
   // RSI yuksek + MFI yuksek + yukselis = kar realizasyonu yakın
-  if ((result.rsi || 50) > 70 && (result.mfi || 50) > 65 && (result.change || 0) > 1) {
-    tpScore -= 15;
+  // v21'de -15 idi, ISYAT gibi RSI overbought + MFI>75 hisseler hala geciyordu.
+  // v28: RSI>75 + MFI>70 = -25 (çok agir ceza), RSI>70 + MFI>65 = -18
+  if ((result.rsi || 50) > 75 && (result.mfi || 50) > 70) {
+    tpScore -= 25;
+  } else if ((result.rsi || 50) > 70 && (result.mfi || 50) > 65 && (result.change || 0) > 0.5) {
+    tpScore -= 18;
   }
 
   // ── ZAYIF HACIM RALLISI (v21) ──
@@ -1447,11 +1453,14 @@ export function useAIAdvisor(portfolio) {
             && (r.change || 0) > 1;
           if (isDistTrap && r.score < 60) return false;
 
-          // ── EXHAUSTION GUARD (v21) ──
-          // RSI > 72 + MFI > 70 + son gun yukselis = asiri uzamis, duzeltme gelecek
-          const isExhausted = (r.rsi || 50) > 72 && (r.mfi || 50) > 70
-            && (r.change || 0) > 1;
-          if (isExhausted && r.score < 70) return false;
+          // ── EXHAUSTION GUARD (v28 — sertlestirildi) ──
+          // RSI > 70 + MFI > 65 + son gun yukselis = asiri uzamis, duzeltme gelecek
+          // v21'de score < 70 istisnaydı — ISYAT gibi overbought ama yuksek skorlu
+          // hisseler filtreden geciyordu. v28: score istisnaası KALDIRILDI.
+          // RSI overbought + MFI high = YARIN DUSECEK, skor ne olursa olsun.
+          const isExhausted = (r.rsi || 50) > 70 && (r.mfi || 50) > 65
+            && (r.change || 0) > 0.5;
+          if (isExhausted) return false;
 
           // ── WEAK RALLY GUARD (v23 — yumusatildi) ──
           // Yukselis + hacim CIDDIYE dusuk + OBV dagilim = gercekten zayif rally
@@ -1951,7 +1960,7 @@ export function useAIAdvisor(portfolio) {
         // distFromMA20 = fiyat MA20'den uzakta mi? (extended trend riski)
         const pump = Math.max(p.todayPumpReal || 0, p.recentPump || 0);
         const ma20Dist = Math.abs(p.distFromMA20 || 0);
-        let entryQuality = pump <= 1 ? 95 : pump <= 2 ? 85 : pump <= 3 ? 70 : pump <= 5 ? 50 : pump <= 7 ? 30 : 15;
+        let entryQuality = pump <= 1 ? 95 : pump <= 2 ? 85 : pump <= 3 ? 60 : pump <= 4 ? 40 : pump <= 5 ? 25 : pump <= 7 ? 15 : 5;
         // MA20 cok uzaktaysa giris kalitesi cezalandirilir — SERTLESTIRILDI
         if (ma20Dist > 10) entryQuality = Math.max(5, entryQuality - 40);
         else if (ma20Dist > 7) entryQuality = Math.max(10, entryQuality - 30);
@@ -1998,9 +2007,10 @@ export function useAIAdvisor(portfolio) {
         else if (vr > 1.3) momentumHealth += 15;
         else if (vr < 0.7) momentumHealth -= 25;
         else if (vr < 1.0) momentumHealth -= 10;
-        // RSI durumu
-        if (rsi > 75) momentumHealth -= 20;
-        else if (rsi > 65) momentumHealth -= 10;
+        // RSI durumu — v28: overbought cezalari sertlestirildi
+        if (rsi > 75) momentumHealth -= 30;
+        else if (rsi > 68) momentumHealth -= 15;
+        else if (rsi > 62) momentumHealth -= 8;
         else if (rsi < 35) momentumHealth += 15; // oversold = dipten donus firsati
         else if (rsi >= 40 && rsi <= 55) momentumHealth += 10; // sweet spot
         // OBV teyidi
@@ -2081,6 +2091,21 @@ export function useAIAdvisor(portfolio) {
       };
 
       picks = picks.map(enhancePick);
+
+      // ── v28: D GRADE BUY ELEMESİ ──────────────────────────────────────
+      // D grade (confidence < 55) buy pick'leri listeden cikar.
+      // D grade = dusuk teknik + dusuk entry quality + dusuk momentum health.
+      // Bu hisseler istisnasiz yarinki dususe aday — CMBTN, DGGYO gibi
+      // D grade picklerin hepsi ertesi gun negatif kapandi.
+      // SELL pickleri korunur (D grade sell hala valid sinyal).
+      {
+        const beforeCount = picks.length;
+        picks = picks.filter(p => p.cls === 'sell' || p.grade !== 'D');
+        const removed = beforeCount - picks.length;
+        if (removed > 0) {
+          pushLog({ type: 'info', msg: `v28 D-grade filtresi: ${removed} dusuk kaliteli pick elendi` });
+        }
+      }
 
       // ══════════════════════════════════════════════════════════════════════
       //  MACRO SCORE ADJUSTMENT — USDTRY/VIX/TCMB regime
