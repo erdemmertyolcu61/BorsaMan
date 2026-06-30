@@ -428,8 +428,8 @@ function calcTomorrowPotential(result) {
   const atrPct = result.atrPct || 0;           // ATR / price * 100
   if (atrPct < 1.5) tpScore -= 20;            // cok dar bant
   else if (atrPct < 2.5) tpScore -= 5;
+  else if (atrPct >= 5) tpScore += 15;        // cok genis aralik
   else if (atrPct >= 3) tpScore += 8;         // genis aralik — 5% mumkun
-  else if (atrPct >= 5) tpScore += 15;
 
   // ── DISTRIBUTION TRAP CEZASI (v21) ──
   // Fiyat yukselirken OBV dagilim + CMF negatif → yarın dusus olasiligi cok yuksek
@@ -1299,6 +1299,9 @@ export function useAIAdvisor(portfolio) {
         if (recentPump > 5) return { isEarly: false, count: 0, signals: [] };
         // ZORUNLU: ATR makul (zaten ucmus hisseler dahil edilmesin)
         if ((r.atrPct || 0) > 5) return { isEarly: false, count: 0, signals: [] };
+        // v28: overbought hisseler erken birikim olamaz
+        if ((r.rsi || 50) > 68) return { isEarly: false, count: 0, signals: [] };
+        if ((r.mfi || 50) > 65) return { isEarly: false, count: 0, signals: [] };
 
         const signals = [];
         // 1. Akilli para birikiminde
@@ -1695,6 +1698,35 @@ export function useAIAdvisor(portfolio) {
             if (volTL < MICRO_CAP_MIN_VOLUME_TL) return false;
             // TAVAN/EXHAUSTION GUARD — fallbackBuys: hard reject (v19.1)
             if (isUnsafeForTomorrow(r)) return false;
+
+            // ── v28: BUYPPICKS ILE AYNI GUVENLIK KONTROLLERI ──
+            // Onceden fallbackBuys 8 guvenlik kontrolunu atliyordu.
+            // Confirmed bearish
+            if (r.supertrend?.trend === 'DOWN' && r.ichimoku?.cloudPosition === 'below' && r.obvTrend === 'distribution') return false;
+            // Active distribution
+            if (r.obvTrend === 'distribution' && (r.cmf || 0) < -0.08 && (r.rsi || 50) > 50 && r.score < 60) return false;
+            // Double bearish divergence
+            if (r.rsiDivergence === 'bearish' && r.obvDivergence === 'bearish') return false;
+            // Distribution trap
+            if (r.obvTrend === 'distribution' && (r.cmf || 0) < -0.12 && (r.change || 0) > 1 && r.score < 60) return false;
+            // Exhaustion: RSI>70 + MFI>65 = koşulsuz red
+            if ((r.rsi || 50) > 70 && (r.mfi || 50) > 65 && (r.change || 0) > 0.5) return false;
+            // Weak rally
+            if ((r.change || 0) > 3 && (r.volRatio || 1) < 0.6 && r.obvTrend === 'distribution') return false;
+            // Double-day pump
+            {
+              const todayP = r.todayPumpReal || r.recentPump || 0;
+              const yestP = r.prevDayChange || 0;
+              if (todayP >= 3 && yestP >= 2 && (todayP + yestP) >= 6) {
+                const hasCat = r.hasRecentInsiderBuy || r.newsCategories?.some(c => ['insider_buy', 'buyback', 'fund_inflow'].includes(c));
+                if (!hasCat) return false;
+              }
+            }
+            // Cumulative pump >= 15 without catalyst
+            if ((r.cumulativePump || 0) >= 15) {
+              if (!r.newsCategories?.some(c => ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c))) return false;
+            }
+
             // v26 FIX 5: Basarisiz pick cooldown — fallback path da uygular
             {
               const cp = livePriceMap[r.symbol]?.price || r.price;
@@ -1831,10 +1863,19 @@ export function useAIAdvisor(portfolio) {
             if (existingSyms3.has(r.symbol)) return false;
             if ((r.avgVolumeTL || 0) < 200_000) return false; // 200K TL min (eski 500K)
             if ((r.atrPct || 0) < 0.4) return false; // Yarın hareket edemeyecek hisseyi al (eski 0.6)
-            if (r.cls === 'sell') return false; // SAT diyene zaten girme
-            // RSI > 92 / MFI > 92 hala bypass — gerçek ekstrem overbought
-            if ((r.rsi || 50) > 92) return false;
-            if ((r.mfi || 50) > 92) return false;
+            if (r.cls === 'sell') return false;
+            // v28: emergency de temel güvenlik kontrollerini uygular
+            if ((r.rsi || 50) > 80) return false;
+            if ((r.mfi || 50) > 80) return false;
+            if (isUnsafeForTomorrow(r)) return false;
+            // Confirmed bearish
+            if (r.supertrend?.trend === 'DOWN' && r.ichimoku?.cloudPosition === 'below' && r.obvTrend === 'distribution') return false;
+            // Active distribution
+            if (r.obvTrend === 'distribution' && (r.cmf || 0) < -0.08 && (r.rsi || 50) > 50 && r.score < 60) return false;
+            // Double bearish divergence
+            if (r.rsiDivergence === 'bearish' && r.obvDivergence === 'bearish') return false;
+            // Exhaustion: RSI>70 + MFI>65
+            if ((r.rsi || 50) > 70 && (r.mfi || 50) > 65 && (r.change || 0) > 0.5) return false;
             return true;
           })
           .map(r => {
@@ -1879,7 +1920,14 @@ export function useAIAdvisor(portfolio) {
               if ((r.avgVolumeTL || 0) < 100_000) return false; // 100K TL min (son çare)
               if ((r.atrPct || 0) < 0.3) return false;
               if (r.cls === 'sell') return false;
-              if ((r.rsi || 50) > 92 || (r.mfi || 50) > 92) return false;
+              // v28: tier2 de aynı güvenlik kontrolleri
+              if ((r.rsi || 50) > 80) return false;
+              if ((r.mfi || 50) > 80) return false;
+              if (isUnsafeForTomorrow(r)) return false;
+              if (r.supertrend?.trend === 'DOWN' && r.ichimoku?.cloudPosition === 'below' && r.obvTrend === 'distribution') return false;
+              if (r.obvTrend === 'distribution' && (r.cmf || 0) < -0.08 && (r.rsi || 50) > 50 && r.score < 60) return false;
+              if (r.rsiDivergence === 'bearish' && r.obvDivergence === 'bearish') return false;
+              if ((r.rsi || 50) > 70 && (r.mfi || 50) > 65 && (r.change || 0) > 0.5) return false;
               return true;
             })
             .map(r => {

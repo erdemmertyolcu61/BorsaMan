@@ -507,15 +507,15 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     if (ind.lastRSI < thresholds.rsiOversold - 10) { score += 2.5 * rsiWeight; reasons.push({ t: `RSI ${ind.lastRSI.toFixed(1)} — Asiri satim (Adaptif: ${thresholds.rsiOversold.toFixed(0)})`, c: 'bullish' }); }
     else if (ind.lastRSI < thresholds.rsiOversold) { score += 1.5 * rsiWeight; reasons.push({ t: `RSI ${ind.lastRSI.toFixed(1)} — Satis baskisi azaliyor (${regime.regime})`, c: 'bullish' }); }
     else if (ind.lastRSI < thresholds.rsiWeakOversold) { score += 0.5 * rsiWeight; reasons.push({ t: `RSI ${ind.lastRSI.toFixed(1)} — Zayif ama iyilesme`, c: 'bullish' }); }
-    else if (ind.lastRSI > thresholds.rsiVeryOverbought) { 
-      const penalty = ind.volRatio > thresholds.volumeSpike ? 1.0 : 2.5;
-      score -= penalty * rsiWeight; 
-      reasons.push({ t: `RSI ${ind.lastRSI.toFixed(1)} — Asiri alim (${regime.regime})`, c: 'bearish' }); 
+    else if (ind.lastRSI > thresholds.rsiVeryOverbought) {
+      // v28: hacim istisnasi KALDIRILDI — yuksek hacim overbought'ta dagilim sinyali,
+      // validasyon degil. ISYAT gibi RSI overbought + yuksek hacim = ertesi gun dusus.
+      score -= 2.5 * rsiWeight;
+      reasons.push({ t: `RSI ${ind.lastRSI.toFixed(1)} — Asiri alim (${regime.regime})`, c: 'bearish' });
     }
-    else if (ind.lastRSI > thresholds.rsiOverbought) { 
-      const penalty = ind.volRatio > thresholds.volumeSpike ? 0.3 : 1.0;
-      score -= penalty * rsiWeight; 
-      reasons.push({ t: `RSI ${ind.lastRSI.toFixed(1)} — Yukari gerilmis`, c: 'neutral' }); 
+    else if (ind.lastRSI > thresholds.rsiOverbought) {
+      score -= 1.0 * rsiWeight;
+      reasons.push({ t: `RSI ${ind.lastRSI.toFixed(1)} — Yukari gerilmis`, c: 'bearish' });
     }
     else { reasons.push({ t: `RSI ${ind.lastRSI.toFixed(1)} — Normal bolge`, c: 'neutral' }); }
   }
@@ -569,22 +569,26 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     const bbWidth = (ind.lastBU - ind.lastBL) / ind.lastBM;
     if (bbWidth < 0.05) { score += 0.5; reasons.push({ t: 'Bollinger sikisma', c: 'neutral' }); }
     if (p <= ind.lastBL * 1.01) { score += 1.5; reasons.push({ t: 'Bollinger alt bandinda', c: 'bullish' }); }
-    else if (p >= ind.lastBU * 0.99) { 
-      const penalty = ind.volRatio > 1.5 ? 0.5 : 1.5; // Loosened for strong breakouts
-      score -= penalty; 
-      reasons.push({ t: 'Bollinger ust bandinda (Hacimle zorluyor)', c: 'bearish' }); 
+    else if (p >= ind.lastBU * 0.99) {
+      // v28: hacim istisnasi KALDIRILDI — ust bantta yuksek hacim dagilim sinyali
+      score -= 1.5;
+      reasons.push({ t: 'Bollinger ust bandinda — geri cekilme olasiligi', c: 'bearish' });
     }
   }
 
   // Volume — ADAPTIVE THRESHOLDS for institutional flow
+  // v28: Hacim puanlari OVERBOUGHT durumda AZALTILIR — yuksek hacim + overbought = dagilim
   const volWeight = indicatorWeights.volume;
-  if (ind.volRatio > thresholds.volumeExplosion) { score += 3 * volWeight; reasons.push({ t: `Hacim ${ind.volRatio.toFixed(1)}x — KURUMSAL PATLAMA (${regime.regime})`, c: 'bullish' }); }
-  else if (ind.volRatio > thresholds.volumeSpike) { score += 2 * volWeight; reasons.push({ t: `Hacim ${ind.volRatio.toFixed(1)}x — Guclu`, c: 'bullish' }); }
-  else if (ind.volRatio > 1.3) { score += 1 * volWeight; reasons.push({ t: `Hacim ${ind.volRatio.toFixed(1)}x`, c: 'bullish' }); }
+  const _isOverbought = (ind.lastRSI || 50) > 68 || (ind.mfi || 50) > 65;
+  const _volBullMult = _isOverbought ? 0.3 : 1.0; // overbought'ta hacim bonusu %30'a duser
+  if (ind.volRatio > thresholds.volumeExplosion) { score += 3 * volWeight * _volBullMult; reasons.push({ t: `Hacim ${ind.volRatio.toFixed(1)}x — ${_isOverbought ? 'DAGILIM RISKI' : 'KURUMSAL PATLAMA'} (${regime.regime})`, c: _isOverbought ? 'bearish' : 'bullish' }); }
+  else if (ind.volRatio > thresholds.volumeSpike) { score += 2 * volWeight * _volBullMult; reasons.push({ t: `Hacim ${ind.volRatio.toFixed(1)}x — ${_isOverbought ? 'Dikkat' : 'Guclu'}`, c: _isOverbought ? 'neutral' : 'bullish' }); }
+  else if (ind.volRatio > 1.3) { score += 1 * volWeight * _volBullMult; reasons.push({ t: `Hacim ${ind.volRatio.toFixed(1)}x`, c: 'bullish' }); }
   else if (ind.volRatio < thresholds.volumeLow) { score -= 1; reasons.push({ t: `Hacim dusuk — Ilgisizlik`, c: 'neutral' }); }
 
   // ── MOMENTUM BREAKOUT BONUS: Price jump + Volume ──
-  if (ind.changePct > 2 && ind.volRatio > 1.5) {
+  // v28: OVERBOUGHT hisselerde bu bonus VERILMEZ — pump exhaustion riski
+  if (ind.changePct > 2 && ind.volRatio > 1.5 && !_isOverbought) {
     score += 2;
     reasons.push({ t: 'MOMENTUM KIRILIMI: Hacimli yukselis onayi', c: 'bullish' });
   }
@@ -592,15 +596,20 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   // Smart Money (Enhanced Institutional Flow) — 2x WEIGHT (edge factor)
   if (ind.mfi != null) {
     if (ind.mfi < 20) { score += 3; reasons.push({ t: 'MFI ' + ind.mfi.toFixed(0) + ' — Kurumsal asiri satim (2x agirlik)', c: 'bullish' }); }
-    else if (ind.mfi > 80) { 
-      const penalty = ind.volRatio > 1.5 ? 1.0 : 3.0; // Reduced penalty for momentum breakout
-      score -= penalty; 
-      reasons.push({ t: 'MFI ' + ind.mfi.toFixed(0) + ' — Kar realizasyonu gerilimi', c: 'bearish' }); 
+    else if (ind.mfi > 80) {
+      // v28: hacim istisnasi KALDIRILDI — MFI>80 + yuksek hacim = kar realizasyonu
+      score -= 3;
+      reasons.push({ t: 'MFI ' + ind.mfi.toFixed(0) + ' — Kar realizasyonu gerilimi', c: 'bearish' });
     }
     else if (ind.mfi < 35) { score += 1; reasons.push({ t: 'MFI ' + ind.mfi.toFixed(0) + ' — Birikim bolgesi', c: 'bullish' }); }
-    else if (ind.mfi > 65) { score -= 0.5; reasons.push({ t: 'MFI ' + ind.mfi.toFixed(0) + ' — Asiri alima yakin', c: 'bearish' }); }
+    else if (ind.mfi > 65) { score -= 1.0; reasons.push({ t: 'MFI ' + ind.mfi.toFixed(0) + ' — Asiri alima yakin', c: 'bearish' }); }
   }
-  if (ind.obvTrend === 'accumulation') { score += 3; reasons.push({ t: 'OBV Birikim — Akilli para aliyor (2x agirlik)', c: 'bullish' }); }
+  // v28: OBV accumulation bonusu overbought'ta AZALTILIR — lagging indicator tuzagi
+  if (ind.obvTrend === 'accumulation') {
+    const obvBonus = _isOverbought ? 1.0 : 3.0;
+    score += obvBonus;
+    reasons.push({ t: `OBV Birikim — ${_isOverbought ? 'Dikkat: overbought + birikim = olasi dagilim' : 'Akilli para aliyor'}`, c: _isOverbought ? 'neutral' : 'bullish' });
+  }
   else if (ind.obvTrend === 'distribution') { score -= 3; reasons.push({ t: 'OBV Dagilim — Akilli para satiyor (2x agirlik)', c: 'bearish' }); }
   else if (ind.obvTrend === 'confirmation') { score += 1; reasons.push({ t: 'OBV Teyit — Fiyat-hacim uyumu', c: 'bullish' }); }
   if (ind.vwap && p > ind.vwap) { score += 0.5; reasons.push({ t: 'VWAP ustunde — Alicilar guclu', c: 'bullish' }); }
