@@ -1,9 +1,25 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
+
+const isElectron = process.env.BUILD_TARGET === 'electron';
 
 export default defineConfig({
-  base: './',
-  plugins: [react()],
+  base: isElectron ? './' : '/',
+  plugins: [
+    react(),
+    !isElectron && VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'public',
+      filename: 'sw.js',
+      injectRegister: false,
+      injectManifest: {
+        injectionPoint: 'self.__WB_MANIFEST',
+      },
+      manifest: false,
+      devOptions: { enabled: true },
+    }),
+  ].filter(Boolean),
   server: {
     port: parseInt(process.env.PORT || '5173'),
     open: false,
