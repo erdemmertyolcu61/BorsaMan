@@ -162,75 +162,123 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 /* ── Mobile nav label ────────────────────────────────────────────── */
 .mobile-nav-label { font-size: 10px; letter-spacing: 0.3px; }
 
-/* ── Mobile AI Picks Horizontal Strip ────────────────────────────── */
-.mobile-picks-strip {
+/* ── Mobile AI Advisor Bar (terminal-grade) ─────────────────────── */
+.m-advisor-bar {
   display: none;
-  padding: 10px 14px;
-  background: var(--bg1);
+  background: var(--bg2);
   border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  font-size: 11px;
+}
+.m-advisor-row1 {
+  display: flex; align-items: center; gap: 8px;
+}
+.m-advisor-status {
+  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+}
+.m-advisor-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.m-advisor-dot.ready {
+  background: var(--green); box-shadow: 0 0 6px var(--green);
+}
+.m-advisor-dot.scanning {
+  background: var(--orange); box-shadow: 0 0 6px var(--orange);
+  animation: pulse 1.5s infinite;
+}
+.m-advisor-label {
+  font-weight: 800; color: var(--blue); font-size: 11px;
+  letter-spacing: 0.5px; white-space: nowrap;
+}
+.m-advisor-mode {
+  font-size: 7px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 1px 6px; border-radius: 8px;
+  background: var(--cyan); color: #000;
+}
+.m-advisor-scanning {
+  color: var(--yellow); font-weight: 600; font-size: 11px;
+  flex: 1; text-align: center;
+}
+.m-advisor-sentiment {
+  display: flex; align-items: center; gap: 6px;
+  flex: 1; justify-content: center;
   overflow: hidden;
 }
-.mobile-picks-title {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
-  color: var(--purple); font-weight: 700; margin-bottom: 8px;
-  display: flex; align-items: center; gap: 6px;
+.m-advisor-regime {
+  font-weight: 800; font-size: 11px; letter-spacing: 0.3px;
+  white-space: nowrap;
 }
-.mobile-picks-scroll {
-  display: flex; gap: 8px; overflow-x: auto;
-  scrollbar-width: none; -ms-overflow-style: none;
-  padding-bottom: 4px; scroll-snap-type: x mandatory;
+.m-advisor-count {
+  font-size: 10px; font-weight: 600; white-space: nowrap;
 }
-.mobile-picks-scroll::-webkit-scrollbar { display: none; }
-.mobile-pick-card {
-  flex-shrink: 0; width: 135px; padding: 10px 12px;
-  background: var(--bg3); border-radius: 10px;
-  border: 1px solid var(--border); scroll-snap-align: start;
-  -webkit-tap-highlight-color: transparent;
-  transition: transform 0.15s;
-}
-.mobile-pick-card:active { transform: scale(0.96); }
-.mobile-pick-card.gold { border-color: rgba(255,214,0,0.4); }
-.mobile-pick-card.silver { border-color: rgba(192,192,192,0.3); }
-.mobile-pick-card.bronze { border-color: rgba(205,127,50,0.3); }
-.mobile-pick-sym { font-weight: 700; font-size: 13px; color: var(--t1); }
-.mobile-pick-signal { font-size: 10px; color: var(--green); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mobile-pick-row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; }
-.mobile-pick-score { color: var(--cyan); font-weight: 600; }
-.mobile-pick-rr { color: var(--t3); }
-.mobile-pick-grade {
-  display: inline-block; font-size: 9px; font-weight: 700;
-  padding: 2px 6px; border-radius: 3px; margin-top: 4px;
-}
-.mobile-pick-grade.a { background: var(--green2); color: var(--green); }
-.mobile-pick-grade.b { background: rgba(0,229,255,0.15); color: var(--cyan); }
-.mobile-pick-grade.c { background: var(--yellow2); color: var(--yellow); }
-
-/* Mobile scan button */
-.mobile-scan-btn {
-  margin-left: auto; padding: 5px 14px;
+.m-advisor-count.green { color: var(--green); }
+.m-advisor-count.yellow { color: var(--yellow); }
+.m-advisor-count.red { color: var(--red); }
+.m-advisor-tara {
+  flex-shrink: 0; padding: 5px 14px;
   background: linear-gradient(135deg, var(--green), #00c853);
-  color: #000; border: none; border-radius: 6px;
-  font-family: inherit; font-size: 11px; font-weight: 700;
-  letter-spacing: 1px; cursor: pointer;
-  transition: all 0.15s; min-height: 32px;
+  color: #000; border: none; border-radius: 4px;
+  font-family: inherit; font-size: 11px; font-weight: 800;
+  letter-spacing: 1.5px; cursor: pointer;
+  transition: all 0.15s; min-height: 28px;
 }
-.mobile-scan-btn:active { transform: scale(0.95); }
-.mobile-scan-btn:disabled {
-  background: var(--bg3); color: var(--yellow);
-  cursor: not-allowed; opacity: 0.8;
+.m-advisor-tara:active { transform: scale(0.95); }
+.m-advisor-tara.disabled {
+  background: var(--bg3); color: var(--t3);
+  cursor: not-allowed;
 }
-.mobile-scan-progress {
-  height: 3px; background: var(--bg3); border-radius: 2px;
-  overflow: hidden; margin-bottom: 8px;
+.m-advisor-progress {
+  height: 2px; background: var(--bg0); border-radius: 1px;
+  overflow: hidden; margin-top: 6px;
 }
-.mobile-scan-progress-fill {
-  height: 100%; border-radius: 2px;
-  background: linear-gradient(90deg, var(--green), var(--cyan));
+.m-advisor-progress-fill {
+  height: 100%; border-radius: 1px;
+  background: linear-gradient(90deg, var(--cyan), var(--green));
   transition: width 0.3s;
 }
-.mobile-picks-empty {
-  font-size: 12px; color: var(--t3); text-align: center;
-  padding: 8px 0;
+.m-advisor-row2 {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 6px; overflow: hidden;
+}
+.m-advisor-best-label {
+  color: var(--t3); font-size: 10px; font-weight: 500;
+  flex-shrink: 0; white-space: nowrap;
+}
+.m-advisor-chips {
+  display: flex; gap: 4px; overflow-x: auto;
+  scrollbar-width: none; -ms-overflow-style: none;
+  flex: 1;
+}
+.m-advisor-chips::-webkit-scrollbar { display: none; }
+.m-advisor-chip {
+  flex-shrink: 0; padding: 3px 8px;
+  border-radius: 3px; font-size: 10px; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.1s; white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+.m-advisor-chip:active { transform: scale(0.94); }
+.m-advisor-chip.buy {
+  background: var(--green2); color: var(--green);
+  border: 1px solid var(--green);
+}
+.m-advisor-chip.sell {
+  background: var(--red2); color: var(--red);
+  border: 1px solid var(--red);
+}
+.m-advisor-scanned {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 9px; color: var(--t3); flex-shrink: 0;
+  white-space: nowrap;
+}
+.m-advisor-scanned-dot {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--green);
+}
+.m-advisor-empty {
+  font-size: 11px; color: var(--t3); text-align: center;
+  padding: 4px 0;
 }
 
 /* ── Mobile Signal Strip (compact) ───────────────────────────────── */
@@ -279,7 +327,7 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 .mobile-ind-value { font-size: 13px; font-weight: 600; margin-top: 2px; }
 
 @media (max-width: 768px) {
-  .mobile-picks-strip { display: block; }
+  .m-advisor-bar { display: block; }
   .mobile-signal-strip { display: flex; }
   .mobile-ind-grid { display: grid; }
 
