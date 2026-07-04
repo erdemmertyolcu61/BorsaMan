@@ -205,6 +205,34 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 .mobile-pick-grade.b { background: rgba(0,229,255,0.15); color: var(--cyan); }
 .mobile-pick-grade.c { background: var(--yellow2); color: var(--yellow); }
 
+/* Mobile scan button */
+.mobile-scan-btn {
+  margin-left: auto; padding: 5px 14px;
+  background: linear-gradient(135deg, var(--green), #00c853);
+  color: #000; border: none; border-radius: 6px;
+  font-family: inherit; font-size: 11px; font-weight: 700;
+  letter-spacing: 1px; cursor: pointer;
+  transition: all 0.15s; min-height: 32px;
+}
+.mobile-scan-btn:active { transform: scale(0.95); }
+.mobile-scan-btn:disabled {
+  background: var(--bg3); color: var(--yellow);
+  cursor: not-allowed; opacity: 0.8;
+}
+.mobile-scan-progress {
+  height: 3px; background: var(--bg3); border-radius: 2px;
+  overflow: hidden; margin-bottom: 8px;
+}
+.mobile-scan-progress-fill {
+  height: 100%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--green), var(--cyan));
+  transition: width 0.3s;
+}
+.mobile-picks-empty {
+  font-size: 12px; color: var(--t3); text-align: center;
+  padding: 8px 0;
+}
+
 /* ── Mobile Signal Strip (compact) ───────────────────────────────── */
 .mobile-signal-strip {
   display: none;

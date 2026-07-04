@@ -1,13 +1,11 @@
 /**
  * MobilePicksStrip — Horizontal scrollable AI picks for mobile.
- * Shows top advisor picks in compact cards. Tapping a card triggers analysis.
+ * Shows scan button + top advisor picks in compact cards.
  */
 export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
-  const { topPicks = [], scanning, scanProgress = {} } = advisor;
+  const { topPicks = [], scanning, scanProgress = {}, manualScan, lastUpdate } = advisor;
 
   const displayPicks = topPicks.filter(p => p && p.symbol && p.cls !== 'sell').slice(0, 6);
-
-  if (!displayPicks.length && !scanning) return null;
 
   const medals = ['gold', 'silver', 'bronze'];
 
@@ -17,9 +15,26 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
         <span style={{ fontSize: 14 }}>◈</span>
         {scanning
           ? <span>Taranıyor {scanProgress.total > 0 ? `${scanProgress.done}/${scanProgress.total}` : '...'}</span>
-          : <span>En iyi fırsatlar</span>
+          : <span>AI Advisor</span>
         }
+        <button
+          className="mobile-scan-btn"
+          onClick={() => manualScan?.()}
+          disabled={scanning}
+        >
+          {scanning ? '⏳' : '↻'} TARA
+        </button>
       </div>
+
+      {scanning && (
+        <div className="mobile-scan-progress">
+          <div
+            className="mobile-scan-progress-fill"
+            style={{ width: scanProgress.total > 0 ? `${(scanProgress.done / scanProgress.total) * 100}%` : '0%' }}
+          />
+        </div>
+      )}
+
       {displayPicks.length > 0 && (
         <div className="mobile-picks-scroll">
           {displayPicks.map((pick, i) => (
@@ -41,6 +56,12 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
               )}
             </button>
           ))}
+        </div>
+      )}
+
+      {!scanning && !displayPicks.length && (
+        <div className="mobile-picks-empty">
+          Henüz tarama yapılmadı. TARA butonuna basarak 648 hisseyi tarayın.
         </div>
       )}
     </div>
