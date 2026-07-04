@@ -9,6 +9,20 @@
  * Call site: pass the DOM nodes + data; no React hooks inside.
  */
 
+// Shared layout paddings — Chart.jsx event handlers must use the SAME values
+// so pixel→candle math stays consistent with what is painted.
+export function chartPads(w) {
+  const narrow = w < 520;
+  return {
+    pTop: narrow ? 18 : 24,
+    pBot: narrow ? 28 : 38,
+    pLeft: narrow ? 6 : 10,
+    pRight: narrow ? 46 : 65,
+    volH: narrow ? 32 : 50,
+    narrow,
+  };
+}
+
 export function drawChart({ canvas, container, prices, ind, viewRange, crosshair, mcData, smcData, entryZone }) {
   if (!prices || !ind || !canvas || !container) return;
 
@@ -17,19 +31,23 @@ export function drawChart({ canvas, container, prices, ind, viewRange, crosshair
   const w = container.clientWidth;
   const h = container.clientHeight;
 
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
-  ctx.scale(dpr, dpr);
+  // Reallocating the backing buffer every frame is the single biggest cost on
+  // mobile touch-pan — only resize when dimensions actually change.
+  const bufW = Math.round(w * dpr), bufH = Math.round(h * dpr);
+  if (canvas.width !== bufW || canvas.height !== bufH) {
+    canvas.width = bufW;
+    canvas.height = bufH;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const startIdx = viewRange ? viewRange.start : 0;
   const endIdx = viewRange ? viewRange.end : prices.length - 1;
   const visiblePrices = prices.slice(startIdx, endIdx + 1);
   if (visiblePrices.length < 2) return;
 
-  const pTop = 24, pBot = 38, pLeft = 10, pRight = 65;
-  const volH = 50;
+  const { pTop, pBot, pLeft, pRight, volH, narrow } = chartPads(w);
   const drawW = w - pLeft - pRight;
   const priceH = h - pTop - pBot - volH;
 
@@ -348,7 +366,17 @@ export function drawChart({ canvas, container, prices, ind, viewRange, crosshair
         'D: ' + l.toFixed(2) + '  K: ' + c.toFixed(2),
         'H: ' + (bar.volume > 1e6 ? (bar.volume / 1e6).toFixed(1) + 'M' : bar.volume > 1e3 ? (bar.volume / 1e3).toFixed(0) + 'K' : (bar.volume || 0)),
       ];
-      const tw = 170, th = 58, tx = Math.min(crosshair.x + 12, w - pRight - tw - 5), ty = Math.max(pTop, crosshair.y - th - 5);
+      const tw = narrow ? 150 : 170, th = 58;
+      // Narrow screens: pin the tooltip to a corner so the finger never covers
+      // it while dragging the crosshair; flip sides when the finger gets close.
+      let tx, ty;
+      if (narrow) {
+        ty = pTop + 4;
+        tx = crosshair.x < w / 2 ? w - pRight - tw - 4 : pLeft + 4;
+      } else {
+        tx = Math.min(crosshair.x + 12, w - pRight - tw - 5);
+        ty = Math.max(pTop, crosshair.y - th - 5);
+      }
       ctx.fillStyle = 'rgba(15,23,42,0.95)';
       ctx.strokeStyle = 'rgba(148,163,184,0.4)';
       ctx.lineWidth = 1;

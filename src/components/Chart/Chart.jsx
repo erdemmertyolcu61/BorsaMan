@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { drawChart } from './chartDraw.js';
+import { drawChart, chartPads } from './chartDraw.js';
 
 export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
   const canvasRef = useRef(null);
@@ -56,7 +56,7 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
 
     if (isDragging && dragStart && prices) {
       const w = rect.width;
-      const pLeft = 10, pRight = 65;
+      const { pLeft, pRight } = chartPads(w);
       const drawW = w - pLeft - pRight;
       const visibleCount = dragStart.end - dragStart.start + 1;
       const pixelsPerCandle = drawW / visibleCount;
@@ -102,23 +102,56 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     }
   }, [isDragging, handleMouseUp]);
 
-  // Touch handlers for mobile pan and pinch-to-zoom
+  // Touch handlers — mobile UX contract:
+  //   • one-finger drag        → pan
+  //   • long-press (350ms)     → crosshair inspect mode (OHLC tooltip follows finger)
+  //   • two-finger pinch       → zoom anchored at pinch midpoint
+  //   • double-tap             → reset zoom (dblclick does not fire on touch)
+  const touchModeRef = useRef('pan');      // 'pan' | 'inspect'
+  const longPressTimerRef = useRef(null);
+  const touchStartPosRef = useRef(null);
+  const lastTapTsRef = useRef(0);
+
   const handleTouchStart = useCallback((e) => {
     if (!prices) return;
     if (e.touches.length === 1) {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) return;
       const x = e.touches[0].clientX - rect.left;
+      const y = e.touches[0].clientY - rect.top;
+
+      const now = Date.now();
+      if (now - lastTapTsRef.current < 300) {
+        // Double-tap → reset zoom
+        lastTapTsRef.current = 0;
+        setViewRange(null);
+        return;
+      }
+      lastTapTsRef.current = now;
+
+      touchStartPosRef.current = { x, y };
+      touchModeRef.current = 'pan';
       const cur = viewRange || { start: 0, end: prices.length - 1 };
       setIsDragging(true);
       setDragStart({ x, start: cur.start, end: cur.end });
       lastPinchDistRef.current = null;
+
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = setTimeout(() => {
+        touchModeRef.current = 'inspect';
+        setIsDragging(false);
+        setDragStart(null);
+        setCrosshair({ x, y });
+      }, 350);
     } else if (e.touches.length === 2) {
+      clearTimeout(longPressTimerRef.current);
+      touchModeRef.current = 'pan';
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       lastPinchDistRef.current = Math.hypot(dx, dy);
       setIsDragging(false);
       setDragStart(null);
+      setCrosshair(null);
     }
   }, [prices, viewRange]);
 
@@ -128,10 +161,24 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    if (e.touches.length === 1 && isDragging && dragStart) {
+    if (e.touches.length === 1) {
       const x = e.touches[0].clientX - rect.left;
+      const y = e.touches[0].clientY - rect.top;
+
+      // Moved before the long-press fired → it's a pan, cancel inspect intent
+      const sp = touchStartPosRef.current;
+      if (touchModeRef.current === 'pan' && sp && Math.hypot(x - sp.x, y - sp.y) > 10) {
+        clearTimeout(longPressTimerRef.current);
+      }
+
+      if (touchModeRef.current === 'inspect') {
+        setCrosshair({ x, y });
+        return;
+      }
+
+      if (!isDragging || !dragStart) return;
       const w = rect.width;
-      const pLeft = 10, pRight = 65;
+      const { pLeft, pRight } = chartPads(w);
       const drawW = w - pLeft - pRight;
       const visibleCount = dragStart.end - dragStart.start + 1;
       const pixelsPerCandle = drawW / visibleCount;
@@ -155,14 +202,19 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
       const len = prices.length;
       const cur = viewRange || { start: 0, end: len - 1 };
       const visible = cur.end - cur.start + 1;
-      const newVisible = Math.round(visible / scale);
-      const clamped = Math.max(12, Math.min(len, newVisible));
-      const center = (cur.start + cur.end) / 2;
+      const newVisible = Math.max(12, Math.min(len, Math.round(visible / scale)));
 
-      let newStart = Math.round(center - clamped / 2);
-      let newEnd = newStart + clamped - 1;
-      if (newStart < 0) { newStart = 0; newEnd = clamped - 1; }
-      if (newEnd >= len) { newEnd = len - 1; newStart = Math.max(0, newEnd - clamped + 1); }
+      // Anchor zoom at the pinch midpoint, not the view center
+      const { pLeft, pRight } = chartPads(rect.width);
+      const drawW = rect.width - pLeft - pRight;
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      const frac = Math.max(0, Math.min(1, (midX - pLeft) / (drawW || 1)));
+      const anchorIdx = cur.start + frac * visible;
+
+      let newStart = Math.round(anchorIdx - frac * newVisible);
+      let newEnd = newStart + newVisible - 1;
+      if (newStart < 0) { newStart = 0; newEnd = newVisible - 1; }
+      if (newEnd >= len) { newEnd = len - 1; newStart = Math.max(0, newEnd - newVisible + 1); }
 
       if (newStart === 0 && newEnd === len - 1) setViewRange(null);
       else setViewRange({ start: newStart, end: newEnd });
@@ -170,10 +222,15 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
   }, [prices, isDragging, dragStart, viewRange]);
 
   const handleTouchEnd = useCallback(() => {
+    clearTimeout(longPressTimerRef.current);
+    if (touchModeRef.current === 'inspect') setCrosshair(null);
+    touchModeRef.current = 'pan';
     setIsDragging(false);
     setDragStart(null);
     lastPinchDistRef.current = null;
   }, []);
+
+  useEffect(() => () => clearTimeout(longPressTimerRef.current), []);
 
   // Scroll to zoom
   const handleWheel = useCallback((e) => {
@@ -189,7 +246,7 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     let centerIdx;
     if (crosshair) {
       const rect = canvasRef.current?.getBoundingClientRect();
-      const pLeft = 10, pRight = 65;
+      const { pLeft, pRight } = chartPads(rect.width);
       const drawW = rect.width - pLeft - pRight;
       centerIdx = cur.start + ((crosshair.x - pLeft) / drawW) * visible;
     } else {
@@ -246,46 +303,28 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
         {mcData && <span style={{ color: 'rgba(139,92,246,0.8)', pointerEvents: 'none' }}>MC</span>}
       </div>
       {/* Zoom controls */}
-      <div style={{ position: 'absolute', top: 6, right: 70, zIndex: 10, display: 'flex', gap: 4 }}>
+      <div className="ch-zoom-bar">
         {viewRange && (
-          <button onClick={handleDoubleClick} style={{
-            background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-            color: 'rgba(255,255,255,0.6)', borderRadius: 3, padding: '2px 8px', fontSize: 9,
-            cursor: 'pointer', fontFamily: 'inherit',
-          }}>
-            Tum Veri
-          </button>
+          <button className="ch-zoom-btn" onClick={handleDoubleClick}>Tum Veri</button>
         )}
-        <button onClick={() => {
+        <button className="ch-zoom-btn" onClick={() => {
           if (!prices) return;
           const len = prices.length;
           setViewRange(len > 60 ? { start: len - 60, end: len - 1 } : null);
-        }} style={{
-          background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-          color: 'rgba(255,255,255,0.6)', borderRadius: 3, padding: '2px 8px', fontSize: 9,
-          cursor: 'pointer', fontFamily: 'inherit',
         }}>
           3A
         </button>
-        <button onClick={() => {
+        <button className="ch-zoom-btn" onClick={() => {
           if (!prices) return;
           const len = prices.length;
           setViewRange(len > 130 ? { start: len - 130, end: len - 1 } : null);
-        }} style={{
-          background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-          color: 'rgba(255,255,255,0.6)', borderRadius: 3, padding: '2px 8px', fontSize: 9,
-          cursor: 'pointer', fontFamily: 'inherit',
         }}>
           6A
         </button>
-        <button onClick={() => {
+        <button className="ch-zoom-btn" onClick={() => {
           if (!prices) return;
           const len = prices.length;
           setViewRange(len > 252 ? { start: len - 252, end: len - 1 } : null);
-        }} style={{
-          background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
-          color: 'rgba(255,255,255,0.6)', borderRadius: 3, padding: '2px 8px', fontSize: 9,
-          cursor: 'pointer', fontFamily: 'inherit',
         }}>
           1Y
         </button>

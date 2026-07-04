@@ -337,15 +337,37 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 }
 .mobile-ind-value { font-size: 13px; font-weight: 600; margin-top: 2px; }
 
+/* ── Chart zoom controls (Chart.jsx) ─────────────────────────────── */
+.ch-zoom-bar {
+  position: absolute; top: 6px; right: 70px; z-index: 10;
+  display: flex; gap: 4px;
+}
+.ch-zoom-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.6);
+  border-radius: 3px; padding: 2px 8px; font-size: 9px;
+  cursor: pointer; font-family: inherit;
+}
+.ch-zoom-btn:active { background: rgba(255, 255, 255, 0.18); }
+
 @media (max-width: 768px) {
   .m-advisor-bar { display: block; }
   .mobile-signal-strip { display: flex; }
   .mobile-ind-grid { display: grid; }
 
-  /* Compact chart on mobile */
+  /* Compact chart on mobile — taller than before so the price pane breathes
+     (chartDraw shrinks axis/volume paddings below 520px width) */
   .center .chart-wrap {
-    height: 200px !important; min-height: 200px !important;
+    height: 280px !important; min-height: 280px !important;
     flex: none !important; margin: 8px 10px !important;
+  }
+
+  /* Touch-friendly zoom buttons */
+  .ch-zoom-bar { top: auto !important; bottom: 32px !important; right: 6px !important; }
+  .ch-zoom-btn {
+    padding: 7px 12px; font-size: 11px; border-radius: 6px;
+    background: rgba(10, 14, 23, 0.75);
   }
 
   /* Hide desktop indicator bar on mobile (replaced by mobile-ind-grid) */
@@ -381,5 +403,5 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
   .sec { padding: 8px !important; }
   .mobile-pick-card { width: 120px !important; padding: 8px 10px !important; }
   .mobile-pick-sym { font-size: 12px !important; }
-  .center .chart-wrap { height: 170px !important; min-height: 170px !important; }
+  .center .chart-wrap { height: 240px !important; min-height: 240px !important; }
 }
