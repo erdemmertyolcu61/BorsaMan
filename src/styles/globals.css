@@ -64,7 +64,7 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
   .mobile-nav-item:active { transform: scale(0.92); }
   .mobile-nav-icon { font-size: 22px !important; }
 
-  /* Hide desktop advisor panels on mobile — replaced by picks strip + mobile nav */
+  /* Hide desktop advisor top bar on mobile — MobilePicksStrip has TARA button */
   .desktop-only-panel { display: none !important; }
 
   /* Header compact */

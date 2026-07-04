@@ -1,13 +1,11 @@
 /**
- * MobilePicksStrip — Horizontal scrollable AI picks for mobile.
- * Shows scan button + top advisor picks in compact cards.
+ * MobilePicksStrip — Mobile scan trigger bar.
+ * Shows TARA button + progress. Cards are rendered by AIAdvisorDetailPanel.
  */
 export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
-  const { topPicks = [], scanning, scanProgress = {}, manualScan, lastUpdate } = advisor;
+  const { scanning, scanProgress = {}, manualScan, topPicks = [], lastUpdate } = advisor;
 
-  const displayPicks = topPicks.filter(p => p && p.symbol && p.cls !== 'sell').slice(0, 6);
-
-  const medals = ['gold', 'silver', 'bronze'];
+  const buyCount = topPicks.filter(p => p && p.cls !== 'sell').length;
 
   return (
     <div className="mobile-picks-strip">
@@ -15,7 +13,7 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
         <span style={{ fontSize: 14 }}>◈</span>
         {scanning
           ? <span>Taranıyor {scanProgress.total > 0 ? `${scanProgress.done}/${scanProgress.total}` : '...'}</span>
-          : <span>AI Advisor</span>
+          : <span>AI Advisor {buyCount > 0 ? `· ${buyCount} AL` : ''}</span>
         }
         <button
           className="mobile-scan-btn"
@@ -35,33 +33,9 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
         </div>
       )}
 
-      {displayPicks.length > 0 && (
-        <div className="mobile-picks-scroll">
-          {displayPicks.map((pick, i) => (
-            <button
-              key={pick.symbol}
-              className={`mobile-pick-card ${medals[i] || ''}`}
-              onClick={() => onAnalyze?.(pick.symbol)}
-            >
-              <div className="mobile-pick-sym">{pick.symbol}</div>
-              <div className="mobile-pick-signal">{pick.signal || '—'}</div>
-              <div className="mobile-pick-row">
-                <span className="mobile-pick-score">{Math.round(pick.confidence || pick.score || 0)}</span>
-                <span className="mobile-pick-rr">R/R {(pick.rr || 0).toFixed(1)}</span>
-              </div>
-              {pick.grade && (
-                <span className={`mobile-pick-grade ${(pick.grade || '').toLowerCase()}`}>
-                  {pick.grade}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {!scanning && !displayPicks.length && (
+      {!scanning && !buyCount && (
         <div className="mobile-picks-empty">
-          Henüz tarama yapılmadı. TARA butonuna basarak 648 hisseyi tarayın.
+          TARA butonuna basarak 648 hisseyi tarayın.
         </div>
       )}
     </div>

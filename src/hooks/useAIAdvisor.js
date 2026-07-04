@@ -60,8 +60,8 @@ const _isPWAMode = (() => {
 })();
 
 const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market open
-const SCAN_CONCURRENCY = (isCapacitor || _isPWAMode) ? 8 : 30;
-const CHUNK_DELAY_MS = (isCapacitor || _isPWAMode) ? 600 : 30;
+const SCAN_CONCURRENCY = (isCapacitor || _isPWAMode) ? 15 : 30;
+const CHUNK_DELAY_MS = (isCapacitor || _isPWAMode) ? 200 : 30;
 const SCAN_UNIVERSE = 'bistall';                // full universe ~648 symbols
 
 // ══════════════════════════════════════════════════════════════════════════════

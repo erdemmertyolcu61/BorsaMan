@@ -357,13 +357,11 @@ export default function App() {
         <PaperTradingPanel paperTrading={paperTrading} paperML={paperML} />
       </div>
 
-      <div className="desktop-only-panel">
-        <AIAdvisorDetailPanel
-          advisor={advisor}
-          portfolio={state.portfolio}
-          onAnalyze={handleAIAnalyze}
-        />
-      </div>
+      <AIAdvisorDetailPanel
+        advisor={advisor}
+        portfolio={state.portfolio}
+        onAnalyze={handleAIAnalyze}
+      />
       <MobileNav activeTab={state.activeTab} onTabChange={state.setActiveTab} />
     </>
   );
