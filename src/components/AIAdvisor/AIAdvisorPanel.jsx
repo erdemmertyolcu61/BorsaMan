@@ -612,16 +612,14 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
   const sellCount = picks.filter(p => p.cls === 'sell').length;
 
   return (
-    <div style={{
+    <div className="ai-detail-root" style={{
       position: 'fixed', left: 0, right: 0, zIndex: 900,
-      bottom: typeof window !== 'undefined' && window.innerWidth <= 768
-        ? 'calc(56px + env(safe-area-inset-bottom, 0px))'
-        : 0,
+      bottom: 0,
       background: 'linear-gradient(180deg, #0d1320 0%, #0a0e17 100%)',
       borderTop: '2px solid transparent',
       borderImage: 'linear-gradient(90deg, #06b6d4, #8b5cf6, #06b6d4) 1',
       transition: 'max-height 0.28s ease',
-      maxHeight: open ? (typeof window !== 'undefined' && window.innerWidth <= 768 ? 260 : 400) : 40,
+      maxHeight: open ? 400 : 40,
       overflow: 'hidden',
       boxShadow: '0 -8px 32px rgba(0, 230, 230, 0.12), 0 -4px 24px rgba(0,0,0,0.6)',
     }}>
@@ -1012,12 +1010,12 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
               onClick={() => onAnalyze && onAnalyze(p.symbol)}
               title={tooltipLines.join('\n')}
               style={{
-                flexShrink: 0, width: typeof window !== 'undefined' && window.innerWidth <= 768 ? '80vw' : 400,
+                flexShrink: 0, width: 400,
                 background: cardBg,
                 borderLeft: `4px solid ${accent}`,
                 borderRight: '1px solid rgba(255,255,255,0.06)',
                 borderRadius: 5,
-                padding: typeof window !== 'undefined' && window.innerWidth <= 768 ? '8px 9px' : '9px 11px',
+                padding: '9px 11px',
                 marginRight: 7,
                 cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between',

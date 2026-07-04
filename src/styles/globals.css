@@ -17,8 +17,8 @@
 body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 .main{height:calc(100vh - 86px - var(--advisor-panel-height,0px) - 12px)}
 @media (max-width: 768px) {
-  /* On mobile: MobileNav (56px) + safe area — no advisor panel */
-  body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)) !important; }
+  /* On mobile: MobileNav (56px) + detail panel (220px) + safe area */
+  body { padding-bottom: calc(56px + 220px + env(safe-area-inset-bottom, 0px) + 12px) !important; }
   .main { height: auto !important; min-height: calc(100vh - 56px); }
   .center .chart-wrap { height: 320px !important; flex: none !important; }
 }
@@ -66,6 +66,17 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 
   /* Hide desktop advisor top bar on mobile — MobilePicksStrip has TARA button */
   .desktop-only-panel { display: none !important; }
+
+  /* ── Mobile AI Detail Panel overrides ───────────────────────── */
+  .ai-detail-root {
+    bottom: calc(56px + env(safe-area-inset-bottom, 0px)) !important;
+    max-height: 220px !important;
+  }
+  .ai-pick-card {
+    width: 78vw !important;
+    padding: 8px 10px !important;
+    font-size: 11px !important;
+  }
 
   /* Header compact */
   .hdr { gap: 8px; flex-wrap: wrap; }
