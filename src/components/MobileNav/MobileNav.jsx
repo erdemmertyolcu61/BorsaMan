@@ -1,29 +1,66 @@
-/**
- * MobileNav - Mobile navigation for smaller screens
- */
+import { useState } from 'react';
+
 export default function MobileNav({ activeTab, onTabChange }) {
-  const tabs = [
-    { id: 'dashboard', label: 'Pano',   icon: '📊' },
-    { id: 'analyze',  label: 'Analiz',  icon: '◉' },
-    { id: 'trades',   label: 'Intraday',icon: '★' },
-    { id: 'signals',  label: 'Sinyal',  icon: '◈' },
-    { id: 'paper',    label: 'Paper',   icon: '📄' },
+  const [showMore, setShowMore] = useState(false);
+
+  const primaryTabs = [
+    { id: 'dashboard', label: 'Pano',    icon: '◉' },
+    { id: 'analyze',   label: 'Analiz',  icon: '◎' },
+    { id: 'trades',    label: 'Trade',   icon: '★' },
+    { id: 'signals',   label: 'Sinyal',  icon: '◈' },
+    { id: 'portfolio', label: 'Portföy', icon: '◆' },
   ];
 
+  const overflowTabs = [
+    { id: 'intel',  label: 'İstihbarat', icon: '🌍' },
+    { id: 'paper',  label: 'Paper Trading', icon: '📄' },
+  ];
+
+  const handleTab = (id) => {
+    onTabChange(id);
+    setShowMore(false);
+  };
+
   return (
-    <nav className="mobile-nav">
-      <div className="mobile-nav-items">
-        {tabs.map((tab) => (
+    <>
+      {showMore && (
+        <div className="mobile-more-overlay" onClick={() => setShowMore(false)}>
+          <div className="mobile-more-sheet" onClick={e => e.stopPropagation()}>
+            <div className="mobile-more-handle" />
+            {overflowTabs.map(tab => (
+              <button
+                key={tab.id}
+                className={`mobile-more-item ${activeTab === tab.id ? 'active' : ''}`}
+                onClick={() => handleTab(tab.id)}
+              >
+                <span className="mobile-more-icon">{tab.icon}</span>
+                <span className="mobile-more-label">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <nav className="mobile-nav">
+        <div className="mobile-nav-items">
+          {primaryTabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={`mobile-nav-item ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => handleTab(tab.id)}
+            >
+              <span className="mobile-nav-icon">{tab.icon}</span>
+              <span className="mobile-nav-label">{tab.label}</span>
+            </button>
+          ))}
           <button
-            key={tab.id}
-            className={`mobile-nav-item ${activeTab === tab.id ? 'active' : ''}`}
-            onClick={() => onTabChange(tab.id)}
+            className={`mobile-nav-item ${overflowTabs.some(t => t.id === activeTab) ? 'active' : ''}`}
+            onClick={() => setShowMore(!showMore)}
           >
-            <span className="mobile-nav-icon">{tab.icon}</span>
-            <span>{tab.label}</span>
+            <span className="mobile-nav-icon">⋯</span>
+            <span className="mobile-nav-label">Daha</span>
           </button>
-        ))}
-      </div>
-    </nav>
+        </div>
+      </nav>
+    </>
   );
 }

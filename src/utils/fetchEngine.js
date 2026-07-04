@@ -25,6 +25,18 @@ import { fetchAsenaxList, fetchWithFallback, fetchBorsajsQuote } from './borsajs
 
 const _isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
 
+// PWA detection: hosted on Vercel (not localhost, not Electron, not Capacitor)
+// In PWA mode, direct cross-origin fetches to IsYatirim/Yahoo are CORS-blocked
+// by mobile Safari — must route through self-proxy exclusively.
+const _isPWA = (() => {
+  try {
+    if (_isCapacitor) return false;
+    if (typeof window !== 'undefined' && window.electronAPI?.remoteFetch) return false;
+    if (typeof location !== 'undefined' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return true;
+  } catch {}
+  return false;
+})();
+
 const _cache = {};
 const _inflight = {}; // Request deduplication: prevent parallel fetches for same symbol
 
@@ -256,8 +268,8 @@ export async function fetchBigParaBatchPrices() {
       text = await _capacitorProxyFetch(isyatirimUrl, 10000);
     }
 
-    // Strategy 4: Direct fetch (desktop/web only — CORS fails in Capacitor)
-    if (!text && !_isCapacitor) {
+    // Strategy 4: Direct fetch (desktop only — CORS fails in Capacitor & PWA mobile Safari)
+    if (!text && !_isCapacitor && !_isPWA) {
       try {
         const resp = await fetch(isyatirimUrl + '?_t=' + Date.now(), {
           headers: { 'Accept': 'application/json' },
@@ -1078,14 +1090,29 @@ async function fetchIsYatirimHistorical(symbol, range) {
     } catch (e) { logError('fetch', 'Electron remoteFetch IsYatirim failed', e, { symbol, severity: 'debug' }); }
   }
 
-  // Strategy 3: Capacitor → self-proxy (skip direct fetch — CORS blocked in WebView)
-  if (!text && _isCapacitor) {
-    text = await _capacitorProxyFetch(remoteUrl, 8000);
-    if (text) recordSourceSuccess('isyatirim', Date.now() - t0);
+  // Strategy 3: PWA / Capacitor → self-proxy (CORS blocked in mobile Safari & WebView)
+  if (!text && (_isCapacitor || _isPWA) && PROXY_BASE_URL) {
+    try {
+      const proxyUrl = PROXY_BASE_URL + '/api/proxy?url=' + encodeURIComponent(remoteUrl);
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const tid = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
+      const resp = await fetch(proxyUrl, {
+        headers: { 'Accept': 'application/json' },
+        signal: ctrl?.signal,
+      });
+      if (tid) clearTimeout(tid);
+      if (resp.ok) {
+        const t = await resp.text();
+        if (t && t.length > 50 && !t.includes('<!DOCTYPE')) {
+          text = t;
+          recordSourceSuccess('isyatirim', Date.now() - t0);
+        }
+      }
+    } catch { /* non-fatal — fall through to other strategies */ }
   }
 
-  // Strategy 4: Direct fetch with proper headers (desktop/web only)
-  if (!text && !_isCapacitor) {
+  // Strategy 4: Direct fetch with proper headers (desktop/web only — NOT PWA/Capacitor)
+  if (!text && !_isCapacitor && !_isPWA) {
     try {
       const r = await quickFetch(remoteUrl, 8000);
       if (r.ok) {
@@ -1251,8 +1278,8 @@ const CRUMB_TTL_MS = 55 * 60 * 1000;
 
 async function ensureYahooCrumb() {
   if (_yahooCrumb.value && Date.now() - _yahooCrumb.ts < CRUMB_TTL_MS) return _yahooCrumb;
-  // Capacitor: crumb auth requires direct CORS requests to Yahoo — not possible in WebView
-  if (_isCapacitor) return _yahooCrumb;
+  // Capacitor / PWA: crumb auth requires direct CORS requests to Yahoo — not possible
+  if (_isCapacitor || _isPWA) return _yahooCrumb;
   try {
     // Step 1: Touch fc.yahoo.com to get the consent cookie
     const consentResp = await fetch('https://fc.yahoo.com', {
@@ -1297,10 +1324,24 @@ function yahooChartUrl(symbol, range, interval, crumb = '', version = 'v8') {
 
 // Yahoo-aware fetch: tries Electron IPC → crumb-auth direct → CORS proxies
 async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
-  // Capacitor: Yahoo direct fetch is CORS-blocked in WebView; use self-proxy instead
-  if (_isCapacitor) {
+  // Capacitor / PWA: Yahoo direct fetch is CORS-blocked in mobile Safari/WebView; use self-proxy
+  if (_isCapacitor || _isPWA) {
+    if (!PROXY_BASE_URL) return null;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.IS?range=${range}&interval=${interval}&includePrePost=false`;
-    return _capacitorProxyFetch(url, ms);
+    try {
+      const proxyUrl = PROXY_BASE_URL + '/api/proxy?url=' + encodeURIComponent(url);
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const tid = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
+      const resp = await fetch(proxyUrl, {
+        headers: { 'Accept': 'application/json' },
+        signal: ctrl?.signal,
+      });
+      if (tid) clearTimeout(tid);
+      if (!resp.ok) return null;
+      const text = await resp.text();
+      if (text && text.length > 100 && !text.startsWith('<')) return text;
+    } catch {}
+    return null;
   }
 
   const t0 = Date.now();
@@ -1359,8 +1400,8 @@ async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
 
 // Primary fetch: tries Vite proxy → Yahoo direct (crumb) → public CORS proxies
 async function getData(targetUrl, ms = 10000) {
-  // Capacitor: skip direct fetch (CORS blocked) → go straight to proxy
-  if (!_isCapacitor) {
+  // Capacitor / PWA: skip direct fetch (CORS blocked) → go straight to proxy
+  if (!_isCapacitor && !_isPWA) {
     const directResult = await tryDirect(targetUrl, ms);
     if (directResult) return directResult;
 
@@ -1376,7 +1417,7 @@ async function getData(targetUrl, ms = 10000) {
 
 // Fresh fetch with cache-busting
 async function getDataFresh(targetUrl, ms = 10000) {
-  if (!_isCapacitor) {
+  if (!_isCapacitor && !_isPWA) {
     const directResult = await tryDirectNoCache(targetUrl, ms);
     if (directResult) return directResult;
     const localResult = await tryLocalYahoo(targetUrl, ms);
@@ -1504,6 +1545,17 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
 // Pattern from Google's "Tail at Scale" — 95th percentile latency drops dramatically.
 // ══════════════════════════════════════════════════════════════════════════════
 async function _hedgedDailyFetch(symbol, range, interval, ms) {
+  // PWA mode: both IsYatirim and Yahoo go through self-proxy (no CORS direct).
+  // Run them sequentially (IsYatirim first) to avoid doubling proxy load.
+  if (_isPWA) {
+    const p = await fetchIsYatirimHistorical(symbol, range);
+    if (p && p.length > 0) return { p, source: 'IsYatirim' };
+    const text = await fetchYahooDirect(symbol, range, interval, ms);
+    const yp = text ? parseYahoo(text) : null;
+    if (yp && yp.length > 0) return { p: yp, source: 'Yahoo' };
+    return null;
+  }
+
   return new Promise((resolve) => {
     let settled = false;
     const finish = (p, source) => {

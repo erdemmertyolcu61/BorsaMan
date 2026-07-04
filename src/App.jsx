@@ -19,6 +19,7 @@ import AIAdvisorPanel, { AIAdvisorDetailPanel } from './components/AIAdvisor/AIA
 import AlertLog from './components/AlertLog/AlertLog.jsx';
 import Tabs from './components/Tabs/Tabs.jsx';
 import MobileNav from './components/MobileNav/MobileNav.jsx';
+import MobilePicksStrip from './components/MobileNav/MobilePicksStrip.jsx';
 import ScanHistoryDrawer from './components/AIAdvisor/ScanHistoryDrawer.jsx';
 import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
 import MarketIntelPanel from './components/MarketIntel/MarketIntelPanel.jsx';
@@ -276,12 +277,16 @@ export default function App() {
         onTabChange={state.setActiveTab}
       />
 
-      <AIAdvisorPanel
-        advisor={advisor}
-        addToPortfolio={state.addToPortfolio}
-        portfolio={state.portfolio}
-        onAnalyze={handleAIAnalyze}
-      />
+      <div className="desktop-only-panel">
+        <AIAdvisorPanel
+          advisor={advisor}
+          addToPortfolio={state.addToPortfolio}
+          portfolio={state.portfolio}
+          onAnalyze={handleAIAnalyze}
+        />
+      </div>
+
+      <MobilePicksStrip advisor={advisor} onAnalyze={handleAIAnalyze} />
 
       <Tabs activeTab={state.activeTab} onTabChange={state.setActiveTab} />
 
@@ -352,11 +357,13 @@ export default function App() {
         <PaperTradingPanel paperTrading={paperTrading} paperML={paperML} />
       </div>
 
-      <AIAdvisorDetailPanel
-        advisor={advisor}
-        portfolio={state.portfolio}
-        onAnalyze={handleAIAnalyze}
-      />
+      <div className="desktop-only-panel">
+        <AIAdvisorDetailPanel
+          advisor={advisor}
+          portfolio={state.portfolio}
+          onAnalyze={handleAIAnalyze}
+        />
+      </div>
       <MobileNav activeTab={state.activeTab} onTabChange={state.setActiveTab} />
     </>
   );

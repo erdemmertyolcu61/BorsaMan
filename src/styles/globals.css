@@ -17,8 +17,8 @@
 body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
 .main{height:calc(100vh - 86px - var(--advisor-panel-height,0px) - 12px)}
 @media (max-width: 768px) {
-  /* On mobile: MobileNav (56px) + safe area + advisor panel */
-  body { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + var(--advisor-panel-height, 0px) + 12px) !important; }
+  /* On mobile: MobileNav (56px) + safe area — no advisor panel */
+  body { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)) !important; }
   .main { height: auto !important; min-height: calc(100vh - 56px); }
   .center .chart-wrap { height: 320px !important; flex: none !important; }
 }
@@ -64,8 +64,8 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
   .mobile-nav-item:active { transform: scale(0.92); }
   .mobile-nav-icon { font-size: 22px !important; }
 
-  /* Bottom advisor panel: collapse to smaller on mobile */
-  .advisor-detail-panel { max-height: 180px !important; }
+  /* Hide desktop advisor panels on mobile — replaced by picks strip + mobile nav */
+  .desktop-only-panel { display: none !important; }
 
   /* Header compact */
   .hdr { gap: 8px; flex-wrap: wrap; }
@@ -124,13 +124,175 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
   flex: 1; padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
 
+/* ── Mobile "More" overflow sheet ────────────────────────────────── */
+.mobile-more-overlay {
+  position: fixed; inset: 0; z-index: 199;
+  background: rgba(0,0,0,0.6);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: flex-end;
+  animation: fadeIn 0.15s ease-out;
+}
+.mobile-more-sheet {
+  width: 100%;
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  padding: 12px 16px calc(72px + env(safe-area-inset-bottom, 0px));
+  animation: slideUp 0.2s ease-out;
+}
+@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.mobile-more-handle {
+  width: 36px; height: 4px; border-radius: 2px;
+  background: var(--border2); margin: 0 auto 16px;
+}
+.mobile-more-item {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; padding: 14px 16px; margin-bottom: 4px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--t2);
+  font-family: inherit; font-size: 14px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s;
+}
+.mobile-more-item.active { border-color: var(--green); color: var(--green); background: var(--green2); }
+.mobile-more-item:active { transform: scale(0.97); }
+.mobile-more-icon { font-size: 18px; }
+.mobile-more-label { font-size: 14px; }
+
+/* ── Mobile nav label ────────────────────────────────────────────── */
+.mobile-nav-label { font-size: 10px; letter-spacing: 0.3px; }
+
+/* ── Mobile AI Picks Horizontal Strip ────────────────────────────── */
+.mobile-picks-strip {
+  display: none;
+  padding: 10px 14px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+.mobile-picks-title {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
+  color: var(--purple); font-weight: 700; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 6px;
+}
+.mobile-picks-scroll {
+  display: flex; gap: 8px; overflow-x: auto;
+  scrollbar-width: none; -ms-overflow-style: none;
+  padding-bottom: 4px; scroll-snap-type: x mandatory;
+}
+.mobile-picks-scroll::-webkit-scrollbar { display: none; }
+.mobile-pick-card {
+  flex-shrink: 0; width: 135px; padding: 10px 12px;
+  background: var(--bg3); border-radius: 10px;
+  border: 1px solid var(--border); scroll-snap-align: start;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s;
+}
+.mobile-pick-card:active { transform: scale(0.96); }
+.mobile-pick-card.gold { border-color: rgba(255,214,0,0.4); }
+.mobile-pick-card.silver { border-color: rgba(192,192,192,0.3); }
+.mobile-pick-card.bronze { border-color: rgba(205,127,50,0.3); }
+.mobile-pick-sym { font-weight: 700; font-size: 13px; color: var(--t1); }
+.mobile-pick-signal { font-size: 10px; color: var(--green); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mobile-pick-row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 11px; }
+.mobile-pick-score { color: var(--cyan); font-weight: 600; }
+.mobile-pick-rr { color: var(--t3); }
+.mobile-pick-grade {
+  display: inline-block; font-size: 9px; font-weight: 700;
+  padding: 2px 6px; border-radius: 3px; margin-top: 4px;
+}
+.mobile-pick-grade.a { background: var(--green2); color: var(--green); }
+.mobile-pick-grade.b { background: rgba(0,229,255,0.15); color: var(--cyan); }
+.mobile-pick-grade.c { background: var(--yellow2); color: var(--yellow); }
+
+/* ── Mobile Signal Strip (compact) ───────────────────────────────── */
+.mobile-signal-strip {
+  display: none;
+  margin: 8px 12px; padding: 12px 14px;
+  border-radius: 10px; border: 1px solid;
+  align-items: center; justify-content: space-between;
+}
+.mobile-signal-strip.buy {
+  background: linear-gradient(135deg, rgba(0,230,118,0.06), rgba(0,229,255,0.04));
+  border-color: rgba(0,230,118,0.25);
+}
+.mobile-signal-strip.sell {
+  background: linear-gradient(135deg, rgba(255,23,68,0.06), rgba(255,145,0,0.04));
+  border-color: rgba(255,23,68,0.25);
+}
+.mobile-signal-strip.hold {
+  background: linear-gradient(135deg, rgba(255,214,0,0.06), rgba(255,145,0,0.04));
+  border-color: rgba(255,214,0,0.25);
+}
+.mobile-signal-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--t3); }
+.mobile-signal-value { font-size: 18px; font-weight: 800; margin-top: 1px; }
+.mobile-signal-strip.buy .mobile-signal-value { color: var(--green); }
+.mobile-signal-strip.sell .mobile-signal-value { color: var(--red); }
+.mobile-signal-strip.hold .mobile-signal-value { color: var(--yellow); }
+.mobile-signal-meta { text-align: right; }
+.mobile-signal-rr { font-size: 12px; color: var(--cyan); font-weight: 600; }
+.mobile-signal-stop { font-size: 10px; color: var(--red); margin-top: 2px; }
+.mobile-signal-target { font-size: 10px; color: var(--green); margin-top: 1px; }
+
+/* ── Mobile Compact Indicators ───────────────────────────────────── */
+.mobile-ind-grid {
+  display: none;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px; background: var(--border);
+  margin: 8px 12px; border-radius: 8px; overflow: hidden;
+}
+.mobile-ind-item {
+  background: var(--bg1); padding: 8px 6px; text-align: center;
+}
+.mobile-ind-label {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--t3); font-weight: 500;
+}
+.mobile-ind-value { font-size: 13px; font-weight: 600; margin-top: 2px; }
+
+@media (max-width: 768px) {
+  .mobile-picks-strip { display: block; }
+  .mobile-signal-strip { display: flex; }
+  .mobile-ind-grid { display: grid; }
+
+  /* Compact chart on mobile */
+  .center .chart-wrap {
+    height: 200px !important; min-height: 200px !important;
+    flex: none !important; margin: 8px 10px !important;
+  }
+
+  /* Hide desktop indicator bar on mobile (replaced by mobile-ind-grid) */
+  .ind-bar { display: none !important; }
+
+  /* Compact signal card */
+  .sig-card { margin: 8px 10px !important; padding: 14px !important; }
+  .sig-val { font-size: 24px !important; }
+
+  /* Tighter trade boxes */
+  .trade-box { margin: 0 10px 8px !important; padding: 12px !important; }
+
+  /* Scanner compact */
+  .scanner-wrap { padding: 10px !important; }
+  .scan-btn { padding: 12px 20px !important; font-size: 13px !important; }
+
+  /* Mobile nav adjustments */
+  .mobile-nav-item {
+    padding: 6px 0 !important; min-height: 44px !important;
+    font-size: 10px !important; gap: 2px !important;
+  }
+  .mobile-nav-icon { font-size: 20px !important; }
+}
+
 /* ── Extra small phones (< 380px like iPhone SE) ────────────────── */
 @media (max-width: 380px) {
   .logo { font-size: 14px !important; }
   .logo span { font-size: 10px !important; }
   .hdr { padding: 6px 10px !important; }
-  .mobile-nav-item { padding: 6px 8px !important; font-size: 9px !important; }
-  .mobile-nav-icon { font-size: 18px !important; }
+  .mobile-nav-item { padding: 4px 0 !important; font-size: 9px !important; }
+  .mobile-nav-icon { font-size: 17px !important; }
   .trade-box { margin: 0 8px 8px !important; padding: 10px !important; }
   .sec { padding: 8px !important; }
+  .mobile-pick-card { width: 120px !important; padding: 8px 10px !important; }
+  .mobile-pick-sym { font-size: 12px !important; }
+  .center .chart-wrap { height: 170px !important; min-height: 170px !important; }
 }

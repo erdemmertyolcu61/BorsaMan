@@ -421,6 +421,31 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
             <div className="ind-c"><div className="ind-n">Chandelier</div><div className="ind-v" style={{ color: 'var(--cyan)' }}>{gInd.chandelier?.longStop ? gInd.chandelier.longStop.toFixed(2) : '—'}</div></div>
           </div>
         )}
+        {/* Mobile compact indicator grid (visible only on <=768px via CSS) */}
+        {gInd && (
+          <div className="mobile-ind-grid">
+            <div className="mobile-ind-item"><div className="mobile-ind-label">RSI</div><div className="mobile-ind-value" style={{ color: gInd.lastRSI < 30 ? 'var(--green)' : gInd.lastRSI > 70 ? 'var(--red)' : 'var(--t1)' }}>{gInd.lastRSI != null ? gInd.lastRSI.toFixed(0) : '—'}</div></div>
+            <div className="mobile-ind-item"><div className="mobile-ind-label">MACD</div><div className="mobile-ind-value" style={{ color: gInd.lastMACD > 0 ? 'var(--green)' : 'var(--red)' }}>{gInd.lastMACD != null ? gInd.lastMACD.toFixed(2) : '—'}</div></div>
+            <div className="mobile-ind-item"><div className="mobile-ind-label">MFI</div><div className="mobile-ind-value" style={{ color: gInd.mfi < 20 ? 'var(--green)' : gInd.mfi > 80 ? 'var(--red)' : 'var(--t1)' }}>{gInd.mfi != null ? gInd.mfi.toFixed(0) : '—'}</div></div>
+            <div className="mobile-ind-item"><div className="mobile-ind-label">Hacim</div><div className="mobile-ind-value">{gInd.volRatio != null ? gInd.volRatio.toFixed(1) + 'x' : '—'}</div></div>
+            <div className="mobile-ind-item"><div className="mobile-ind-label">ADX</div><div className="mobile-ind-value" style={{ color: gInd.adx > 25 ? 'var(--green)' : gInd.adx < 20 ? 'var(--red)' : 'var(--yellow)' }}>{gInd.adx != null ? gInd.adx.toFixed(0) : '—'}</div></div>
+            <div className="mobile-ind-item"><div className="mobile-ind-label">CMF</div><div className="mobile-ind-value" style={{ color: gInd.cmf > 0.05 ? 'var(--green)' : gInd.cmf < -0.05 ? 'var(--red)' : 'var(--t1)' }}>{gInd.cmf != null ? gInd.cmf.toFixed(2) : '—'}</div></div>
+          </div>
+        )}
+        {/* Mobile compact signal strip (visible only on <=768px via CSS) */}
+        {gSig && (
+          <div className={`mobile-signal-strip ${gSig.cls === 'buy' ? 'buy' : gSig.cls === 'sell' ? 'sell' : 'hold'}`}>
+            <div>
+              <div className="mobile-signal-label">Sinyal</div>
+              <div className="mobile-signal-value">{gSig.cls === 'buy' ? 'AL' : gSig.cls === 'sell' ? 'SAT' : 'TUT'}</div>
+            </div>
+            <div className="mobile-signal-meta">
+              <div className="mobile-signal-rr">R/R {(gSig.rr || 0).toFixed(1)}</div>
+              {gSig.stop && <div className="mobile-signal-stop">Stop {gSig.stop.toFixed(2)}</div>}
+              {gSig.t1 && <div className="mobile-signal-target">Hedef {gSig.t1.toFixed(2)}</div>}
+            </div>
+          </div>
+        )}
         {/* Risk & Monte Carlo Summary */}
         {gSig && gInd && (
           <div style={{ padding: 14 }}>

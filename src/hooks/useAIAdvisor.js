@@ -47,9 +47,21 @@ export function isMarketClosedForDay() {
 
 const isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
 
+// PWA detection: running on Vercel (not Electron, not Capacitor, not localhost)
+// Mobile Safari CORS-blocks direct fetches → all requests go through Vercel proxy
+// → must throttle to avoid Vercel concurrency limits (Hobby: ~12 concurrent)
+const _isPWAMode = (() => {
+  try {
+    if (isCapacitor) return false;
+    if (typeof window !== 'undefined' && window.electronAPI?.remoteFetch) return false;
+    if (typeof location !== 'undefined' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return true;
+  } catch {}
+  return false;
+})();
+
 const AUTO_SCAN_INTERVAL_MS = 1000 * 60 * 15; // 15-minute auto scan when market open
-const SCAN_CONCURRENCY = isCapacitor ? 10 : 30; // mobilde proxy limitlerine takılmamak için 10
-const CHUNK_DELAY_MS = isCapacitor ? 500 : 30;  // mobilde her 10 hissede 500ms bekle
+const SCAN_CONCURRENCY = (isCapacitor || _isPWAMode) ? 8 : 30;
+const CHUNK_DELAY_MS = (isCapacitor || _isPWAMode) ? 600 : 30;
 const SCAN_UNIVERSE = 'bistall';                // full universe ~648 symbols
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -783,7 +795,8 @@ export function useAIAdvisor(portfolio) {
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       // Per-sembol hard timeout — tek yavaş sembol tüm chunk'ı bekletmesin.
       // fetchSingle zaten 10s ceiling'e sahip ama timeout kapısı dışarıdan daha güvenli.
-      const withSymTimeout = (fn, ms = 8000) =>
+      const symTimeoutMs = _isPWAMode ? 12000 : 8000;
+      const withSymTimeout = (fn, ms = symTimeoutMs) =>
         Promise.race([fn(), new Promise(r => setTimeout(() => r(null), ms))]);
 
       // Chunk-based scanning (matches original .exe behavior)
