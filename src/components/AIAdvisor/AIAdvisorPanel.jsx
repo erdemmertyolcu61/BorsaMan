@@ -624,7 +624,6 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       background: 'linear-gradient(180deg, #0d1320 0%, #0a0e17 100%)',
       borderTop: '2px solid transparent',
       borderImage: 'linear-gradient(90deg, #06b6d4, #8b5cf6, #06b6d4) 1',
-      transition: 'max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       maxHeight: open ? (isMobile ? 450 : 400) : (isMobile ? 44 : 40),
       overflow: 'hidden',
       boxShadow: '0 -8px 32px rgba(0, 230, 230, 0.12), 0 -4px 24px rgba(0,0,0,0.6)',
@@ -798,8 +797,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
             style={{
               color: 'var(--t2)', fontSize: isMobile ? 18 : 12, cursor: 'pointer',
-              transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)', transform: open ? 'rotate(180deg)' : 'rotate(0)',
-              padding: isMobile ? '8px 8px' : 0,
+              transform: open ? 'rotate(180deg)' : 'rotate(0)',
+              padding: isMobile ? '8px 12px' : 0,
             }}
           >▲</span>
           <span
@@ -810,9 +809,11 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         </div>
       </div>
 
-      {/* v26: YARIN UMUT BANDI — tüm picks emergency ise */}
-      {hasPicks && displayPicks.every(p => p._emergencyPick) && (
-        <div style={{
+      {open && (
+        <>
+          {/* v26: YARIN UMUT BANDI — tüm picks emergency ise */}
+          {hasPicks && displayPicks.every(p => p._emergencyPick) && (
+            <div style={{
           padding: '6px 12px', fontSize: 11, color: '#fbbf24',
           background: 'linear-gradient(90deg, rgba(249,115,22,0.12), rgba(234,179,8,0.06))',
           borderTop: '1px solid rgba(249,115,22,0.3)',
@@ -1473,6 +1474,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }
