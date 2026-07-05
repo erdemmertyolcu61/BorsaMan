@@ -676,20 +676,21 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
             textShadow: '0 0 12px rgba(6,182,212,0.3)',
+            whiteSpace: 'nowrap', flexShrink: 0,
           }}>
-            ★ AI EN İYİ FIRSATLAR{hasPicks ? ` (${picks.length})` : ''}
+            {isMobile ? `★ AI FIRSATLAR${hasPicks ? ` (${picks.length})` : ''}` : `★ AI EN İYİ FIRSATLAR${hasPicks ? ` (${picks.length})` : ''}`}
           </span>
           {/* Mobilde: sadece eski veri rozetini ve AL/SAT sayılarını göster, diğer badge'ler gizle */}
           {isMobile && isFromCache && (
             <span style={{
-              fontSize: 9, fontWeight: 800, padding: '2px 7px', borderRadius: 8,
+              fontSize: 9, fontWeight: 800, padding: '2px 5px', borderRadius: 6,
               background: isStale ? 'rgba(244,63,94,0.25)' : 'rgba(255,214,0,0.2)',
               color: isStale ? '#ff5470' : '#ffd600',
               border: `1px solid ${isStale ? 'rgba(244,63,94,0.6)' : 'rgba(255,214,0,0.5)'}`,
-              letterSpacing: 0.3, whiteSpace: 'nowrap',
+              letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0,
               animation: isStale ? 'pulse 2s ease-in-out infinite' : 'none',
             }}>
-              {isStale ? '⚠ ESKİ VERİ' : 'YEDEK'} {cacheAge ? `• ${cacheAge}` : ''}
+              {isStale ? '⚠ ESKİ' : 'YEDEK'} {cacheAge ? `• ${cacheAge}` : ''}
             </span>
           )}
           {scanning && (
@@ -700,7 +701,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             }} />
           )}
           {/* v26 FIX 2: Piyasa rejimi rozeti — BULL (8 pick) / NEUTRAL (5) / BEAR (3) */}
-          {marketRegime?.regime && (() => {
+          {!isMobile && marketRegime?.regime && (() => {
             const r = marketRegime.regime;
             const c = marketRegime.bistChangePct || 0;
             const cfg = r === 'BULL'
@@ -714,26 +715,26 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 style={{
                   fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 10,
                   background: cfg.bg, color: cfg.fg, border: `1px solid ${cfg.border}`,
-                  letterSpacing: 0.4,
+                  letterSpacing: 0.4, flexShrink: 0,
                 }}
               >
                 {cfg.icon} {r} {c >= 0 ? '+' : ''}{c.toFixed(1)}%
               </span>
             );
           })()}
-          {isFromCache && (
+          {!isMobile && isFromCache && (
             <span style={{
               fontSize: 10, fontWeight: 800, padding: '3px 9px', borderRadius: 10,
               background: isStale ? 'rgba(244,63,94,0.2)' : 'rgba(255,214,0,0.18)',
               color: isStale ? '#ff5470' : '#ffd600',
               border: `1px solid ${isStale ? 'rgba(244,63,94,0.5)' : 'rgba(255,214,0,0.45)'}`,
-              letterSpacing: 0.4,
+              letterSpacing: 0.4, flexShrink: 0,
             }}>
               {isStale ? '⚠ ESKİ VERİ' : 'OTOMATİK YEDEK'} {cacheAge ? `• ${cacheAge}` : ''}
             </span>
           )}
           {/* MAKRO BADGE — risk regime (USDTRY + VIX + TCMB + BIST/USD) */}
-          {marketSentiment?.macro && (
+          {!isMobile && marketSentiment?.macro && (
             <span
               title={
                 `Adjust: ${marketSentiment.macro.scoreAdjust > 0 ? '+' : ''}${marketSentiment.macro.scoreAdjust}\n` +
@@ -746,21 +747,24 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 border: `1px solid ${marketSentiment.macro.badgeColor}66`,
                 letterSpacing: 0.4, whiteSpace: 'pre-line',
                 boxShadow: marketSentiment.macro.regime === 'panic' ? `0 0 8px ${marketSentiment.macro.badgeColor}55` : 'none',
+                flexShrink: 0,
               }}
             >
               {marketSentiment.macro.badge}
             </span>
           )}
           {scanning && (
-            <span style={{ fontSize: 11, color: '#ff9a3c', fontWeight: 700 }}>● Taranıyor...</span>
+            <span style={{ fontSize: 11, color: '#ff9a3c', fontWeight: 700, flexShrink: 0 }}>● Taranıyor...</span>
           )}
           {/* AL / SAT counts */}
-          <span style={{ fontSize: 12, color: '#a8b3c7', fontWeight: 600 }}>
-            <span style={{ color: '#10e87a', fontWeight: 800 }}>{buyCount} AL</span>
-            {sellCount > 0 && <span style={{ color: '#ff5470', fontWeight: 800 }}> · {sellCount} SAT</span>}
-          </span>
+          {!isMobile && (
+            <span style={{ fontSize: 12, color: '#a8b3c7', fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }}>
+              <span style={{ color: '#10e87a', fontWeight: 800 }}>{buyCount} AL</span>
+              {sellCount > 0 && <span style={{ color: '#ff5470', fontWeight: 800 }}> · {sellCount} SAT</span>}
+            </span>
+          )}
           {/* Sentinel symbols preview (collapsed) */}
-          {!open && picks.slice(0, 8).map(p => {
+          {!open && !isMobile && picks.slice(0, 8).map(p => {
             const isSell = p.cls === 'sell';
             return (
               <span key={p.symbol} style={{
@@ -768,6 +772,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 color: isSell ? 'var(--red)' : 'var(--green)',
                 background: 'var(--bg3)', padding: '1px 7px', borderRadius: 3,
                 border: `1px solid ${isSell ? '#ff444433' : 'var(--border)'}`,
+                flexShrink: 0, whiteSpace: 'nowrap',
               }}>
                 {p.symbol}{isSell ? ' ↓' : ''}
               </span>
@@ -775,7 +780,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           })}
         </div>
         {/* Right: refresh + chevron + X */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 8, flexShrink: 0 }}>
           {advisor.manualScan && !scanning && (
             <button
               onClick={(e) => { e.stopPropagation(); advisor.manualScan(); }}
@@ -784,10 +789,11 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 background: isStale ? '#ff5470' : 'rgba(6,182,212,0.12)',
                 color: '#ffffff',
                 border: `1px solid ${isStale ? '#ff5470' : 'rgba(6,182,212,0.55)'}`,
-                borderRadius: 4, padding: '4px 12px', fontSize: 11,
+                borderRadius: 4, padding: isMobile ? '3px 8px' : '4px 12px', fontSize: 11,
                 cursor: 'pointer', fontWeight: 800, fontFamily: 'inherit',
                 letterSpacing: 0.4,
                 boxShadow: isStale ? '0 0 12px rgba(244,63,94,0.4)' : '0 0 8px rgba(6,182,212,0.2)',
+                whiteSpace: 'nowrap',
               }}
             >
               ↻ {isStale ? 'YENİLE' : 'TARA'}
