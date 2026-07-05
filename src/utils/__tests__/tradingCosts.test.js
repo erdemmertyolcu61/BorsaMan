@@ -4,6 +4,7 @@ import {
   liquiditySlippagePct,
   applyEntryCost,
   applyExitCost,
+  netRR,
 } from '../tradingCosts.js';
 
 describe('tradingCosts', () => {
@@ -39,5 +40,34 @@ describe('tradingCosts', () => {
     expect(applyEntryCost(null, 'buy')).toBeNull();
     expect(applyExitCost(undefined, 'buy')).toBeUndefined();
     expect(applyEntryCost(NaN, 'buy')).toBeNaN();
+  });
+
+  describe('netRR', () => {
+    it('is always below the frictionless gross RR', () => {
+      // gross: entry 100, stop 97, target 106 → RR = 2.0
+      const net = netRR(100, 97, 106);
+      expect(net).not.toBeNull();
+      expect(net).toBeLessThan(2.0);
+      expect(net).toBeGreaterThan(1.5); // typical degradation ~0.1-0.3 at BIST widths
+    });
+
+    it('degrades thin edges below the 1.0 bar', () => {
+      // gross RR ≈ 1.05 with a tight 2% stop / 2.1% target
+      const net = netRR(100, 98, 102.1);
+      expect(net).toBeLessThan(1.0);
+    });
+
+    it('widens per-leg cost for illiquid tiers', () => {
+      const liquid = netRR(100, 97, 106, 'HIGH');
+      const illiquid = netRR(100, 97, 106, 'VERY_LOW');
+      expect(illiquid).toBeLessThan(liquid);
+    });
+
+    it('returns null on invalid geometry', () => {
+      expect(netRR(0, 97, 106)).toBeNull();
+      expect(netRR(100, 101, 106)).toBeNull();  // stop above entry (long) → risk<=0
+      expect(netRR(100, NaN, 106)).toBeNull();
+      expect(netRR(null, 97, 106)).toBeNull();
+    });
   });
 });

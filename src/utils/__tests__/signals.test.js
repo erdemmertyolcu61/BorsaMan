@@ -106,6 +106,23 @@ describe('calcPosition', () => {
     expect(r.kellySource).toBe('estimated');
     setSignalReliabilityHints({ buy: null });
   });
+
+  // ── Regime/governor multiplier ────────────────────────────────────────
+  it('regimeMult scales shares down in hostile regimes (BEAR=0.4)', () => {
+    const base = calcPosition(10000, 2, 100, 95);              // 40 shares
+    const bear = calcPosition(10000, 2, 100, 95, { regimeMult: 0.4 });
+    expect(bear.shares).toBe(Math.floor(base.shares * 0.4));   // 16
+    expect(bear.regimeMult).toBe(0.4);
+  });
+
+  it('regimeMult caps at 1.5 and ignores invalid values', () => {
+    const base = calcPosition(10000, 2, 100, 95);
+    const capped = calcPosition(10000, 2, 100, 95, { regimeMult: 5 });
+    expect(capped.shares).toBeLessThanOrEqual(Math.floor(base.shares * 1.5));
+    const invalid = calcPosition(10000, 2, 100, 95, { regimeMult: -1 });
+    expect(invalid.shares).toBe(base.shares);
+    expect(invalid.regimeMult).toBe(1);
+  });
 });
 
 // ── genSignal output contract ─────────────────────────────────────────────

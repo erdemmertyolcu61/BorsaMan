@@ -275,6 +275,11 @@ export function useSignalTracker() {
         rr: signalData.rr || null,
         score100: signalData.score100 || signalData.score || null,
         ...signalData,
+        // Normalized regime label — the calibration model's regime slice key.
+        // Accepts the genSignal regime object, the advisor's _regime string,
+        // or nothing (bucket simply stays unfilled).
+        regime: (typeof signalData.regime === 'string' ? signalData.regime : signalData.regime?.regime)
+          || signalData._regime || null,
       };
       return [newSignal, ...prev].slice(0, MAX_HISTORY);
     });

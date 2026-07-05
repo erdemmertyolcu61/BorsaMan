@@ -23,7 +23,9 @@ const STORAGE_KEY = 'bist_paper_ml_engine_v1';
 const START_CAPITAL = 100_000;
 const MAX_POSITIONS = 3;          // TOP 3 ML picks only
 const MAX_POS_PCT = 0.33;         // 33% capital per trade
-const STOP_LOSS_PCT = -0.03;      // strict -3% stop
+const STOP_LOSS_PCT = -0.03;      // fallback -3% stop (pick's own stop preferred)
+const TIME_EXIT_DAYS = 3;         // rotate stagnant positions after 3 trading days
+const TIME_EXIT_MIN_GAIN_PCT = 1; // keep only if gross P&L >= +1% at day 3
 const MIN_ML_BOOST = 0;           // mlConfidenceBoost > 0 (any ML match)
 const MIN_ENTRY_TL = 3_000;       // minimum position size
 
@@ -298,16 +300,30 @@ export class PaperTradeEngine {
     const legSlippage = liquiditySlippagePct(pick.liquidity);
     const entry = applyEntryCost(currentPrice, 'buy', legSlippage);
 
-    // 33% max capital allocation
-    const sizeTl = Math.min(s.cash * MAX_POS_PCT, s.cash);
+    // 33% max capital allocation × regime/governor multiplier.
+    // pick._positionSizeMult carries regimeEngine.riskMult × profitGovernor
+    // positionMult — in BEAR/DEFENSE the same setup opens with a fraction.
+    const posMult = Number.isFinite(pick._positionSizeMult) && pick._positionSizeMult > 0
+      ? Math.min(pick._positionSizeMult, 1.5)
+      : 1;
+    const sizeTl = Math.min(s.cash * MAX_POS_PCT * posMult, s.cash);
     if (sizeTl < MIN_ENTRY_TL) {
       console.warn('[PaperTrade] ABORTING trade for', pick.symbol, '- Position size too small:',
-        sizeTl, 'TL (min:', MIN_ENTRY_TL, ', cash:', s.cash, ')');
+        sizeTl, 'TL (min:', MIN_ENTRY_TL, ', cash:', s.cash, ', posMult:', posMult, ')');
       return;
     }
 
-    // Strict -3% stop-loss
-    const stopPrice = Math.round(entry * (1 + STOP_LOSS_PCT) * 100) / 100;
+    // Honor the pick's own ATR/structure stop so the forward test actually
+    // validates the advisor's exit logic. Fixed -3% only as sanity fallback
+    // (missing or implausible stop: above entry or further than -12%).
+    const pickStop = Number(pick.stop);
+    const pickStopValid = Number.isFinite(pickStop)
+      && pickStop < entry
+      && pickStop > entry * 0.88;
+    const stopPrice = pickStopValid
+      ? Math.round(pickStop * 100) / 100
+      : Math.round(entry * (1 + STOP_LOSS_PCT) * 100) / 100;
+    const stopSource = pickStopValid ? 'pick' : 'fixed3pct';
     const targetPrice = pick.target || pick.t1 || entry * 1.10;
     const lots = Math.floor(sizeTl / entry);
     console.log('[PaperTrade] Opening trade for', pick.symbol, 'at', currentPrice,
@@ -334,7 +350,9 @@ export class PaperTradeEngine {
       openedAt:     Date.now(),
       entryAtrPct:  pick.atrPct || null,
       entryRsi:     pick.rsi || null,
-      entryRegime:  typeof pick.regime === 'string' ? pick.regime : (pick.regime?.regime || null),
+      entryRegime:  typeof pick.regime === 'string' ? pick.regime : (pick.regime?.regime || pick._regime || null),
+      positionMult: posMult,
+      stopSource,
       notes:        (pick.mlMatchedCount || 0) > 0
         ? `ML boost: +${(pick.mlConfidenceBoost || 0).toFixed(1)} | Rule: ${pick.mlBestRule?.setupName || 'N/A'}`
         : `SMC score: ${(pick.score || 0).toFixed(0)} | Fallback (no ML match)`,
@@ -460,6 +478,20 @@ export class PaperTradeEngine {
       if (trade.target_price && live.price >= trade.target_price) {
         await this.closeTrade(trade.id, live.price, 'TARGET');
         continue;
+      }
+
+      // D3 time exit: a swing pick that has gone nowhere in 3+ trading days is
+      // dead capital — rotate it out so cash funds the next fresh setup.
+      // Threshold +1% net keeps genuine slow grinders alive.
+      const openedAt = trade.opened_at || trade.openedAt;
+      const heldDays = openedAt ? (Date.now() - openedAt) / (1000 * 60 * 60 * 24) : 0;
+      if (heldDays >= TIME_EXIT_DAYS) {
+        const entryP = trade.entry_price || trade.entryPrice;
+        const grossPct = entryP ? ((live.price - entryP) / entryP) * 100 : 0;
+        if (grossPct < TIME_EXIT_MIN_GAIN_PCT) {
+          await this.closeTrade(trade.id, live.price, 'TIME_EXIT');
+          continue;
+        }
       }
     }
 

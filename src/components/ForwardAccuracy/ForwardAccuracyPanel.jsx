@@ -148,7 +148,7 @@ export default function ForwardAccuracyPanel({ journal, signalTracker }) {
   }, [unifiedMode, journal?.days, signalTracker?.signals]);
 
   if (!journal) return null;
-  const { stats, exportCSV, clearJournal } = journal;
+  const { stats, exportCSV, exportJSON, clearJournal } = journal;
   const conf = CONF_LABEL[stats.sampleConfidence] || CONF_LABEL.insufficient;
   const insufficient = stats.sampleConfidence === 'insufficient';
 
@@ -255,6 +255,15 @@ export default function ForwardAccuracyPanel({ journal, signalTracker }) {
                    border: '1px solid var(--cyan, #22d3ee)', borderRadius: 4 }}>
           CSV İndir
         </button>
+        {exportJSON && (
+          <button onClick={exportJSON} className="btn-mini"
+            style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer',
+                     background: 'transparent', color: 'var(--purple, #a78bfa)',
+                     border: '1px solid var(--purple, #a78bfa)', borderRadius: 4 }}
+            title="Offline eşik tuner için tam defter (scripts/tune-thresholds.mjs)">
+            JSON İndir
+          </button>
+        )}
         <button onClick={() => { if (confirm('Tahmin defteri sıfırlansın mı? Ölçüm geçmişi silinir.')) clearJournal(); }}
           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer',
                    background: 'transparent', color: 'var(--t3, #6b7280)',

@@ -10,6 +10,9 @@ import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { classifyRegime } from '../utils/regimeEngine.js';
 import { correlationCapFilter } from '../utils/portfolioOptimizer.js';
+import { netRR, TOTAL_COST_PCT } from '../utils/tradingCosts.js';
+import { computeGovernor, adaptiveStopMult } from '../utils/profitGovernor.js';
+import { loadJournal, journalStats } from '../utils/forwardTestJournal.js';
 
 /**
  * _istanbulParts — returns { day, h, m } in Europe/Istanbul regardless of host TZ.
@@ -115,6 +118,21 @@ function checkFailedRepeat(symbol, currentPrice, mem) {
   if (age > PICK_FAIL_LOOKBACK_MS) return null; // 3 gunden eski — cooldown bitti
   const dropPct = ((currentPrice - e.recPrice) / e.recPrice) * 100;
   return { failed: dropPct <= PICK_FAIL_DROP_PCT, dropPct, recPrice: e.recPrice };
+}
+
+/**
+ * checkStagnantPick — 3+ gundur ust uste onerilen ama hic ilerlemeyen hisse.
+ * Dusmedigi icin failed-repeat cooldown'una takilmaz, fakat olu sermayedir:
+ * her gun listede yer kaplar, taze setup'larin onune gecer. Bloklamayiz —
+ * ranking cezasi ile arkaya atariz (WS6 "stagnant" genislemesi).
+ */
+function checkStagnantPick(symbol, currentPrice, mem) {
+  const e = mem?.[symbol];
+  if (!e || !e.firstRecPrice || !e.firstRecTs || !(currentPrice > 0)) return null;
+  const ageDays = (Date.now() - e.firstRecTs) / (1000 * 60 * 60 * 24);
+  if (ageDays < 3 || (e.recCount || 0) < 3) return null;
+  const movePct = ((currentPrice - e.firstRecPrice) / e.firstRecPrice) * 100;
+  return { stagnant: movePct < 1, movePct, ageDays };
 }
 
 // ── HTF CONTEXT DERIVATION (sıfır ek fetch — mevcut günlük barlardan) ──────
@@ -542,11 +560,21 @@ function calcTomorrowPotential(result) {
   if (result.supertrend?.trend === 'UP') tpScore += 4;
   if (result.wyckoffSpring) tpScore += 15;  // Wyckoff spring = en guclu dip sinyali
 
-  // ── R/R KALITESI ──
-  if (result.rr >= 3) tpScore += 12;
-  else if (result.rr >= 2.5) tpScore += 8;
-  else if (result.rr >= 2) tpScore += 5;
-  else if (result.rr < 1.2) tpScore -= 10;
+  // ── R/R KALITESI (net-of-cost when available — gross RR flatters thin edges) ──
+  const rrEff = result.rrNet ?? result.rr;
+  if (rrEff >= 3) tpScore += 12;
+  else if (rrEff >= 2.5) tpScore += 8;
+  else if (rrEff >= 2) tpScore += 5;
+  else if (rrEff < 1.2) tpScore -= 10;
+
+  // ── MALIYET KAPISI: hedef round-trip maliyeti zar zor karsiliyorsa firsat degil ──
+  // targetPct is the gross expected move; a move under ~2x the round-trip cost
+  // leaves nothing after friction on a 1-3 day hold.
+  if (result.targetPct != null && result.targetPct > 0) {
+    const costPp = TOTAL_COST_PCT * 100;
+    if (result.targetPct < costPp * 2) tpScore -= 15;      // < ~0.6% hedef: net edge yok
+    else if (result.targetPct < costPp * 4) tpScore -= 6;  // < ~1.2%: cok ince
+  }
 
   // ── ENTRY QUALITY: MA20 yakinligi (extended trend cezasi) ──
   // Pump'tan farkli — kapanis fiyati MA20'den ne kadar uzak?
@@ -996,6 +1024,7 @@ export function useAIAdvisor(portfolio) {
               const riskDist     = Math.abs(liveEntry - (liveStop || liveEntry * 0.95));
               const rewardDist   = Math.abs((liveTarget || liveEntry * 1.10) - liveEntry);
               const liveRR       = riskDist > 0 ? rewardDist / riskDist : (sig.rr || 0);
+              const liveRRNet    = netRR(liveEntry, liveStop || liveEntry * 0.95, liveTarget || liveEntry * 1.10);
 
               return {
                 symbol: sym,
@@ -1025,6 +1054,7 @@ export function useAIAdvisor(portfolio) {
                 targetT2:  sig.t2,
                 targetT3:  sig.t3,
                 rr:        Math.round(liveRR * 10) / 10,
+                rrNet:     liveRRNet != null ? Math.round(liveRRNet * 100) / 100 : null,
                 rrQuality: sig.rrQuality,
                 holdText:  sig.holdText,
                 longTermView: sig.longTermView,
@@ -1140,12 +1170,36 @@ export function useAIAdvisor(portfolio) {
         macroStress: !!(macroCtx && typeof macroCtx.scoreAdjust === 'number' && macroCtx.scoreAdjust <= -8),
       });
 
+      // ── Profit Governor: journal-measured throttle (WS4) ──
+      // Reads the forward journal's aggregates and returns bounded throttle
+      // decisions. With a young journal it is a pure pass-through (NORMAL);
+      // every applied rule is human-readable in governor.reasons.
+      let governor = { mode: 'NORMAL', scoreCutoffDelta: 0, maxPicksMult: 1, positionMult: 1, reasons: [] };
+      let stopMultInfo = { mult: 1.8, adapted: false };
+      try {
+        const _journalDays = loadJournal();
+        const _jStats = journalStats(_journalDays);
+        stopMultInfo = adaptiveStopMult(_jStats.stopQuality, regime.regime);
+        if (stopMultInfo.adapted) {
+          pushLog({ type: 'info', msg: `Adaptif stop: ${regime.regime} icin ${stopMultInfo.mult}×ATR — ${stopMultInfo.reason}` });
+        }
+        governor = computeGovernor(_journalDays, regime.regime, { stats: _jStats });
+        if (governor.mode !== 'NORMAL') {
+          pushLog({
+            type: governor.mode === 'DEFENSE' ? 'warn' : 'info',
+            msg: `Profit Governor ${governor.mode}: ${governor.reasons.join(' | ')}`,
+          });
+        }
+      } catch { /* governor is best-effort — never block a scan */ }
+      const govDelta = governor.scoreCutoffDelta || 0;
+
       const sentimentObj = {
         sentiment, color, buys, sells, scanned: results.length, avgRSI, accumulations,
         sectorRotation,
         macro: macroCtx,
         regime,                 // full regime object { regime, label, riskMult, confidence, ... }
         bias: regime.regime,    // stable label consumed by the forward journal's byRegime
+        governor,               // journal-driven throttle { mode, reasons, ... }
       };
 
       // ── Top picks — dual mode ──
@@ -1158,7 +1212,10 @@ export function useAIAdvisor(portfolio) {
         const entry = r.entry || r.price || 0;
         if (!entry) return r;
         const atr = entry * (r.atrPct || 2) / 100;
-        const MAX_STOP_MULT = 1.8; // max 1.8× ATR stop distance
+        // Regime table + journal-measured adaptation (adaptiveStopMult):
+        // BULL/RANGE 1.8, VOLATILE 2.2, BEAR 1.6 by default; ±0.2 once >=30
+        // stop-outs show the stops are too tight (recoverers) or too loose.
+        const MAX_STOP_MULT = stopMultInfo.mult;
 
         let { stop, target } = r;
 
@@ -1192,7 +1249,11 @@ export function useAIAdvisor(portfolio) {
         const targetDist = Math.abs((target || entry) - entry);
         const computedRR = stopDist > 0 ? +(targetDist / stopDist).toFixed(2) : r.rr;
 
-        return { ...r, stop, target, stopPct, targetPct, rr: computedRR };
+        const computedRRNet = netRR(entry, stop ?? entry * 0.95, target ?? entry * 1.10);
+        return {
+          ...r, stop, target, stopPct, targetPct, rr: computedRR,
+          rrNet: computedRRNet != null ? Math.round(computedRRNet * 100) / 100 : r.rrNet ?? null,
+        };
       };
 
       // ══════════════════════════════════════════════════════════════════════
@@ -1518,6 +1579,10 @@ export function useAIAdvisor(portfolio) {
               ? (livePriceMap[r.symbol]?.price || r.price)
               : r.price;
             const fr = checkFailedRepeat(r.symbol, curPrice || r.price, pickMemory);
+            // Stagnant tag: 3+ gun onerilip ilerlemeyen pick bloklanmaz ama
+            // enhancePick'te confidence cezasi alir (olu sermaye rotasyonu).
+            const st = checkStagnantPick(r.symbol, curPrice || r.price, pickMemory);
+            if (st && st.stagnant) r._stagnantPick = true;
             if (fr && fr.failed) {
               const strongReversal =
                 (r.change || 0) > 1.5 &&                       // bugun belirgin yesil
@@ -1550,26 +1615,28 @@ export function useAIAdvisor(portfolio) {
           // ONCEKI SORUN: score>=48 + rr>=0.8 ikisi birden cok siki; genSignal zaten
           // rr<1.0 olanlari TUT'a dusuruyordu (cift cezalandirma).
           // YENI: ana kriter SCORE, R/R bonus ama bloklayici degil.
+          // govDelta: Profit Governor'un journal'a dayali esik sikilastirmasi
+          // (NORMAL modda 0 — davranis bugunku ile ayni).
           if (isAfterHours) {
-            const hasSetup = r.score >= 45;
-            const hasGoodRR = r.rr >= 0.8;
+            const hasSetup = r.score >= 45 + govDelta;
+            const hasGoodRR = (r.rrNet ?? r.rr) >= 0.8;
             const hasTrend = (r.ichimoku?.cloudPosition === 'above') || (r.supertrend?.trend === 'UP');
             const hasSmartMoney = r.obvTrend === 'accumulation' || (r.cmf || 0) > 0.05;
             const hasCatalyst = r.newsCategories?.some(c =>
               ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c));
             const hasInsider = r.hasRecentInsiderBuy || (r.insiderScore || 0) >= 3;
             // Kataliz/insider = dusuk score bile kabul
-            if ((hasCatalyst || hasInsider) && r.score >= 40) return true;
+            if ((hasCatalyst || hasInsider) && r.score >= 40 + govDelta) return true;
             // Setup: score >= 45 yeterli, RR veya trend veya smart money teyidi
             if (hasSetup && (hasGoodRR || hasTrend || hasSmartMoney)) return true;
             // Yuksek score tek basina yeterli
-            if (r.score >= 55) return true;
+            if (r.score >= 55 + govDelta) return true;
             return false;
           } else {
-            const hasTraditionalSignal = r.score >= 48 && r.rr >= 0.8;
-            const hasMomentumBoost = r.momentumScore >= 40 && (r.change || 0) > 0 && r.score >= 42
+            const hasTraditionalSignal = r.score >= 48 + govDelta && (r.rrNet ?? r.rr) >= 0.8;
+            const hasMomentumBoost = r.momentumScore >= 40 && (r.change || 0) > 0 && r.score >= 42 + govDelta
               && (r.recentPump || 0) < 7;
-            const hasTrendSignal = r.score >= 52
+            const hasTrendSignal = r.score >= 52 + govDelta
               && ((r.ichimoku?.cloudPosition === 'above') || (r.supertrend?.trend === 'UP'));
             return hasTraditionalSignal || hasMomentumBoost || hasTrendSignal;
           }
@@ -1673,11 +1740,15 @@ export function useAIAdvisor(portfolio) {
       // take the MORE conservative count. This shines when the two disagree —
       // e.g. index up but breadth weak (narrow rally / bull trap) → fewer picks.
       {
-        const regimeMax = Math.max(2, Math.round(maxBuyPicks * (regime.riskMult ?? 1)));
+        // Governor maxPicksMult stacks on top of the regime cap (both are
+        // conservative bounds; the tighter one wins).
+        const regimeMax = Math.max(2, Math.round(
+          maxBuyPicks * (regime.riskMult ?? 1) * (governor.maxPicksMult ?? 1)
+        ));
         if (regimeMax < buyPicks.length) {
           pushLog({
             type: regime.regime === 'BULL' ? 'info' : 'warn',
-            msg: `Rejim filtresi (${regime.regime}): ${buyPicks.length} → ${regimeMax} pick (riskMult ${regime.riskMult})`,
+            msg: `Rejim filtresi (${regime.regime}${governor.mode !== 'NORMAL' ? '+' + governor.mode : ''}): ${buyPicks.length} → ${regimeMax} pick (riskMult ${regime.riskMult})`,
           });
           buyPicks = buyPicks.slice(0, regimeMax);
         }
@@ -1685,7 +1756,9 @@ export function useAIAdvisor(portfolio) {
         // downstream sizing (calcPosition / paper engine) can honor.
         for (const p of buyPicks) {
           p._regime = regime.regime;
-          p._positionSizeMult = regime.riskMult ?? 1;
+          // Regime risk × governor kill-switch — the sizing chain downstream
+          // (calcPosition / PaperTradeEngine) multiplies position size by this.
+          p._positionSizeMult = (regime.riskMult ?? 1) * (governor.positionMult ?? 1);
         }
       }
 
@@ -2120,6 +2193,10 @@ export function useAIAdvisor(portfolio) {
           confidence = Math.max(5, confidence - tavanPenalty);
         }
 
+        // STAGNANT CEZASI: 3+ gundur onerilen ama ilerlemeyen pick — olu
+        // sermaye. Bloklamayiz, taze setup'larin arkasina duser.
+        if (p._stagnantPick) confidence = Math.max(5, confidence - 8);
+
         // Confidence grade: A (>= 75), B (>= 65), C (>= 55), D (< 55)
         const grade = confidence >= 75 ? 'A' : confidence >= 65 ? 'B' : confidence >= 55 ? 'C' : 'D';
 
@@ -2425,6 +2502,8 @@ export function useAIAdvisor(portfolio) {
               const riskD = Math.abs(newPrice - (p.stop || newPrice * 0.95));
               const rewD  = Math.abs((p.target || newPrice * 1.10) - newPrice);
               if (riskD > 0) p.rr = rewD / riskD;
+              const refreshedNet = netRR(newPrice, p.stop || newPrice * 0.95, p.target || newPrice * 1.10);
+              if (refreshedNet != null) p.rrNet = Math.round(refreshedNet * 100) / 100;
               p._priceRefreshed = true;
             }
           }
@@ -2497,6 +2576,45 @@ export function useAIAdvisor(portfolio) {
       ]);
       const enrichFailed = enrichResults.filter(r => r.status === 'rejected').length;
       if (enrichFailed) console.warn(`[AIAdvisor] ${enrichFailed}/4 enrichment steps failed`);
+
+      // ── Claude grade (WS8) — structured A/B/C on the final picks ──
+      // Best-effort with a hard timeout: no API key / proxy → skipped silently.
+      // The grade rides into the forward journal (byClaudeGrade), and once the
+      // journal PROVES the A-vs-C spread (n>=30, >=10pt) it earns influence on
+      // confidence + position sizing. Below that floor: annotation only.
+      try {
+        const { askDailyPicks, getApiKey } = await import('../utils/claude.js');
+        if (picks.length && getApiKey()) {
+          const graded = await Promise.race([
+            askDailyPicks(picks, { marketSentiment: sentimentObj }),
+            new Promise(r => setTimeout(() => r(null), 25_000)),
+          ]);
+          if (graded?.structured && Array.isArray(graded.grades)) {
+            const gradeMap = {};
+            for (const g of graded.grades) gradeMap[g.symbol] = g;
+            const jStats = journalStats(loadJournal());
+            const cg = jStats.byClaudeGrade || {};
+            const gradeProven = (cg.A?.total >= 30) && (cg.C?.total > 0)
+              && ((cg.A.accuracy - (cg.C?.accuracy ?? 50)) >= 10);
+            for (const p of picks) {
+              const g = gradeMap[p.symbol];
+              if (!g) continue;
+              p.claudeGrade = g.grade;
+              p.claudeGradeReason = g.reason;
+              if (gradeProven) {
+                if (g.grade === 'A') {
+                  p.confidence = Math.min(100, (p.confidence || 50) + 5);
+                  p._positionSizeMult = (p._positionSizeMult ?? 1) * 1.15;
+                } else if (g.grade === 'C') {
+                  p.confidence = Math.max(5, (p.confidence || 50) - 5);
+                  p._positionSizeMult = (p._positionSizeMult ?? 1) * 0.85;
+                }
+              }
+            }
+            pushLog({ type: 'info', msg: `Claude notlari: ${graded.grades.map(g => `${g.symbol}=${g.grade}`).join(' ')}${gradeProven ? ' (kanitli etki aktif)' : ' (sadece anotasyon)'}` });
+          }
+        }
+      } catch { /* LLM grading is best-effort — never block a scan */ }
 
       // ── v29 FIX: Ensure all AI Advisor "Buy" picks explicitly say "AL" ──
       // Bazı hisseler _earlyPick, _mlOverride vb. özel sebeplerle "buyPicks" listesine girse de
@@ -2581,6 +2699,8 @@ export function useAIAdvisor(portfolio) {
                   score: r.score,
                   confidence: r.confidence,
                   rr: r.rr,
+                  rrNet: r.rrNet,
+                  claudeGrade: r.claudeGrade,
                   stop: r.stop,
                   target: r.target,
                   mlConfidenceBoost: r.mlConfidenceBoost,
@@ -2613,10 +2733,11 @@ export function useAIAdvisor(portfolio) {
         for (const p of buyFinal) {
           const prev = pickMemory[p.symbol];
           pickMemory[p.symbol] = {
-            recPrice:   p._livePrice || p.price || prev?.recPrice || 0,
-            firstRecTs: prev?.firstRecTs || now,
-            lastRecTs:  now,
-            recCount:   (prev?.recCount || 0) + 1,
+            recPrice:      p._livePrice || p.price || prev?.recPrice || 0,
+            firstRecPrice: prev?.firstRecPrice || p._livePrice || p.price || 0,
+            firstRecTs:    prev?.firstRecTs || now,
+            lastRecTs:     now,
+            recCount:      (prev?.recCount || 0) + 1,
           };
         }
         savePickMemory(pickMemory);

@@ -82,6 +82,10 @@ export function buildCalibrationModel(signals) {
     'buy:q1': mkBucket(), 'buy:q2': mkBucket(), 'buy:q3': mkBucket(), 'buy:q4': mkBucket(),
     'sell:q1': mkBucket(), 'sell:q2': mkBucket(), 'sell:q3': mkBucket(), 'sell:q4': mkBucket(),
   };
+  // Regime-sliced buckets (v2): a multiplier earned in BULL must not inflate
+  // BEAR signals — the known failure mode of blended calibration.
+  const byClsRegime = {};        // 'buy:BULL'
+  const byClsRegimeScore = {};   // 'buy:BULL:q3'
   const overall = mkBucket();
 
   for (const s of closed) {
@@ -104,6 +108,16 @@ export function buildCalibrationModel(signals) {
 
     const clsScoreKey = `${cls}:${sb}`;
     if (byClassScore[clsScoreKey]) pushSignal(byClassScore[clsScoreKey], s);
+
+    const regime = typeof s.regime === 'string' ? s.regime : s.regime?.regime;
+    if (regime && (cls === 'buy' || cls === 'sell')) {
+      const crKey = `${cls}:${regime}`;
+      if (!byClsRegime[crKey]) byClsRegime[crKey] = mkBucket();
+      pushSignal(byClsRegime[crKey], s);
+      const crsKey = `${cls}:${regime}:${sb}`;
+      if (!byClsRegimeScore[crsKey]) byClsRegimeScore[crsKey] = mkBucket();
+      pushSignal(byClsRegimeScore[crsKey], s);
+    }
   }
 
   const model = {
@@ -115,6 +129,8 @@ export function buildCalibrationModel(signals) {
     byGrade: Object.fromEntries(Object.entries(byGrade).map(([k, v]) => [k, summarize(v)])),
     byScoreBucket: Object.fromEntries(Object.entries(byScoreBucket).map(([k, v]) => [k, summarize(v)])),
     byClassScore: Object.fromEntries(Object.entries(byClassScore).map(([k, v]) => [k, summarize(v)])),
+    byClsRegime: Object.fromEntries(Object.entries(byClsRegime).map(([k, v]) => [k, summarize(v)])),
+    byClsRegimeScore: Object.fromEntries(Object.entries(byClsRegimeScore).map(([k, v]) => [k, summarize(v)])),
   };
   return model;
 }
@@ -124,7 +140,7 @@ export function buildCalibrationModel(signals) {
 // hints (cls, source, grade), look up matching buckets and return
 // a multiplier with debug breakdown. Multiplier ∈ [MIN, MAX].
 // ------------------------------------------------------------
-export function calibrateScore(score100, { cls, source, grade } = {}, model = _activeModel) {
+export function calibrateScore(score100, { cls, source, grade, regime } = {}, model = _activeModel) {
   if (!model || !model.sampleCount || model.sampleCount < MIN_SAMPLES) {
     return { multiplier: 1, applied: false, reason: 'insufficient_history', breakdown: [] };
   }
@@ -141,9 +157,15 @@ export function calibrateScore(score100, { cls, source, grade } = {}, model = _a
     breakdown.push({ label, samples: bucket.samples, winRate: +bucket.winRate.toFixed(3), expectancy: +bucket.expectancy.toFixed(2), weight });
   }
 
-  // Hierarchy: most-specific bucket gets highest weight
+  // Hierarchy: most-specific bucket gets highest weight. Regime-sliced buckets
+  // (when populated) outrank blended ones so BULL-earned edge stays in BULL.
   const sb = scoreBucket(score100);
+  const regLabel = typeof regime === 'string' ? regime : regime?.regime;
   if (cls && (cls === 'buy' || cls === 'sell')) {
+    if (regLabel) {
+      consider(`cls+regime+score:${cls}:${regLabel}:${sb}`, model.byClsRegimeScore?.[`${cls}:${regLabel}:${sb}`], 5);
+      consider(`cls+regime:${cls}:${regLabel}`, model.byClsRegime?.[`${cls}:${regLabel}`], 3);
+    }
     consider(`cls+score:${cls}:${sb}`, model.byClassScore?.[`${cls}:${sb}`], 4);
     consider(`cls:${cls}`, model.byClass?.[cls], 2);
   }

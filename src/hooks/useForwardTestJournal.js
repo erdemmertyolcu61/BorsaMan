@@ -18,6 +18,7 @@ import {
   recordSnapshot,
   evaluateJournal,
   journalStats,
+  exportJournalJSON,
 } from '../utils/forwardTestJournal.js';
 
 const EVAL_INTERVAL_MS = 30 * 60 * 1000; // evaluate every 30 minutes
@@ -42,13 +43,14 @@ export function useForwardTestJournal() {
     const current = daysRef.current;
     if (!current.length) return;
 
-    // Collect symbols from days old enough to have matured (>= ~1 day) but
-    // not yet fully evaluated through D5.
+    // Collect symbols from all days still inside the measurement window.
+    // Day-0 is included so running extremes (MFE/MAE) capture the entry
+    // day's excursion — outcomes still only mature from day 1.
     const now = Date.now();
     const symbols = new Set();
     for (const day of current) {
       const ageDays = (now - day.timestamp) / (1000 * 60 * 60 * 24);
-      if (ageDays < 1 || ageDays > 7) continue;
+      if (ageDays > 7) continue;
       for (const p of day.predictions) {
         if (p.perf?.d5 == null) symbols.add(p.symbol);
       }
@@ -114,11 +116,23 @@ export function useForwardTestJournal() {
     URL.revokeObjectURL(url);
   }, [days]);
 
+  const exportJSON = useCallback(() => {
+    const json = exportJournalJSON(days);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bist_forward_journal_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [days]);
+
   return {
     days,
     stats,
     runEvaluation,
     clearJournal,
     exportCSV,
+    exportJSON,
   };
 }

@@ -49,9 +49,28 @@ export function applyExitCost(price, cls = 'buy', legPct = TOTAL_COST_PCT / 2) {
   return cls === 'sell' ? price * (1 + legPct) : price * (1 - legPct);
 }
 
+// Net risk/reward: the RR a real fill actually earns after both cost legs.
+// Reward shrinks (buy fills up, target sells down) and risk grows (stop also
+// sells down), so netRR is always below the frictionless gross RR.
+// `liquidity` (optional): tier string or { tier } — widens the per-leg cost.
+export function netRR(entry, stop, target, liquidity = null) {
+  if (![entry, stop, target].every(v => Number.isFinite(v)) || entry <= 0) return null;
+  const legPct = liquidity != null
+    ? liquiditySlippagePct(liquidity) + 0.001 // slippage + ~commission per leg
+    : TOTAL_COST_PCT / 2;
+  const effEntry = entry * (1 + legPct);
+  const effTarget = target * (1 - legPct);
+  const effStop = stop * (1 - legPct);
+  const risk = effEntry - effStop;
+  const reward = effTarget - effEntry;
+  if (risk <= 0) return null;
+  return reward / risk;
+}
+
 export default {
   TOTAL_COST_PCT,
   liquiditySlippagePct,
   applyEntryCost,
   applyExitCost,
+  netRR,
 };

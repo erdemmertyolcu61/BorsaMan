@@ -126,3 +126,64 @@ describe('signalCalibration', () => {
     expect(model.sampleCount).toBe(10);
   });
 });
+
+describe('signalCalibration — regime-aware buckets (v2)', () => {
+  function mkRegimeSignal({ regime, cls = 'buy', score = 70, outcome = 'WIN', d5 = 5 }) {
+    const s = mkSignal({ cls, score, outcome, d5 });
+    s.regime = regime;
+    return s;
+  }
+
+  it('builds byClsRegime and byClsRegimeScore buckets from signal.regime', () => {
+    const sigs = [
+      ...Array.from({ length: 10 }, () => mkRegimeSignal({ regime: 'TRENDING', outcome: 'TARGET_HIT', d5: 6 })),
+      ...Array.from({ length: 10 }, () => mkRegimeSignal({ regime: 'CHOPPY', outcome: 'STOP_HIT', d5: -4 })),
+    ];
+    const model = buildCalibrationModel(sigs);
+    expect(model.byClsRegime['buy:TRENDING'].samples).toBe(10);
+    expect(model.byClsRegime['buy:CHOPPY'].samples).toBe(10);
+    expect(model.byClsRegimeScore['buy:TRENDING:q3'].samples).toBe(10);
+  });
+
+  it('regime slice separates a winning regime from a losing one', () => {
+    const sigs = [
+      ...Array.from({ length: 12 }, () => mkRegimeSignal({ regime: 'TRENDING', outcome: 'TARGET_HIT', d5: 7 })),
+      ...Array.from({ length: 12 }, () => mkRegimeSignal({ regime: 'CHOPPY', outcome: 'STOP_HIT', d5: -4 })),
+    ];
+    const model = buildCalibrationModel(sigs);
+    const inTrend = calibrateScore(70, { cls: 'buy', regime: 'TRENDING' }, model);
+    const inChop = calibrateScore(70, { cls: 'buy', regime: 'CHOPPY' }, model);
+    expect(inTrend.multiplier).toBeGreaterThan(inChop.multiplier);
+    // blended (no regime hint) sits between the two slices
+    const blended = calibrateScore(70, { cls: 'buy' }, model);
+    expect(blended.multiplier).toBeLessThan(inTrend.multiplier);
+    expect(blended.multiplier).toBeGreaterThan(inChop.multiplier);
+  });
+
+  it('accepts a regime object ({regime}) as the hint', () => {
+    const sigs = Array.from({ length: 12 }, () => mkRegimeSignal({ regime: 'TRENDING', outcome: 'TARGET_HIT', d5: 6 }));
+    const model = buildCalibrationModel(sigs);
+    const r = calibrateScore(70, { cls: 'buy', regime: { regime: 'TRENDING' } }, model);
+    expect(r.breakdown.some(b => b.label.includes('cls+regime'))).toBe(true);
+  });
+
+  it('falls back to blended buckets when the regime slice is under-sampled', () => {
+    const sigs = [
+      ...Array.from({ length: 12 }, () => mkRegimeSignal({ regime: 'TRENDING', outcome: 'TARGET_HIT', d5: 6 })),
+      ...Array.from({ length: 3 }, () => mkRegimeSignal({ regime: 'VOLATILE', outcome: 'STOP_HIT', d5: -5 })),
+    ];
+    const model = buildCalibrationModel(sigs);
+    const r = calibrateScore(70, { cls: 'buy', regime: 'VOLATILE' }, model);
+    // VOLATILE slice n=3 < 8 → ignored; blended buckets still apply
+    expect(r.applied).toBe(true);
+    expect(r.breakdown.every(b => !b.label.includes('VOLATILE'))).toBe(true);
+  });
+
+  it('multiplier hard caps hold with regime buckets in play', () => {
+    const sigs = Array.from({ length: 40 }, () => mkRegimeSignal({ regime: 'TRENDING', outcome: 'TARGET_HIT', d5: 12 }));
+    const model = buildCalibrationModel(sigs);
+    const r = calibrateScore(70, { cls: 'buy', regime: 'TRENDING' }, model);
+    expect(r.multiplier).toBeLessThanOrEqual(1.30);
+    expect(r.multiplier).toBeGreaterThanOrEqual(0.55);
+  });
+});

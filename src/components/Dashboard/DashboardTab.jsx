@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { classifyRegime } from '../../utils/regimeEngine.js';
+import { computeGovernor } from '../../utils/profitGovernor.js';
+import { loadJournal } from '../../utils/forwardTestJournal.js';
 
 function relTime(ts) {
   if (!ts) return '—';
@@ -110,6 +112,21 @@ export default function DashboardTab({
     () => (signalTracker?.calcStats ? signalTracker.calcStats() : null),
     [signalTracker]
   );
+
+  // Profit Governor — prefer the scan's own decision; fall back to a fresh
+  // computation from the journal so the card renders before the first scan.
+  const governor = useMemo(() => {
+    const fromScan = advisor?.marketSentiment?.governor;
+    if (fromScan) return fromScan;
+    try { return computeGovernor(loadJournal(), regime.regime); }
+    catch { return { mode: 'NORMAL', positionMult: 1, maxPicksMult: 1, scoreCutoffDelta: 0, reasons: [] }; }
+  }, [advisor, regime]);
+
+  const GOV_COLORS = {
+    NORMAL: 'var(--green, #10b981)',
+    CAUTION: 'var(--yellow, #eab308)',
+    DEFENSE: 'var(--red, #ef4444)',
+  };
 
   const journalData = useMemo(
     () => forwardJournal?.stats || {},
@@ -329,6 +346,45 @@ export default function DashboardTab({
               Açık pozisyon yok
             </div>
           )}
+        </div>
+
+        {/* Card 5: Profit Engine (journal-driven governor) */}
+        <div style={cardStyle}>
+          <div style={kpiLabel}>Profit Engine</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{
+              fontSize: 12, fontWeight: 800, padding: '2px 10px', borderRadius: 4,
+              background: `${GOV_COLORS[governor.mode] || 'var(--t3)'}22`,
+              color: GOV_COLORS[governor.mode] || 'var(--t3)',
+              border: `1px solid ${GOV_COLORS[governor.mode] || 'var(--t3)'}55`,
+            }}>
+              {governor.mode}
+            </span>
+            {governor.positionMult < 1 && (
+              <span style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700 }}>
+                pozisyon ×{governor.positionMult}
+              </span>
+            )}
+            {governor.scoreCutoffDelta > 0 && (
+              <span style={{ fontSize: 11, color: 'var(--yellow)', fontWeight: 700 }}>
+                eşik +{governor.scoreCutoffDelta}
+              </span>
+            )}
+          </div>
+          <div style={kpiRow}>
+            <span>Son 20 Net Beklenti</span>
+            <span style={{
+              fontWeight: 700,
+              color: (journalData.rolling20?.netExpectancy ?? 0) >= 0 ? 'var(--green)' : 'var(--red)',
+            }}>
+              {journalData.rolling20?.samples
+                ? pct(journalData.rolling20.netExpectancy, 2)
+                : '—'}
+            </span>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--t3)', lineHeight: 1.5 }}>
+            {(governor.reasons || []).slice(0, 2).map((r, i) => <div key={i}>• {r}</div>)}
+          </div>
         </div>
       </div>
 

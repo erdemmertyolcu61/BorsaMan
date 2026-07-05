@@ -1208,7 +1208,9 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   let calibrationInfo = null;
   try {
     const provisionalCls = score100 >= 60 ? 'buy' : score100 <= 40 ? 'sell' : 'hold';
-    const cal = applyCalibrationToScore(score100, { cls: provisionalCls });
+    // regime slice: the per-symbol regime detected at fire time (same field the
+    // tracker persists on the closed signal → buckets stay apples-to-apples).
+    const cal = applyCalibrationToScore(score100, { cls: provisionalCls, regime: regime?.regime });
     if (cal.calibration?.applied) {
       const before = score100;
       score100 = cal.score100;
@@ -1615,7 +1617,7 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     if (stHints) {
       try {
         const firedNow = extractFiredSignals(ind, prices);
-        let totalDelta = 0, counted = 0;
+        let totalDelta = 0, counted = 0, maxSamples = 0;
         for (const sigType of firedNow) {
           const sh = stHints[sigType];
           if (!sh || sh.sampleSize < 8) continue;
@@ -1623,10 +1625,14 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
           const delta = (sh.winRate - 0.5) * 2; // -1..+1
           totalDelta += delta;
           counted++;
+          if (sh.sampleSize > maxSamples) maxSamples = sh.sampleSize;
         }
         if (counted > 0) {
           const avgDelta = totalDelta / counted;
-          const scoreBump = Math.max(-2, Math.min(2, avgDelta * 2));
+          // Evidence-scaled cap: ±2 at 8 samples growing to ±4 at 40+ —
+          // a signal type with a long measured track record earns more voice.
+          const cap = 2 + 2 * Math.min(1, Math.max(0, (maxSamples - 8) / 32));
+          const scoreBump = Math.max(-cap, Math.min(cap, avgDelta * cap));
           if (Math.abs(scoreBump) >= 0.3) {
             baseSig.score = Math.max(0, Math.min(100, baseSig.score + scoreBump));
             baseSig.attributionDelta = Math.round(scoreBump * 10) / 10;
@@ -1668,6 +1674,11 @@ function calcKellyFraction(winRate, avgRR, fraction = 0.25) {
 
 export function calcPosition(accountSize, riskPct = 2, entry, stop, options = {}) {
   const { signalType = 'default', confidence = 50, useKelly = false } = options;
+  // regimeMult: regime risk multiplier × governor kill-switch (pick._positionSizeMult).
+  // Applied LAST so Kelly/confidence/grade logic stays comparable across regimes.
+  const regimeMult = Number.isFinite(options.regimeMult) && options.regimeMult > 0
+    ? Math.min(options.regimeMult, 1.5)
+    : 1;
   
   const riskPerShare = Math.abs(entry - stop);
   if (riskPerShare <= 0) return { shares: 0, cost: 0, maxLoss: 0, method: 'fixed' };
@@ -1731,21 +1742,26 @@ export function calcPosition(accountSize, riskPct = 2, entry, stop, options = {}
     }
   }
 
+  // Regime/governor scaling: in BEAR/VOLATILE tape (or governor DEFENSE) the
+  // same setup opens with a fraction of the capital.
+  if (regimeMult !== 1) shares = Math.floor(shares * regimeMult);
+
   // Cap by available cash
   const maxByBudget = Math.floor(accountSize / entry);
   if (shares > maxByBudget) shares = maxByBudget;
-  
+
   const cost = shares * entry;
   const maxLoss = shares * riskPerShare;
   const usedRiskPct = (maxLoss / accountSize) * 100;
-  
-  return { 
-    shares, 
-    cost, 
-    maxLoss, 
+
+  return {
+    shares,
+    cost,
+    maxLoss,
     riskPct: usedRiskPct,
     costPct: cost / accountSize * 100,
     method: kellySource ? `kelly_${kellySource}` : 'fixed',
     kellySource,
+    regimeMult,
   };
 }

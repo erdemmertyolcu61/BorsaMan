@@ -167,7 +167,10 @@ export function buildDailyPicksPrompt(picks = [], market = {}) {
       newsStr = ` HABER${cats}=${sign}${p.newsScore?.toFixed?.(1) ?? p.newsScore}(${p.newsCount})${head}`;
     }
     let foreignStr = p.foreignRatio != null ? ` Yabanci=%${p.foreignRatio.toFixed(1)}(${p.foreignChangeWeek > 0 ? '+' : ''}${p.foreignChangeWeek?.toFixed(1) || 0})` : '';
-    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} R/R=1:${p.rr?.toFixed(2)} RSI=${p.rsi?.toFixed(0)}${kapStr}${newsStr}${foreignStr}`;
+    const rrStr = p.rrNet != null
+      ? `R/R(net)=1:${p.rrNet.toFixed(2)}`
+      : `R/R=1:${p.rr?.toFixed(2)}`;
+    return `- ${p.symbol} [${grade}] ${p.signal} skor=${p.score?.toFixed(1)} fiyat=${p.price?.toFixed(2)} stop=${p.stop?.toFixed(2)} T1=${p.target?.toFixed(2)} ${rrStr} RSI=${p.rsi?.toFixed(0)}${kapStr}${newsStr}${foreignStr}`;
   }).join('\n');
 
   return `Sen BIST gunluk strateji uzmanisin. Bugun icin en iyi firsatlari sirala.
@@ -186,9 +189,9 @@ Kategoriler kurulum kalitesini tartmada AGIR rol oynamali — fund_inflow + fund
 birlesince A notu icin onemli teyittir; risk kategorisi C notuna dusurur.
 
 Her hisseyi A/B/C notuyla derecelendir:
-- A = guclu kurulum (skor>=7, R/R>=2, teknik+temel uyumlu, hacim destekli)
-- B = orta kurulum (skor 5-7, R/R 1.5-2, tek teyit eksik)
-- C = zayif kurulum (skor<5 veya R/R<1.5 veya teyit yok)
+- A = guclu kurulum (skor>=70, net R/R>=2, teknik+temel uyumlu, hacim destekli)
+- B = orta kurulum (skor 55-70, net R/R 1.5-2, tek teyit eksik)
+- C = zayif kurulum (skor<55 veya net R/R<1.5 veya teyit yok)
 
 CEVAP FORMATI:
 1. Bugunun TOP3'u (sadece A notunu ver)
@@ -200,10 +203,12 @@ Max 180 kelime, Turkce.`;
 }
 
 function gradeSetup(p) {
+  // Advisor picks carry 0-100 scores (the old >=7 check graded nearly every
+  // rr>=2 pick as "A"). RR is net-of-cost when available.
   const s = p.score || 0;
-  const rr = p.rr || 0;
-  if (s >= 7 && rr >= 2) return 'A';
-  if (s >= 5 && rr >= 1.5) return 'B';
+  const rr = p.rrNet ?? p.rr ?? 0;
+  if (s >= 70 && rr >= 2) return 'A';
+  if (s >= 55 && rr >= 1.5) return 'B';
   return 'C';
 }
 
@@ -269,7 +274,7 @@ function buildCachedSystem(dynamicSystemText) {
 // Accepts either { prompt } (single user turn) or { messages } (multi-turn history).
 // `useCache`: default true — enables Anthropic prompt-caching of the SMC rulebook.
 // When false (e.g. short one-off KAP JSON calls), bypasses caching overhead.
-async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAULT_MODEL, temperature = DEFAULT_TEMPERATURE, maxTokens = 1024, useCache = true }) {
+async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAULT_MODEL, temperature = DEFAULT_TEMPERATURE, maxTokens = 1024, useCache = true, outputConfig = null }) {
   const apiKey = getApiKey();
   if (!apiKey) {
     return { error: 'Claude API anahtari tanimlanmamis. Ayarlardan ekle.' };
@@ -279,15 +284,19 @@ async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAU
     ? messages
     : [{ role: 'user', content: prompt }];
 
+  // Opus 4.7+ / Sonnet 5 / Fable 5 reject sampling params (temperature/top_p/top_k → 400).
+  const samplingRemoved = /claude-(opus-4-[78]|sonnet-5|fable-5)/.test(model);
+
   const payload = {
     model,
     max_tokens: maxTokens,
-    temperature,
     system: useCache
       ? buildCachedSystem(systemPrompt)
       : (systemPrompt || undefined),
     messages: finalMessages,
   };
+  if (!samplingRemoved && temperature != null) payload.temperature = temperature;
+  if (outputConfig) payload.output_config = outputConfig;
   if (tools && tools.length) payload.tools = tools;
 
   let tid;
@@ -395,13 +404,91 @@ export async function chatClaudeHistory(messages, systemPrompt, opts = {}) {
   });
 }
 
-export async function askDailyPicks(picks, market) {
-  return callClaude({
-    prompt: buildDailyPicksPrompt(picks, market),
+// ── Daily Picks (WS8) — structured, evidence-fed grading ────────────────────
+// Model: claude-opus-4-8 (sampling params removed on 4.7+ — callClaude strips
+// temperature automatically). Output is schema-constrained JSON so grades can
+// be parsed into pick.claudeGrade and tracked in the forward journal.
+const DAILY_PICKS_MODEL = 'claude-opus-4-8';
+const DAILY_PICKS_SCHEMA = {
+  type: 'object',
+  properties: {
+    grades: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string' },
+          grade: { type: 'string', enum: ['A', 'B', 'C'] },
+          confidence: { type: 'integer' },
+          reason: { type: 'string' },
+        },
+        required: ['symbol', 'grade', 'confidence', 'reason'],
+        additionalProperties: false,
+      },
+    },
+    avoid: { type: 'array', items: { type: 'string' } },
+    theme: { type: 'string' },
+    marketAdvice: { type: 'string' },
+  },
+  required: ['grades', 'avoid', 'theme', 'marketAdvice'],
+  additionalProperties: false,
+};
+
+// Measured-evidence block: the LLM grades with the system's actual track
+// record instead of vibes. Best-effort — an empty/young journal yields ''.
+function buildMeasuredStatsBlock(journalStatsObj) {
+  const s = journalStatsObj;
+  if (!s || !s.evaluated) return '';
+  const lines = [
+    `OLCULMUS PERFORMANS (forward journal, n=${s.evaluated}):`,
+    `- Ertesi-gun yon isabeti: %${s.directionalAccuracy.toFixed(0)} | Net beklenti: %${(s.netExpectancy ?? 0).toFixed(2)}/pick`,
+    `- Son 20 pick net beklenti: %${(s.rolling20?.netExpectancy ?? 0).toFixed(2)} (n=${s.rolling20?.samples ?? 0})`,
+  ];
+  const st = s.bySignalType || {};
+  const typed = Object.entries(st).filter(([, v]) => v.total >= 8);
+  if (typed.length) {
+    const sorted = typed.sort((a, b) => b[1].accuracy - a[1].accuracy);
+    const top = sorted.slice(0, 3).map(([k, v]) => `${k} %${v.accuracy.toFixed(0)}(n=${v.total})`).join(', ');
+    const bot = sorted.slice(-3).map(([k, v]) => `${k} %${v.accuracy.toFixed(0)}(n=${v.total})`).join(', ');
+    lines.push(`- En iyi sinyal tipleri: ${top}`);
+    lines.push(`- En kotu sinyal tipleri: ${bot}`);
+  }
+  lines.push('Bu olcumleri notlandirmada AGIR kullan: dusuk isabetli sinyal tiplerine dayanan setuplar not kirmali.');
+  return '\n' + lines.join('\n') + '\n';
+}
+
+export async function askDailyPicks(picks, market, opts = {}) {
+  // Measured stats: caller can inject (test seam); default reads the journal.
+  let statsBlock = '';
+  try {
+    if (opts.journalStats) {
+      statsBlock = buildMeasuredStatsBlock(opts.journalStats);
+    } else {
+      const { loadJournal, journalStats } = await import('./forwardTestJournal.js');
+      statsBlock = buildMeasuredStatsBlock(journalStats(loadJournal()));
+    }
+  } catch { /* evidence is optional */ }
+
+  const prompt = buildDailyPicksPrompt(picks, market) + statsBlock +
+    '\nSadece JSON dondur (grades/avoid/theme/marketAdvice). reason alanlari Turkce ve 1 cumle olsun.';
+
+  const result = await callClaude({
+    prompt,
     systemPrompt: 'Sen BIST gunluk strateji uzmanisin. Turkce yaz.',
-    temperature: DEFAULT_TEMPERATURE,
-    maxTokens: 900,
+    maxTokens: 1400,
+    model: DAILY_PICKS_MODEL,
+    outputConfig: { format: { type: 'json_schema', schema: DAILY_PICKS_SCHEMA } },
   });
+  if (result.error) return result;
+
+  // Parse structured grades; fall back to prose-only on any parse failure.
+  try {
+    const parsed = JSON.parse(result.text);
+    if (Array.isArray(parsed.grades)) {
+      return { ...result, ...parsed, structured: true };
+    }
+  } catch { /* fall through to prose-only */ }
+  return { ...result, structured: false };
 }
 
 // ── Daily Market Intelligence (News & Events) ──────────────────────────────

@@ -714,7 +714,7 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
 
   const gain = targetFinal ? ((targetFinal - r.price) / r.price * 100) : 0;
   const loss = stopFinal ? ((stopFinal - r.price) / r.price * 100) : 0;
-  const pos = calcPosition(10000, 1, r.price, stopFinal);
+  const pos = calcPosition(10000, 1, r.price, stopFinal, { regimeMult: r._positionSizeMult ?? 1 });
   const confColor = r.confidence >= 75 ? 'var(--green)' : r.confidence >= 55 ? 'var(--yellow)' : 'var(--orange)';
 
   const playMeta = PLAY_TYPE_META[r.playType] || PLAY_TYPE_META.none;
@@ -979,7 +979,7 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
           <span>10K: <b style={{ color: 'var(--cyan)' }}>{pos.shares} lot</b> | Maks kayip: <b style={{ color: 'var(--red)' }}>{pos.maxLoss.toFixed(0)} TL</b></span>
           {addToPortfolio && (() => {
             const alreadyOpen = portfolio?.positions?.some(p => p.symbol === r.symbol && p.status === 'open');
-            const pfPos = calcPosition(portfolio?.cash || 10000, 2, r.price, stopFinal);
+            const pfPos = calcPosition(portfolio?.cash || 10000, 2, r.price, stopFinal, { regimeMult: r._positionSizeMult ?? 1 });
             if (alreadyOpen) return <span style={{ color: 'var(--yellow)', fontSize: 9 }}>Portfoyde acik</span>;
             if (pfPos.shares <= 0) return <span style={{ color: 'var(--red)', fontSize: 9 }}>Yetersiz nakit</span>;
             return (
