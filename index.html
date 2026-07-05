@@ -50,15 +50,17 @@
       body { padding-top: env(safe-area-inset-top); }
     }
     /* PWA splash / loading state before JS loads */
-    #root:empty {
+    #splash {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; justify-content: center;
-      min-height: 100vh; background: #06090f;
+      background: #06090f; z-index: 999999;
+      transition: opacity 0.4s ease-out;
     }
-    #root:empty::after {
-      content: 'BIST AI';
+    #splash-text {
       font-family: 'Space Grotesk', system-ui, sans-serif;
-      font-size: 28px; font-weight: 700; color: #00e676;
+      font-size: 32px; font-weight: 700; color: #00e676;
       animation: splashPulse 1.5s ease-in-out infinite;
+      letter-spacing: 2px;
     }
     @keyframes splashPulse {
       0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
@@ -66,7 +68,22 @@
   </style>
 </head>
 <body>
+  <div id="splash">
+    <div id="splash-text">BORSAMAN</div>
+  </div>
   <div id="root"></div>
+  <script>
+    // Splash ekranının biraz daha uzun süre ekranda kalması için
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const splash = document.getElementById('splash');
+        if (splash) {
+          splash.style.opacity = '0';
+          setTimeout(() => splash.remove(), 400);
+        }
+      }, 1500);
+    });
+  </script>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>
