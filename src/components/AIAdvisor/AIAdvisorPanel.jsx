@@ -255,9 +255,14 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     lastUpdate = null,
     marketRegime = null, // v26 FIX 2: { regime, bistChangePct }
   } = advisor;
-
-  const [isMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
   const [open, setOpen] = useState(!isMobile); // start expanded on desktop, collapsed on mobile
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [dismissed, setDismissed] = useState(false);
 
   // ── Cached picks: use live if available, fall back to localStorage ──
@@ -619,8 +624,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       background: 'linear-gradient(180deg, #0d1320 0%, #0a0e17 100%)',
       borderTop: '2px solid transparent',
       borderImage: 'linear-gradient(90deg, #06b6d4, #8b5cf6, #06b6d4) 1',
-      transition: 'max-height 0.28s ease',
-      maxHeight: open ? (isMobile ? '55vh' : 400) : (isMobile ? 44 : 40),
+      transition: 'max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      maxHeight: open ? (isMobile ? 450 : 400) : (isMobile ? 44 : 40),
       overflow: 'hidden',
       boxShadow: '0 -8px 32px rgba(0, 230, 230, 0.12), 0 -4px 24px rgba(0,0,0,0.6)',
     }}>
@@ -790,16 +795,16 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             </button>
           )}
           <span
-            onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+            onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
             style={{
-              color: 'var(--t2)', fontSize: isMobile ? 16 : 12, cursor: 'pointer',
-              transition: 'transform 0.28s', transform: open ? 'rotate(180deg)' : 'rotate(0)',
-              padding: isMobile ? '8px 4px' : 0,
+              color: 'var(--t2)', fontSize: isMobile ? 18 : 12, cursor: 'pointer',
+              transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)', transform: open ? 'rotate(180deg)' : 'rotate(0)',
+              padding: isMobile ? '8px 8px' : 0,
             }}
           >▲</span>
           <span
             onClick={(e) => { e.stopPropagation(); setDismissed(true); }}
-            style={{ color: 'var(--t3)', fontSize: isMobile ? 18 : 14, cursor: 'pointer', lineHeight: 1, padding: isMobile ? '8px 4px' : '0 2px' }}
+            style={{ color: 'var(--t3)', fontSize: isMobile ? 20 : 14, cursor: 'pointer', lineHeight: 1, padding: isMobile ? '8px 8px' : '0 2px' }}
             title="Kapat"
           >✕</span>
         </div>

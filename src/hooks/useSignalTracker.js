@@ -235,11 +235,14 @@ export function useSignalTracker() {
     const key = `${signalData.symbol}-${signalData.cls}-${signalData.source || 'manual'}`;
     setSignals(prev => {
       const fourHrAgo = Date.now() - 4 * 60 * 60 * 1000;
-      const dup = prev.find(s => {
-        const k = `${s.symbol}-${s.cls}-${s.source || 'manual'}`;
-        return k === key && new Date(s.timestamp).getTime() > fourHrAgo;
-      });
-      if (dup) return prev;
+      // v31: Kullanıcı talebi üzerine 'advisor' kaynaklı sinyallerde dedup yapılmaz, her tarama kaydedilir.
+      if (signalData.source !== 'advisor') {
+        const dup = prev.find(s => {
+          const k = `${s.symbol}-${s.cls}-${s.source || 'manual'}`;
+          return k === key && new Date(s.timestamp).getTime() > fourHrAgo;
+        });
+        if (dup) return prev;
+      }
 
       if (signalData.confidence && signalData.confidence < 4) return prev;
 
