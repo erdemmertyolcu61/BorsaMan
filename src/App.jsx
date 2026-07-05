@@ -151,26 +151,6 @@ export default function App() {
     return () => window.removeEventListener('advisor-scan-complete', handler);
   }, [recordAdvisorPick]);
 
-  // (2) Cold start: the panel shows the LAST persisted picks from localStorage
-  //     before any fresh scan fires an event. Seed those into the tracker too, so
-  //     whatever is displayed in "AI EN İYİ FIRSATLAR" is always in Sinyal Takibi.
-  //     Gated to reasonably fresh cache (<=24h) to avoid recording stale entries.
-  const seededRef = useRef(false);
-  useEffect(() => {
-    if (seededRef.current) return;
-    seededRef.current = true;
-    try {
-      const raw = localStorage.getItem('bist_last_ai_picks');
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      const ageH = data?.ts ? (Date.now() - data.ts) / 3.6e6 : 999;
-      if (ageH > 24) return;
-      for (const pick of (Array.isArray(data?.picks) ? data.picks : [])) {
-        recordAdvisorPick(pick);
-      }
-    } catch { /* cache unavailable */ }
-  }, [recordAdvisorPick]);
-
   // ── Send notifications for new AI Advisor scan results ──
   useEffect(() => {
     const handler = (e) => {
