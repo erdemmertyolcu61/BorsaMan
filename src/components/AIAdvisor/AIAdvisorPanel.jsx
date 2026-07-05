@@ -256,7 +256,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     marketRegime = null, // v26 FIX 2: { regime, bistChangePct }
   } = advisor;
 
-  const [open, setOpen] = useState(typeof window !== 'undefined' && window.innerWidth > 768); // start expanded on desktop, collapsed on mobile
+  const [isMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
+  const [open, setOpen] = useState(!isMobile); // start expanded on desktop, collapsed on mobile
   const [dismissed, setDismissed] = useState(false);
 
   // ── Cached picks: use live if available, fall back to localStorage ──
@@ -614,12 +615,12 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
   return (
     <div className="ai-detail-root" style={{
       position: 'fixed', left: 0, right: 0, zIndex: 900,
-      bottom: 0,
+      bottom: isMobile ? 56 : 0,
       background: 'linear-gradient(180deg, #0d1320 0%, #0a0e17 100%)',
       borderTop: '2px solid transparent',
       borderImage: 'linear-gradient(90deg, #06b6d4, #8b5cf6, #06b6d4) 1',
       transition: 'max-height 0.28s ease',
-      maxHeight: open ? 400 : 40,
+      maxHeight: open ? (isMobile ? '55vh' : 400) : (isMobile ? 44 : 40),
       overflow: 'hidden',
       boxShadow: '0 -8px 32px rgba(0, 230, 230, 0.12), 0 -4px 24px rgba(0,0,0,0.6)',
     }}>
@@ -650,16 +651,20 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       {/* ── Header bar ── */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 14px', height: 40,
+        padding: isMobile ? '0 10px' : '0 14px',
+        minHeight: isMobile ? 44 : 40,
         background: 'linear-gradient(90deg, rgba(6,182,212,0.06), rgba(139,92,246,0.04))',
         borderBottom: open ? '1px solid var(--border)' : 'none',
         userSelect: 'none', boxSizing: 'border-box',
         backdropFilter: 'blur(10px)',
-      }}>
+        cursor: 'pointer',
+        WebkitTapHighlightColor: 'transparent',
+      }}
+        onClick={() => setOpen(o => !o)}
+      >
         {/* Left: title + badge */}
         <div
-          onClick={() => setOpen(o => !o)}
-          style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flex: 1 }}
+          style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 6 : 10, flex: 1, flexWrap: isMobile ? 'nowrap' : 'wrap', overflow: 'hidden' }}
         >
           <span style={{
             fontWeight: 800, fontSize: 11, letterSpacing: 0.6,
@@ -670,6 +675,19 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
           }}>
             ★ AI EN İYİ FIRSATLAR{hasPicks ? ` (${picks.length})` : ''}
           </span>
+          {/* Mobilde: sadece eski veri rozetini ve AL/SAT sayılarını göster, diğer badge'ler gizle */}
+          {isMobile && isFromCache && (
+            <span style={{
+              fontSize: 9, fontWeight: 800, padding: '2px 7px', borderRadius: 8,
+              background: isStale ? 'rgba(244,63,94,0.25)' : 'rgba(255,214,0,0.2)',
+              color: isStale ? '#ff5470' : '#ffd600',
+              border: `1px solid ${isStale ? 'rgba(244,63,94,0.6)' : 'rgba(255,214,0,0.5)'}`,
+              letterSpacing: 0.3, whiteSpace: 'nowrap',
+              animation: isStale ? 'pulse 2s ease-in-out infinite' : 'none',
+            }}>
+              {isStale ? '⚠ ESKİ VERİ' : 'YEDEK'} {cacheAge ? `• ${cacheAge}` : ''}
+            </span>
+          )}
           {scanning && (
             <span style={{
               width: 6, height: 6, borderRadius: '50%',
@@ -772,15 +790,16 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             </button>
           )}
           <span
-            onClick={() => setOpen(o => !o)}
+            onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
             style={{
-              color: 'var(--t2)', fontSize: 12, cursor: 'pointer',
-              transition: 'transform 0.28s', transform: open ? 'rotate(180deg)' : 'rotate(0)'
+              color: 'var(--t2)', fontSize: isMobile ? 16 : 12, cursor: 'pointer',
+              transition: 'transform 0.28s', transform: open ? 'rotate(180deg)' : 'rotate(0)',
+              padding: isMobile ? '8px 4px' : 0,
             }}
           >▲</span>
           <span
-            onClick={() => setDismissed(true)}
-            style={{ color: 'var(--t3)', fontSize: 14, cursor: 'pointer', lineHeight: 1, padding: '0 2px' }}
+            onClick={(e) => { e.stopPropagation(); setDismissed(true); }}
+            style={{ color: 'var(--t3)', fontSize: isMobile ? 18 : 14, cursor: 'pointer', lineHeight: 1, padding: isMobile ? '8px 4px' : '0 2px' }}
             title="Kapat"
           >✕</span>
         </div>
@@ -803,9 +822,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       {/* ── Card strip ── */}
       <div style={{
         display: 'flex', gap: 0, overflowX: 'auto', overflowY: 'hidden',
-        minHeight: typeof window !== 'undefined' && window.innerWidth <= 768 ? 130 : 165,
+        minHeight: isMobile ? 120 : 165,
         height: 'auto', alignItems: 'stretch',
-        padding: typeof window !== 'undefined' && window.innerWidth <= 768 ? '4px 8px' : '6px 12px',
+        padding: isMobile ? '4px 6px' : '6px 12px',
         boxSizing: 'border-box',
         scrollbarWidth: 'thin',
         WebkitOverflowScrolling: 'touch',
@@ -836,7 +855,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   </span>
                   {advisor.manualScan && (
                     <button
-                      onClick={() => advisor.manualScan()}
+                      onClick={(e) => { e.stopPropagation(); advisor.manualScan(); }}
                       style={{
                         background: 'linear-gradient(135deg, var(--cyan), var(--blue))',
                         color: '#fff', border: 'none', borderRadius: 4,
@@ -855,7 +874,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                   <span>Henüz tarama tamamlanmadı.</span>
                   {advisor.manualScan && (
                     <button
-                      onClick={() => advisor.manualScan()}
+                      onClick={(e) => { e.stopPropagation(); advisor.manualScan(); }}
                       style={{
                         background: 'linear-gradient(135deg, var(--cyan), var(--blue))',
                         color: '#fff', border: 'none', borderRadius: 4,
@@ -1007,10 +1026,10 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             <div
               key={p.symbol}
               className={`ai-pick-card ${topClass}`}
-              onClick={() => onAnalyze && onAnalyze(p.symbol)}
+              onClick={(e) => { e.stopPropagation(); onAnalyze && onAnalyze(p.symbol); }}
               title={tooltipLines.join('\n')}
               style={{
-                flexShrink: 0, width: 400,
+                flexShrink: 0, width: isMobile ? 280 : 400,
                 background: cardBg,
                 borderLeft: `4px solid ${accent}`,
                 borderRight: '1px solid rgba(255,255,255,0.06)',

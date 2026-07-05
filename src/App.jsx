@@ -92,13 +92,12 @@ export default function App() {
   const recordAdvisorPick = useCallback((pick, opts = {}) => {
     // The "AI EN İYİ FIRSATLAR" list surfaces buy OPPORTUNITIES, but many entries
     // carry an internal cls of 'hold'/'TUT' (genSignal gives most momentum names
-    // TUT; buyPicks still accepts them at score>=45). They are presented to the
-    // user as AL picks, so record everything that isn't an explicit sell and
-    // normalize cls to 'buy'. Filtering on cls==='buy' was dropping most picks.
-    if (!pick || !pick.symbol || pick.cls === 'sell') return;
+    // TUT/AL/SAT — her tarama sonucunu sinyal takibine kaydet.
+    // v30: sell pick'leri de kaydediliyor (kullanıcı talebi: "taramaları sinyallere kaydetsin").
+    if (!pick || !pick.symbol) return;
     signalTracker.recordSignal({
       symbol: pick.symbol,
-      cls: 'buy',
+      cls: pick.cls || 'buy',
       signal: pick.signal,
       score: pick.score,
       confidence: pick.confidence,
@@ -129,19 +128,24 @@ export default function App() {
   useEffect(() => {
     const handler = (e) => {
       const topPicks = e.detail?.topPicks || [];
-      // Defense in depth: if topPicks somehow arrives empty, fall back to the
-      // top buy-side results so the tracker is never left empty after a scan.
-      const source = topPicks.length
+      const sellPicks = e.detail?.sellPicks || [];
+      // v30: TÜM tarama sonuçlarını (buy + sell) sinyal takibine kaydet.
+      // Fallback: topPicks boşsa scanResults'tan en iyi 8 pick al.
+      const buySource = topPicks.length
         ? topPicks
         : (e.detail?.results || [])
-            .filter(r => r && r.cls !== 'sell' && (r.score || 0) >= 45)
+            .filter(r => r && (r.score || 0) >= 45)
             .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
             .slice(0, 8);
       let recorded = 0;
-      for (const pick of source) {
-        if (pick && pick.symbol && pick.cls !== 'sell') { recordAdvisorPick(pick, { notify: true }); recorded++; }
+      for (const pick of buySource) {
+        if (pick && pick.symbol) { recordAdvisorPick(pick, { notify: true }); recorded++; }
       }
-      console.info(`[SignalTracker] advisor-scan-complete → ${recorded} pick recorded (topPicks=${topPicks.length})`);
+      // Sell sinyallerini de kaydet
+      for (const pick of sellPicks) {
+        if (pick && pick.symbol) { recordAdvisorPick(pick, { notify: false }); recorded++; }
+      }
+      console.info(`[SignalTracker] advisor-scan-complete → ${recorded} pick recorded (buy=${buySource.length}, sell=${sellPicks.length})`);
     };
     window.addEventListener('advisor-scan-complete', handler);
     return () => window.removeEventListener('advisor-scan-complete', handler);

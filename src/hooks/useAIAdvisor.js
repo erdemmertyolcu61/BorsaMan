@@ -2811,6 +2811,7 @@ export function useAIAdvisor(portfolio) {
       window.dispatchEvent(new CustomEvent('advisor-scan-complete', {
         detail: {
           topPicks: finalPicks,
+          sellPicks: Array.isArray(sellPicks) ? sellPicks : [],
           results: allResults,
           marketContext: sentimentObj,
           sectorRotation,
