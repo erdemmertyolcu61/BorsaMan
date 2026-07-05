@@ -15,7 +15,6 @@ import BacktestPanel from '../Backtest/BacktestPanel.jsx';
 import KAPPanel from './KAPPanel.jsx';
 import ChatPanel from './ChatPanel.jsx';
 import MacroPanel from './MacroPanel.jsx';
-import MultiTimeframe from './MultiTimeframe.jsx';
 import OrderModal from '../Common/OrderModal.jsx';
 import { createBrokerAdapter, BROKER_TYPES } from '../../utils/brokerEngine.js';
 import { useSMCEngine } from '../../hooks/useSMCEngine.js';
@@ -482,12 +481,6 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
                 );
               })()}
             </div>
-          </div>
-        )}
-        {/* Multi-Timeframe Analysis */}
-        {gData && gData.symbol && (
-          <div style={{ padding: '0 14px 8px' }}>
-            <MultiTimeframe symbol={gData.symbol} />
           </div>
         )}
         {/* Backtest — below chart */}
