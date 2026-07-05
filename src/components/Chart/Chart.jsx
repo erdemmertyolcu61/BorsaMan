@@ -8,6 +8,7 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
   const [viewRange, setViewRange] = useState(null); // {start, end} indices for zoom
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState(null); // {x, start, end}
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Auto-set initial view range for large datasets
   useEffect(() => {
@@ -33,6 +34,15 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, [draw]);
+
+  // Fullscreen change listener to sync state if user exits via hardware back button
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
 
   const lastPinchDistRef = useRef(null);
 
@@ -263,6 +273,27 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     else setViewRange({ start: newStart, end: newEnd });
   }, [prices, viewRange, crosshair]);
 
+  const toggleFullscreen = useCallback(() => {
+    const nextState = !isFullscreen;
+    if (nextState) {
+      if (containerRef.current?.requestFullscreen) {
+        containerRef.current.requestFullscreen().catch(() => {});
+      }
+      if (window.screen?.orientation?.lock) {
+        window.screen.orientation.lock('landscape').catch(() => {});
+      }
+      setIsFullscreen(true);
+    } else {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      if (window.screen?.orientation?.unlock) {
+        window.screen.orientation.unlock();
+      }
+      setIsFullscreen(false);
+    }
+  }, [isFullscreen]);
+
   if (!prices || !ind) {
     return (
       <div className="chart-wrap">
@@ -274,8 +305,15 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
     );
   }
 
+  const containerStyle = isFullscreen ? {
+    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+    zIndex: 9999, background: 'var(--bg0)',
+  } : {
+    width: '100%', height: '100%', minHeight: '520px', position: 'relative', background: 'var(--bg0)'
+  };
+
   return (
-    <div className="chart-wrap" ref={containerRef} style={{ width: '100%', height: '100%', minHeight: '520px', position: 'relative', background: 'var(--bg0)' }}>
+    <div className="chart-wrap" ref={containerRef} style={containerStyle}>
       <canvas
         ref={canvasRef}
         style={{ display: 'block', cursor: isDragging ? 'grabbing' : 'crosshair', touchAction: 'none' }}
@@ -329,6 +367,27 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
           1Y
         </button>
       </div>
+      {/* Fullscreen toggle button */}
+      <button
+        onClick={toggleFullscreen}
+        style={{
+          position: 'absolute', bottom: 16, right: 16, zIndex: 10,
+          background: 'rgba(13, 19, 32, 0.75)', color: '#a8b3c7',
+          border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(4px)',
+          borderRadius: 8, padding: 8, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+        }}
+        title="Tam Ekran"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          {isFullscreen ? (
+            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+          ) : (
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+          )}
+        </svg>
+      </button>
     </div>
   );
 }
