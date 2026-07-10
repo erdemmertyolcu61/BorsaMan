@@ -440,6 +440,20 @@ export default function DashboardTab({
                         fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2,
                         background: gradeColor, color: '#000',
                       }}>{p.grade}</span>
+                      {/* v29 Konviksiyon rozeti — backtest: sadece Score>=75 pozitif beklenti */}
+                      {p.cls !== 'sell' && p.convictionTier === 'sniper' && (
+                        <span style={{
+                          fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2,
+                          background: 'linear-gradient(90deg, #059669, #10b981)', color: '#fff',
+                        }} title="🎯 NOKTA ATIŞI — Score≥75, backtest %62.5 kazanma / +0.77% beklenti">🎯</span>
+                      )}
+                      {p.cls !== 'sell' && p.convictionTier === 'flagged' && (
+                        <span style={{
+                          fontSize: 8, fontWeight: 800, padding: '1px 4px', borderRadius: 2,
+                          background: 'rgba(148,163,184,0.18)', color: '#94a3b8',
+                          border: '1px solid rgba(148,163,184,0.35)',
+                        }} title="⚪ DÜŞÜK KONVİKSİYON — Score 65-74, yatay piyasada yazı-tura (~%30 WR)">⚪</span>
+                      )}
                       {p.tier && (
                         <span style={{ fontSize: 9, color: 'var(--t3)' }}>{p.tier}</span>
                       )}
