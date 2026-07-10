@@ -2428,6 +2428,28 @@ export function useAIAdvisor(portfolio) {
       // KRITIK v25 degisiklik: Yuksek devam ihtimali olan pump picks artik
       // confidence skoruna gore NORMAL picks ile beraber siralanir. Boylece
       // CCOLA gibi tavan + kataliz + akilli para hisseleri top 5'e girebilir.
+      // ── v29 KONVIKSIYON KADEMELENDIRME (backtest-driven) ──
+      // Trade simulasyonu: Score>=75 (GUCLU AL) %62.5 WR / +0.77% beklenti (POZITIF),
+      // Score 65-74 (AL) %27-29 WR / -0.9% (yatay piyasada yazi-tura). Kullanici
+      // karari: 65-74 pick'ler gosterilsin ama etiketlensin + geri siralansin.
+      // sniper = 75+ (nokta atisi), flagged = 65-74 (dusuk konviksiyon buy tier),
+      // early = 65 alti erken/acil pick'ler (kendi rozetleri var, bu etiket verilmez).
+      for (const p of picks) {
+        if (p.cls === 'sell') { p.convictionTier = 'sell'; continue; }
+        const sigScore = p.score || 0;
+        const isSniper = sigScore >= 75 || (p.signal && p.signal.includes('GUCLU AL'));
+        if (isSniper) { p.convictionTier = 'sniper'; p.convictionLabel = 'NOKTA ATISI'; }
+        else if (sigScore >= 65) { p.convictionTier = 'flagged'; p.convictionLabel = 'DUSUK KONVIKSIYON'; }
+        else { p.convictionTier = 'early'; p.convictionLabel = ''; }
+      }
+      // Yumusak konviksiyon bonusu (erken/near-breakout bonuslarini EZMEZ, onlarla toplanir):
+      // sniper +20 one gecer, flagged -8 geri kalir, early notr (kendi bonusu var).
+      const convictionBonus = (pick) => {
+        if (pick.convictionTier === 'sniper') return 20;
+        if (pick.convictionTier === 'flagged') return -8;
+        return 0;
+      };
+
       picks.sort((a, b) => {
         // Sells: her zaman en sona
         if (a.cls === 'sell' && b.cls !== 'sell') return 1;
@@ -2472,8 +2494,9 @@ export function useAIAdvisor(portfolio) {
           return 0;
         };
 
-        // Normal yarisma: effective confidence + erken birikim bonusu
-        return (effConf(b) + earlyConfBonus(b)) - (effConf(a) + earlyConfBonus(a));
+        // Normal yarisma: effective confidence + erken birikim + konviksiyon bonusu
+        return (effConf(b) + earlyConfBonus(b) + convictionBonus(b))
+             - (effConf(a) + earlyConfBonus(a) + convictionBonus(a));
       });
 
       // Cap final picks at 10
@@ -2752,6 +2775,7 @@ export function useAIAdvisor(portfolio) {
               foreignRatio: p.foreignRatio, foreignChangeDay: p.foreignChangeDay,
               foreignChangeWeek: p.foreignChangeWeek, foreignChangeMonth: p.foreignChangeMonth,
               foreignFlowScore: p.foreignFlowScore, foreignFlowLabel: p.foreignFlowLabel,
+              convictionTier: p.convictionTier, convictionLabel: p.convictionLabel,
             })),
             // ── COMPACT VERDICT MAP — ALL scanned symbols ──
             // Tekil Analiz icin kullanilir: herhangi bir hisse ne karar aldi?

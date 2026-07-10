@@ -1080,6 +1080,37 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       {p.grade}
                     </span>
                   )}
+                  {/* v29: KONVIKSIYON rozeti — backtest: Score>=75 pozitif beklenti, 65-74 yazi-tura */}
+                  {p.cls !== 'sell' && p.convictionTier === 'sniper' && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'linear-gradient(90deg, #059669, #10b981)',
+                      color: '#fff', letterSpacing: 0.3,
+                      boxShadow: '0 0 6px rgba(16,185,129,0.5)',
+                    }} title={[
+                      '🎯 NOKTA ATIŞI (yüksek konviksiyon)',
+                      `Sinyal skoru: ${(p.score || 0).toFixed(0)}/100 (≥75)`,
+                      'Backtest: bu kademe %62.5 kazanma oranı / +0.77% beklenti',
+                      'Sistemin en güvendiği setup tipi.',
+                    ].join('\n')}>
+                      🎯 NOKTA ATIŞI
+                    </span>
+                  )}
+                  {p.cls !== 'sell' && p.convictionTier === 'flagged' && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(148,163,184,0.18)',
+                      color: '#94a3b8', letterSpacing: 0.3,
+                      border: '1px solid rgba(148,163,184,0.35)',
+                    }} title={[
+                      '⚪ DÜŞÜK KONVİKSİYON',
+                      `Sinyal skoru: ${(p.score || 0).toFixed(0)}/100 (65-74 bandı)`,
+                      'Backtest: bu kademe yatay piyasada yazı-tura (~%30 WR).',
+                      'Küçük pozisyon ile gir veya teyit bekle.',
+                    ].join('\n')}>
+                      ⚪ DÜŞÜK KONV.
+                    </span>
+                  )}
                   {/* ERKEN BIRIKIM rozeti — patlama oncesi dusuk likit hisseler */}
                   {p._earlyPick && (
                     <span style={{
