@@ -67,6 +67,8 @@ const SOURCE_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': 'https://bigpara.hurriyet.com.tr/',
     'Accept': 'application/json',
+    // BigPara API'si bu header olmadan 401 doner (AJAX-only endpoint gate).
+    'X-Requested-With': 'XMLHttpRequest',
   },
   isyatirim: {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
