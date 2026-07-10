@@ -79,7 +79,8 @@ export function buildExpertPrompt(symbol, analysis = {}, market = {}, portfolio 
     setup = [], wyckoff, sector, holdText,
     mcProfitProb, mcMedian,
     fundamentals = {},
-    foreignRatio, foreignChangeWeek,
+    foreignRatio, foreignChangeDay, foreignChangeWeek, foreignChangeMonth,
+    foreignFlowScore, foreignFlowLabel,
   } = analysis;
 
   const {
@@ -124,7 +125,8 @@ Kural: BEAR_TREND'te AL sinyallerine agir supheyle yaklas. OVERBOUGHT'ta karli s
 6) RISK (x1.2): Stop=${fmt(stop)}  ATR-multiple=${atr && stop && price ? fmt(Math.abs(price - stop) / atr, 1) : '-'}
 7) POZISYON (x1.0): Giris=${fmt(entry)}  T1=${fmt(target)}  T2=${fmt(targetT2)}  T3=${fmt(targetT3)}  Uzun=${fmt(longTerm)}  R/R=1:${fmt(rr, 2)}  Vade=${holdText || '-'}
 
-AKILLI PARA: MFI=${fmt(mfi, 0)} OBV=${obv?.trend || '-'} YabanciTakas=${fmt(foreignRatio)}% (Haftalik: ${foreignChangeWeek > 0 ? '+' : ''}${fmt(foreignChangeWeek)}%)
+AKILLI PARA: MFI=${fmt(mfi, 0)} OBV=${obv?.trend || '-'}
+YABANCI: Takas=%${fmt(foreignRatio)} Gunluk=${foreignChangeDay > 0 ? '+' : ''}${fmt(foreignChangeDay)} Haftalik=${foreignChangeWeek > 0 ? '+' : ''}${fmt(foreignChangeWeek)} Aylik=${foreignChangeMonth > 0 ? '+' : ''}${fmt(foreignChangeMonth)} Akis=${foreignFlowLabel || '-'}(${foreignFlowScore > 0 ? '+' : ''}${fmt(foreignFlowScore, 0)})
 SETUPLAR: ${setupList || '-'}
 MONTE CARLO: P(kar)=%${fmt(mcProfitProb, 0)}  Medyan=${fmt(mcMedian)}${portfolioBlock}
 
@@ -166,7 +168,13 @@ export function buildDailyPicksPrompt(picks = [], market = {}) {
       const head = p.newsHeadline ? ` "${p.newsHeadline.slice(0, 40)}"` : '';
       newsStr = ` HABER${cats}=${sign}${p.newsScore?.toFixed?.(1) ?? p.newsScore}(${p.newsCount})${head}`;
     }
-    let foreignStr = p.foreignRatio != null ? ` Yabanci=%${p.foreignRatio.toFixed(1)}(${p.foreignChangeWeek > 0 ? '+' : ''}${p.foreignChangeWeek?.toFixed(1) || 0})` : '';
+    let foreignStr = '';
+    if (p.foreignRatio != null) {
+      const cw = p.foreignChangeWeek || 0;
+      const cm = p.foreignChangeMonth || 0;
+      const label = p.foreignFlowLabel || '';
+      foreignStr = ` Yabanci=%${p.foreignRatio.toFixed(1)}(H:${cw > 0 ? '+' : ''}${cw.toFixed(1)},A:${cm > 0 ? '+' : ''}${cm.toFixed(1)})${label && label !== 'NOTR' ? '[' + label + ']' : ''}`;
+    }
     const rrStr = p.rrNet != null
       ? `R/R(net)=1:${p.rrNet.toFixed(2)}`
       : `R/R=1:${p.rr?.toFixed(2)}`;

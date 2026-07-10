@@ -99,6 +99,22 @@ const CATEGORY_RULES = [
   { cat: 'risk', label: 'Risk',
     pat: /(sorusturma|ceza\s+kesi|dava\s+acil|haciz|iflas|konkordato|uretim\s+durdu|temerrut|kredi.*indir)/i,
     weight: -7 },
+  // EARNINGS MISS / REVENUE DECLINE
+  { cat: 'earnings_miss', label: 'Kar Dususu',
+    pat: /(kar.*dusus|kar.*geriledi|kar.*azald|zarar.*acikla|zarar.*yazd|gelir.*dusus|gelir.*geriledi|ciro.*dusus|ciro.*azald|satislar.*geriledi|ebitda.*dusus)/i,
+    weight: -5 },
+  // CAPITAL INCREASE (dilution)
+  { cat: 'dilution', label: 'Sermaye Artirimi',
+    pat: /(sermaye\s+artir|bedelli\s+sermaye|bedelsiz\s+sermaye|yeni\s+pay\s+ihrac|ruchan\s+hakk)/i,
+    weight: -3 },
+  // MANAGEMENT CHANGE (uncertainty)
+  { cat: 'mgmt_change', label: 'Yonetim Degisikligi',
+    pat: /(genel\s+mudur.*ayril|ceo.*istifa|yonetim\s+kurulu.*degis|genel\s+mudur.*gorevden|ust\s+yonetim.*ayril)/i,
+    weight: -4 },
+  // SECTOR BEARISH
+  { cat: 'sector_bear', label: 'Sektorel Dusus',
+    pat: /(sektor.*negatif|sektor.*dusus|sektor.*baski|sektorunde\s+satis|sektor.*geriledi)/i,
+    weight: -3 },
   // SECTOR-WIDE BULL
   { cat: 'sector_bull', label: 'Sektorel Yukselis',
     pat: /(sektor.*pozitif|sektor.*rekor|sektor.*yukselis|hisselerinde\s+rali)/i,

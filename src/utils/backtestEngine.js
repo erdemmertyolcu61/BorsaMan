@@ -48,7 +48,7 @@ export function runBacktest(prices, strategy = 'signal') {
     } else {
       let enter = false;
       if (strategy === 'signal') {
-        enter = sig.score >= 2.5;
+        enter = sig.score >= 55;
       } else if (strategy === 'rsi') {
         enter = ind.lastRSI != null && ind.lastRSI < 35;
         if (enter && len >= 2 && ind.rsi[len - 2] != null) enter = ind.lastRSI >= ind.rsi[len - 2];

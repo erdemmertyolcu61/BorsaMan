@@ -958,6 +958,17 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             tooltipLines.push(`  • Haber: ${breakdown.news}`);
             tooltipLines.push(`  • Giriş kalitesi: ${breakdown.entry}`);
             tooltipLines.push(`  • Likidite: ${breakdown.liquidity}`);
+            if (breakdown.foreignFlow) tooltipLines.push(`  • Yabancı akış: ${breakdown.foreignFlow > 0 ? '+' : ''}${breakdown.foreignFlow}`);
+          }
+          // Yabancı yatırımcı detayı
+          if (p.foreignRatio != null) {
+            const cw = p.foreignChangeWeek || 0;
+            const cm = p.foreignChangeMonth || 0;
+            const cd = p.foreignChangeDay || 0;
+            tooltipLines.push(`🌍 Yabancı: %${p.foreignRatio.toFixed(1)} oran | Gün: ${cd > 0 ? '+' : ''}${cd.toFixed(2)} | Hafta: ${cw > 0 ? '+' : ''}${cw.toFixed(2)} | Ay: ${cm > 0 ? '+' : ''}${cm.toFixed(2)}`);
+            if (p.foreignFlowLabel && p.foreignFlowLabel !== 'NOTR') {
+              tooltipLines.push(`  → ${p.foreignFlowLabel} (skor: ${p.foreignFlowScore > 0 ? '+' : ''}${p.foreignFlowScore})`);
+            }
           }
           // ML Override — standart filtreyi atladı
           if (p._mlOverride) {
@@ -1137,6 +1148,34 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       letterSpacing: 0.3,
                     }} title={`İçeriden satım: skor ${p.insiderScore || 0}`}>
                       👔 İÇERİDEN SATIM
+                    </span>
+                  )}
+                  {/* YABANCI AKIS rozeti — foreign investor flow */}
+                  {p.foreignFlowLabel && p.foreignFlowLabel !== 'NOTR' && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: p.foreignFlowScore >= 6
+                        ? 'linear-gradient(90deg, #059669, #10b981)'
+                        : p.foreignFlowScore >= 3
+                          ? 'rgba(16,185,129,0.2)'
+                          : p.foreignFlowScore <= -6
+                            ? '#7f1d1d'
+                            : 'rgba(239,68,68,0.15)',
+                      color: p.foreignFlowScore >= 6 ? '#fff'
+                        : p.foreignFlowScore >= 3 ? '#34d399'
+                          : p.foreignFlowScore <= -6 ? '#fca5a5'
+                            : '#f87171',
+                      border: p.foreignFlowScore <= -3 ? '1px solid rgba(239,68,68,0.4)' : 'none',
+                      letterSpacing: 0.3,
+                    }} title={[
+                      `🌍 Yabancı ${p.foreignFlowLabel}`,
+                      `Oran: %${(p.foreignRatio || 0).toFixed(1)}`,
+                      `Gün: ${(p.foreignChangeDay || 0) > 0 ? '+' : ''}${(p.foreignChangeDay || 0).toFixed(2)}`,
+                      `Hafta: ${(p.foreignChangeWeek || 0) > 0 ? '+' : ''}${(p.foreignChangeWeek || 0).toFixed(2)}`,
+                      `Ay: ${(p.foreignChangeMonth || 0) > 0 ? '+' : ''}${(p.foreignChangeMonth || 0).toFixed(2)}`,
+                      `Akış skoru: ${p.foreignFlowScore > 0 ? '+' : ''}${p.foreignFlowScore}`,
+                    ].join('\n')}>
+                      🌍 {p.foreignFlowLabel}
                     </span>
                   )}
                   {/* ML ENGINE MATCH rozeti — self-learning rule discovery match */}

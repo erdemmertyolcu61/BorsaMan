@@ -34,7 +34,7 @@ const ALLOWED_DOMAINS = [
 ];
 
 const ALLOWED_SOURCES = new Set([
-  'yahoo', 'yahoo_fund', 'bigpara', 'bigpara_list',
+  'yahoo', 'yahoo_fund', 'bigpara', 'bigpara_list', 'bigpara_yabanci',
   'isyatirim', 'isyatirim_fin', 'isyatirim_yabanci', 'foreks', 'tcmb_evds', 'default',
 ]);
 
@@ -136,6 +136,8 @@ function buildSourceUrl(query) {
       return `https://bigpara.hurriyet.com.tr/api/v1/borsa/hisseyuzeysel/${symbol}`;
     case 'bigpara_list':
       return 'https://bigpara.hurriyet.com.tr/api/v1/hisse/list';
+    case 'bigpara_yabanci':
+      return 'https://bigpara.hurriyet.com.tr/api/v1/borsa/yapikredi/yabancioranlari';
     case 'isyatirim': {
       const startdate = query.startdate || '01-01-2024';
       const enddate = query.enddate || formatDateISY(new Date());

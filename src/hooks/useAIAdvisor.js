@@ -545,6 +545,19 @@ function calcTomorrowPotential(result) {
     else if (result.insiderScore <= -3) tpScore -= 6;
   }
   if (result.hasRecentInsiderBuy) tpScore += 5; // Son 14 gunde herhangi bir insider buy
+
+  // ── YABANCI AKIS ETKISI ──
+  // Yabanci yatirimci giris/cikis trendi yarinki potansiyeli etkiler
+  if (result.foreignFlowScore != null) {
+    tpScore += Math.round(result.foreignFlowScore * 1.2); // [-18, +18] arasi
+  } else if (result.foreignChangeWeek != null) {
+    const cw = result.foreignChangeWeek;
+    if (cw >= 1.5) tpScore += 10;
+    else if (cw >= 0.5) tpScore += 4;
+    else if (cw <= -1.5) tpScore -= 10;
+    else if (cw <= -0.5) tpScore -= 4;
+  }
+
   // KAP sentiment da hesaba kat
   if (result.kapSentiment != null) {
     if (result.kapSentiment > 5) tpScore += 10;
@@ -1302,9 +1315,9 @@ export function useAIAdvisor(portfolio) {
           if (prob == null) return true;
 
           let requiredProb;
-          if (tp >= 9.5) requiredProb = 75;      // Neredeyse tam tavan: mutlak red veya efsanevi devam puani
-          else if (tp >= 8) requiredProb = 65;   // Tavana cok yakin: cok yuksek devam ihtimali
-          else requiredProb = 55;                // 7-8%: standart esik yukseltildi
+          if (tp >= 9.5) requiredProb = 50;      // Tam tavan: guclu kataliz + teknik teyit gerekli
+          else if (tp >= 8) requiredProb = 45;   // Tavana yakin: yukari orta devam ihtimali
+          else requiredProb = 38;                // 7-8%: makul devam esigi
 
           if (prob < requiredProb) return true;
           return false; // Yüksek devam ihtimali → tavan bile olsa göster
@@ -1546,6 +1559,15 @@ export function useAIAdvisor(portfolio) {
             && (r.volRatio || 1) < 0.6
             && r.obvTrend === 'distribution';
           if (isWeakRally && r.score < 55) return false;
+
+          // ── YABANCI CIKIS GUARD ──
+          // Guclu yabanci cikisi + zayif teknik = yarinki risk cok yuksek
+          // Yabanci takas orani yuksek (>40%) ve haftalik cikis agir (-2%+)
+          // ise bu hissenin yarinki potansiyeli cok dusuk
+          if (r.foreignFlowScore != null && r.foreignFlowScore <= -8 && r.score < 60) return false;
+          // Orta seviye cikis + distribution = teyitli risk
+          if (r.foreignFlowScore != null && r.foreignFlowScore <= -5
+            && r.obvTrend === 'distribution' && r.score < 65) return false;
 
           // ── TAVAN/EXHAUSTION GUARD (v19.1 — hard reject, allowance yok) ──
           if (isUnsafeForTomorrow(r)) return false;
@@ -2224,6 +2246,7 @@ export function useAIAdvisor(portfolio) {
             liquidity: Math.round(liqComponent),
             momentumHealth: Math.round(healthComponent),
             macro: Math.round(macroAdj),
+            foreignFlow: 0, // enrichment asamasinda guncellenir
           },
         };
       };
@@ -2527,19 +2550,59 @@ export function useAIAdvisor(portfolio) {
           }
         })(), enrichTimeout),
 
-        // [2] Foreign flow
+        // [2] Foreign flow — derinlemesine analiz
         _withTimeout((async () => {
           const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');
           const foreignMap = await fetchAllForeignRatios();
           for (const p of picks) {
             const fr = foreignMap[p.symbol];
-            if (fr) {
-              p.foreignRatio = fr.ratio;
-              p.foreignChangeWeek = fr.changeWeek;
-              if (fr.changeWeek >= 0.5) {
-                p.confidence = Math.min(100, (p.confidence || 50) + 5);
-                if (p.confidenceBreakdown) p.confidenceBreakdown.potential += 5;
-              }
+            if (!fr) continue;
+            p.foreignRatio = fr.ratio;
+            p.foreignChangeDay = fr.changeDay;
+            p.foreignChangeWeek = fr.changeWeek;
+            p.foreignChangeMonth = fr.changeMonth;
+
+            // Yabanci akis skoru: haftalik + aylik trend bilesik degerlendirme
+            let flowScore = 0;
+            const cw = fr.changeWeek || 0;
+            const cm = fr.changeMonth || 0;
+            const cd = fr.changeDay || 0;
+
+            // Haftalik degisim (ana sinyal)
+            if (cw >= 2.0) flowScore += 8;
+            else if (cw >= 1.0) flowScore += 5;
+            else if (cw >= 0.3) flowScore += 2;
+            else if (cw <= -2.0) flowScore -= 8;
+            else if (cw <= -1.0) flowScore -= 5;
+            else if (cw <= -0.3) flowScore -= 2;
+
+            // Aylik trend (teyit)
+            if (cm >= 3.0) flowScore += 4;
+            else if (cm >= 1.0) flowScore += 2;
+            else if (cm <= -3.0) flowScore -= 4;
+            else if (cm <= -1.0) flowScore -= 2;
+
+            // Gunluk momentum (kisa vadeli ivme)
+            if (cd >= 0.5) flowScore += 2;
+            else if (cd <= -0.5) flowScore -= 2;
+
+            // Yuksek yabanci oraniyla birlikte cikis = daha tehlikeli
+            if (fr.ratio >= 50 && cw <= -1.0) flowScore -= 3;
+            // Dusuk yabanci oranina ragmen giris = kesfedilmemis firsat
+            if (fr.ratio < 20 && cw >= 1.0) flowScore += 3;
+
+            p.foreignFlowScore = Math.max(-15, Math.min(15, flowScore));
+            p.foreignFlowLabel = flowScore >= 6 ? 'GUCLU GIRIS'
+              : flowScore >= 3 ? 'GIRIS'
+              : flowScore <= -6 ? 'GUCLU CIKIS'
+              : flowScore <= -3 ? 'CIKIS'
+              : 'NOTR';
+
+            // Confidence etkisi: [-8, +8] araliginda
+            const confDelta = Math.max(-8, Math.min(8, Math.round(flowScore * 0.6)));
+            p.confidence = Math.max(0, Math.min(100, (p.confidence || 50) + confDelta));
+            if (p.confidenceBreakdown) {
+              p.confidenceBreakdown.foreignFlow = confDelta;
             }
           }
         })(), enrichTimeout),
@@ -2616,20 +2679,19 @@ export function useAIAdvisor(portfolio) {
         }
       } catch { /* LLM grading is best-effort — never block a scan */ }
 
-      // ── v29 FIX: Ensure all AI Advisor "Buy" picks explicitly say "AL" ──
-      // Bazı hisseler _earlyPick, _mlOverride vb. özel sebeplerle "buyPicks" listesine girse de
-      // orijinal genSignal çıktıları "TUT" (cls='hold') olabiliyor.
-      // AIAdvisorPanel bunları zorla "AL" olarak gösterirken, localStorage'a "TUT" kaydediliyordu.
-      // Bu da Tekil Analiz sekmesi ile panelin senkronizasyonunu bozuyordu.
+      // ── v29 FIX: Only reclassify picks that have a genuine buy reason ──
+      // _earlyPick veya _mlOverride gibi ozel sebeplerle listeye giren TUT hisseler
+      // SADECE bu ozel sebep varsa AL yapilir — aksi halde TUT olarak gosterilir
       picks = picks.map(p => {
-        if (p.cls !== 'sell') {
+        if (p.cls === 'sell') return p;
+        if (p.cls === 'buy') return p; // zaten AL
+        // TUT/hold ise: sadece earlyPick veya ML override varsa AL yap
+        if (p._earlyPick || p._mlOverride || p.score >= 55) {
           let sig = p.signal || 'AL';
-          if (!sig.includes('AL') && !sig.includes('SAT')) sig = 'AL';
-          else if (sig.includes('TUT')) sig = 'AL';
-          
+          if (!sig.includes('AL') && !sig.includes('SAT')) sig = 'ZAYIF AL';
           return { ...p, cls: 'buy', signal: sig };
         }
-        return p;
+        return p; // TUT olarak birak
       });
 
       setScanResults(results);
@@ -2687,6 +2749,9 @@ export function useAIAdvisor(portfolio) {
               mlConfidenceBoost: p.mlConfidenceBoost, mlBestRule: p.mlBestRule,
               mlBestRuleHash: p.mlBestRuleHash,
               mlMatchedCount: p.mlMatchedCount,
+              foreignRatio: p.foreignRatio, foreignChangeDay: p.foreignChangeDay,
+              foreignChangeWeek: p.foreignChangeWeek, foreignChangeMonth: p.foreignChangeMonth,
+              foreignFlowScore: p.foreignFlowScore, foreignFlowLabel: p.foreignFlowLabel,
             })),
             // ── COMPACT VERDICT MAP — ALL scanned symbols ──
             // Tekil Analiz icin kullanilir: herhangi bir hisse ne karar aldi?

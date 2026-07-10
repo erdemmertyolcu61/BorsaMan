@@ -1252,7 +1252,14 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   // v24: Volume threshold relaxed — BIST ortalama volRatio ~0.8-1.0, strict >1.1 %85 hisseyi eliyordu
   const hasVolConfirm = ind.volRatio > 1.1;
   const hasVolSoft = ind.volRatio > 0.8;         // Yumusak hacim — dusuk degil yeterli
-  const hasSmartMoneyBuy = ind.obvTrend === 'accumulation' || (ind.cmf != null && ind.cmf > 0.05) || (ind.mfi != null && ind.mfi < 35);
+  const smartBuySignals = [
+    ind.obvTrend === 'accumulation',
+    ind.cmf != null && ind.cmf > 0.05,
+    ind.mfi != null && ind.mfi < 35,
+  ];
+  const smartBuyCount = smartBuySignals.filter(Boolean).length;
+  const hasSmartMoneyBuy = smartBuyCount >= 1;
+  const hasStrongSmartMoney = smartBuyCount >= 2;
   const hasSmartMoneySell = ind.obvTrend === 'distribution' || (ind.cmf != null && ind.cmf < -0.05) || (ind.mfi != null && ind.mfi > 75);
 
   // v24: bullishTypes esigi: GUCLU AL=5, AL=4, ZAYIF AL=3
@@ -1265,9 +1272,9 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   if (score100 >= 75 && hasVolConfirm && hasSmartMoneyBuy && bullishTypes.size >= 5) { signal = 'GUCLU AL'; cls = 'buy'; }
   // AL: score100 >= 65 AND volume AND 4+ indicator types
   else if (score100 >= 65 && hasVolConfirm && minBullTypes) { signal = 'AL'; cls = 'buy'; }
-  // v24 ZAYIF AL: score100 >= 57 AND soft volume AND 3+ types AND smart money teyidi
-  // BIST'te volRatio 0.8-1.1 arasi cok yaygin; bunlar guclu setup olabilir
-  else if (score100 >= 57 && hasVolSoft && softBullTypes && hasSmartMoneyBuy) { signal = 'AL'; cls = 'buy'; }
+  // v24 ZAYIF AL: score100 >= 57 AND soft volume AND 3+ types AND 2+ smart money teyidi
+  // Tek CMF>0.05 artik yetmiyor — en az 2 bagimsiz akilli para sinyali gerekli
+  else if (score100 >= 57 && hasVolSoft && softBullTypes && hasStrongSmartMoney) { signal = 'AL'; cls = 'buy'; }
   // GUCLU SAT: score100 <= 25 AND volume AND smart money selling AND 5+ types
   else if (score100 <= 25 && hasVolConfirm && hasSmartMoneySell && bearishTypes.size >= 5) { signal = 'GUCLU SAT'; cls = 'sell'; }
   // SAT: score100 <= 35 AND 4+ indicator types
@@ -1275,6 +1282,14 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   // v24 ZAYIF SAT: score100 <= 42 AND soft bear types AND smart money selling
   else if (score100 <= 42 && softBearTypes && hasSmartMoneySell) { signal = 'SAT'; cls = 'sell'; }
   else { signal = 'TUT'; cls = 'hold'; }
+
+  // ── DISTRIBUTION TRAP HARD CAP: OBV dagilim + fiyat yukselis = AL olamaz ──
+  if (cls === 'buy' && ind.obvTrend === 'distribution' && ind.changePct > 0 && (ind.lastRSI || 50) > 55) {
+    if ((ind.cmf || 0) < -0.05) {
+      signal = 'TUT'; cls = 'hold';
+      reasons.push({ t: 'DISTRIBUTION TRAP: OBV dagilim + CMF negatif + fiyat yukselis — AL sinyal iptal', c: 'bearish' });
+    }
+  }
 
   // ========== ENTRY / STOP / TARGETS (ADVANCED) ==========
   // Find all support/resistance levels
@@ -1410,7 +1425,7 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   // ONCEKI SORUN: rr<1.0 → cls='hold' → useAIAdvisor'da ikinci kez score gate → cift ceza
   // YENI: rr<0.5 = gercekten kotu → hold; rr 0.5-1.0 = uyari ama sinyal korunur
   // useAIAdvisor zaten composite confidence ile R/R'yi degerlendiriyor
-  const minRR = (ind.volRatio > 2.0 && score100 >= 65) ? 0.3 : 0.5;
+  const minRR = (ind.volRatio > 2.0 && score100 >= 65) ? 0.5 : 0.8;
   if (rr < minRR && cls === 'buy') {
     signal = 'TUT'; cls = 'hold';
     reasons.push({ t: 'R/R FILTRESI: Risk/Odul 1:' + rr.toFixed(1) + ' yetersiz (Eşik: ' + minRR + ') — sinyal iptal', c: 'bearish' });
