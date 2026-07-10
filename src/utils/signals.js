@@ -772,6 +772,29 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     }
   }
 
+  // ── EXTENSION GUARD (v29 — backtest-driven) ──
+  // Backtest bulgusu: RSI 55-70 bandindaki momentum-devam sinyalleri (48 adet)
+  // D5 win-rate %39.6, ort. getiri -0.88%. Sebep: yatay piyasada gucun tepesinden
+  // alim = ortalamaya donus cezasi. MA20'den asiri uzaklikta giris "kovalamak".
+  if (ind.lastMA20 && ind.lastMA20 > 0) {
+    const distFromMA20 = ((p - ind.lastMA20) / ind.lastMA20) * 100;
+    // Trend disi rejimde MA20'nin %4+ ustu = range tepesinde kovalamak
+    if (!regimeIsTrend && distFromMA20 > 4) {
+      score -= 2; bearishTypes.add('EXTENSION');
+      reasons.push({ t: `EKSTANSIYON CEZASI: Fiyat MA20'nin %${distFromMA20.toFixed(1)} ustunde (trend yok) — kovalamak riski`, c: 'bearish' });
+    }
+    // Her rejimde asiri uzanma (%9+): geri cekilme olasiligi yuksek
+    else if (distFromMA20 > 9) {
+      score -= 1.5; bearishTypes.add('EXTENSION');
+      reasons.push({ t: `ASIRI UZANMA: Fiyat MA20'nin %${distFromMA20.toFixed(1)} ustunde — geri cekilme riski`, c: 'bearish' });
+    }
+    // Yatay rejimde MA20 yakini/alti giris (ortalamaya donus) + dusuk RSI = degerli
+    else if (regimeIsRange && distFromMA20 < 1 && ind.lastRSI < 45) {
+      score += 1.5; bullishTypes.add('MEANREVERT');
+      reasons.push({ t: `ORTALAMAYA DONUS: Fiyat MA20 yakini/alti + RSI ${(ind.lastRSI||0).toFixed(0)} — yatay piyasada dip alim`, c: 'bullish' });
+    }
+  }
+
   // ── GAP ANALYSIS (price gaps as S/R) ──
   if (prices && prices.length >= 3) {
     const prev = prices[prices.length - 2];
@@ -1268,10 +1291,16 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   const minBearTypes = bearishTypes.size >= 4;
   const softBearTypes = bearishTypes.size >= 3;
 
+  // v29: Akilli para teyidi ARTIK tum AL kademeleri icin zorunlu.
+  // Backtest bulgusu: OBV accumulation sinyalleri D5 WR %54.5 / +0.40%,
+  // OBV neutral sinyalleri %33 / -1.16%. Akilli para olmayan AL = negatif beklenti.
+  // notDistribution: aktif dagilim hicbir AL kademesinde kabul edilmez.
+  const notDistribution = ind.obvTrend !== 'distribution';
+
   // GUCLU AL: score100 >= 75 AND volume AND smart money AND 5+ indicator types
-  if (score100 >= 75 && hasVolConfirm && hasSmartMoneyBuy && bullishTypes.size >= 5) { signal = 'GUCLU AL'; cls = 'buy'; }
-  // AL: score100 >= 65 AND volume AND 4+ indicator types
-  else if (score100 >= 65 && hasVolConfirm && minBullTypes) { signal = 'AL'; cls = 'buy'; }
+  if (score100 >= 75 && hasVolConfirm && hasSmartMoneyBuy && notDistribution && bullishTypes.size >= 5) { signal = 'GUCLU AL'; cls = 'buy'; }
+  // AL: score100 >= 65 AND volume AND 4+ types AND akilli para teyidi (v29)
+  else if (score100 >= 65 && hasVolConfirm && minBullTypes && hasSmartMoneyBuy && notDistribution) { signal = 'AL'; cls = 'buy'; }
   // v24 ZAYIF AL: score100 >= 57 AND soft volume AND 3+ types AND 2+ smart money teyidi
   // Tek CMF>0.05 artik yetmiyor — en az 2 bagimsiz akilli para sinyali gerekli
   else if (score100 >= 57 && hasVolSoft && softBullTypes && hasStrongSmartMoney) { signal = 'AL'; cls = 'buy'; }
@@ -1288,6 +1317,40 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     if ((ind.cmf || 0) < -0.05) {
       signal = 'TUT'; cls = 'hold';
       reasons.push({ t: 'DISTRIBUTION TRAP: OBV dagilim + CMF negatif + fiyat yukselis — AL sinyal iptal', c: 'bearish' });
+    }
+  }
+
+  // ── OVERBOUGHT ENTRY GUARD (v29 — backtest-driven) ──
+  // Backtest bulgusu: RSI>70 AL sinyalleri D5 win-rate %20, ort. getiri -3.6%.
+  // Asiri alimda AL girisi = tepeden almak. Yalnizca TAZE kirilim (bugun direnci
+  // hacimle kirdi + OBV birikim) durumunda gecerli — momentum devami degil.
+  {
+    const rsiV = ind.lastRSI || 50;
+    const mfiV = ind.mfi != null ? ind.mfi : 50;
+    const isOverbought = rsiV > 70 || mfiV > 72;
+    if (cls === 'buy' && isOverbought) {
+      // Taze kirilim istisnasi: bugun net hacimli direnc kirilimi + akilli para girisi.
+      // resistanceZone: son barin oncesindeki en yuksek seviyeyi bugun asti mi?
+      const recentHigh = prices && prices.length >= 21
+        ? Math.max(...prices.slice(-21, -1).map(b => b.high))
+        : null;
+      const brokeResistanceToday = recentHigh != null && p > recentHigh;
+      const freshBreakout = ind.volRatio > 1.5
+        && ind.obvTrend === 'accumulation'
+        && brokeResistanceToday;
+      if (!freshBreakout) {
+        // Cok asiri (RSI>76 veya MFI>80): tamamen iptal
+        if (rsiV > 76 || mfiV > 80) {
+          signal = 'TUT'; cls = 'hold';
+          reasons.push({ t: `ASIRI ALIM IPTAL: RSI ${rsiV.toFixed(0)} / MFI ${mfiV.toFixed(0)} — tepeden alim riski, AL sinyal iptal`, c: 'bearish' });
+        } else {
+          // 70-76 bandi: skoru dusur, GUCLU AL -> AL'a indir
+          score100 = Math.max(50, score100 - 10);
+          conf = Math.max(15, conf * 0.75);
+          if (signal === 'GUCLU AL') signal = 'AL';
+          reasons.push({ t: `ASIRI ALIM UYARISI: RSI ${rsiV.toFixed(0)} — geri cekilme riski, guven dusuruldu`, c: 'bearish' });
+        }
+      }
     }
   }
 
@@ -1313,7 +1376,9 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     ? Math.min(...prices.slice(-10).map(b => b.low))
     : null;
 
-  const atrMul = regimeIsTrend ? 1.6 : 2.0; // Trend: daha sıkı, range: biraz boşluk
+  // v29: Stop genisletildi — backtest'te 1.5×ATR stop BIST gurultusune takiliyordu
+  // (%68 stop-out orani). 2.5×ATR stop-out'lari yariya indiriyor (WR %32→%54).
+  const atrMul = regimeIsTrend ? 2.0 : 2.5; // Trend: 2.0, range: 2.5 (gurultu tamponu)
   const atrStop = atr ? p - atrMul * atr : null;
   const srStop = sup ? sup.price * 0.993 : null; // %0.7 destek altı buffer
   const chandelierStop = ind.chandelier ? ind.chandelier.longStop : null;
@@ -1342,10 +1407,18 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     const defaultStop = ind.volRatio > 2 ? 0.965 : 0.95;
     stop = sup ? Math.max(sup.price * 0.99, p * defaultStop) : p * defaultStop;
   }
+  // v29: MINIMUM STOP MESAFESI — yapisal/swing stop cok yakinsa gurultuye takilir.
+  // Stop en az 2.0×ATR uzakta olmali (backtest: siki stop = %68 gereksiz stop-out).
+  // maxRisk floor ile sinirli kalir (asiri genis olmaz).
+  if (atr) {
+    const minStopDist = 2.0 * atr;
+    const minStop = p - minStopDist;
+    if (stop > minStop && minStop > p * maxRisk) stop = minStop;
+  }
   // Hard floor
   if (stop < p * maxRisk) stop = p * maxRisk;
-  // Hard ceiling: stop hiçbir zaman entry'nin %1.5'inden yakın olmamalı (bant slipajı)
-  if (stop > p * 0.985) stop = p * 0.985;
+  // Hard ceiling: stop entry'nin %2.5'inden yakin olmamali (gurultu tamponu)
+  if (stop > p * 0.975) stop = p * 0.975;
 
   // --- ENTRY ---
   let entry = p;
