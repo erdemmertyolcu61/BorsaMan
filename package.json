@@ -8,6 +8,7 @@
   "description": "BIST AI Trading Terminal - Borsa Istanbul Analiz ve Sinyal Platformu",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node -e \"const fs=require('fs'),p='src/data/mlRules.json';if(!fs.existsSync(p)){fs.mkdirSync('src/data',{recursive:true});fs.writeFileSync(p,JSON.stringify({rules:[],_meta:{note:'empty fallback'}}));}\"",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",

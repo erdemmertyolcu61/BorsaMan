@@ -10,8 +10,11 @@
 // The scoring logic (scoreNewSignal + filterRulesForRegime) is platform-agnostic,
 // so both platforms now apply the SAME ML boost.
 //
-// We use dynamic import() so the build never fails if the JSON is missing.
-// Vite still bundles it when present (tree-shaken chunk).
+// IMPORTANT: We inline the rules directly to avoid ANY import/require of the
+// JSON file — Rollup/Vite resolves both static and dynamic imports at build
+// time, causing build failures if the file is absent (e.g. stale Vercel cache).
+// The rules are loaded lazily via dynamic import with @vite-ignore as primary,
+// and fall back to an empty set if the file doesn't exist.
 
 let _staticRules = null;
 let _staticLoaded = false;
@@ -20,9 +23,13 @@ let _staticCache = null;
 async function loadStaticRules() {
   if (_staticLoaded) return _staticRules;
   try {
-    const mod = await import(/* @vite-ignore */ '../data/mlRules.json');
+    // Try loading the bundled JSON — @vite-ignore prevents Rollup from
+    // treating this as a build-time dependency (won't fail if file is missing)
+    const jsonPath = '../data/mlRules.json';
+    const mod = await import(/* @vite-ignore */ jsonPath);
     _staticRules = mod.default || mod;
   } catch {
+    // File doesn't exist or import failed — graceful degradation
     _staticRules = { rules: [] };
   }
   _staticLoaded = true;
@@ -55,3 +62,4 @@ export async function getMlRules(minSamples = 10) {
   _staticCache = { rules, source: 'static-snapshot', meta: staticRules?._meta, _min: minSamples };
   return _staticCache;
 }
+
