@@ -171,8 +171,15 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
             let rules = await mlDb.getTopRules(50, 10);
             if (!rules?.length) rules = await mlDb.getTopRules(50, 3);
             if (rules?.length) {
-              const { scoreNewSignal } = await import('../../utils/ML_BacktestEngine.js');
-              const mlResult = scoreNewSignal(sig, rules);
+              const { scoreNewSignal, filterRulesForRegime } = await import('../../utils/ML_BacktestEngine.js');
+              // v29 rejim-kapisi: asiri-alim momentum kurallari sadece teyitli yukseliste
+              // (advisor taramasi ile AYNI mantik — tutarlilik icin ortak helper).
+              const { rules: rulesForRegime } = filterRulesForRegime(rules, {
+                adx: ind.adx,
+                supertrendTrend: ind.supertrend?.trend,
+                weeklyTrend: ind.weeklyTrend,
+              });
+              const mlResult = scoreNewSignal(sig, rulesForRegime);
               mlConfidenceBoost = Math.max(0, mlResult?.boost || 0);
               mlMatchedCount   = mlResult?.matched?.length || 0;
               mlBestRule       = mlResult?.bestRule?.setup_name || null;

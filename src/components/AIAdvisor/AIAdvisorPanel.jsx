@@ -1228,8 +1228,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       `Ort. ROI: %${(p.mlBestRule.avgRoi || 0).toFixed(2)}`,
                       `Güven Boost: +${(p.mlConfidenceBoost || 0).toFixed(1)}`,
                       p.mlMatchedCount > 1 ? `${p.mlMatchedCount} kural eşleşti (konfluens)` : '',
+                      p.mlRegimeGated ? '⚙ Rejim-kapısı aktif: aşırı-alım momentum kuralları bu rejimde (yatay/düşüş) devre dışı — sadece trend-nötr kurallar sayıldı' : '',
                     ].filter(Boolean).join('\n')}>
-                      🎯 %{(p.mlBestRule.winRate || 0).toFixed(0)}
+                      🎯 %{(p.mlBestRule.winRate || 0).toFixed(0)}{p.mlRegimeGated ? ' ⚙' : ''}
                     </span>
                   )}
                   {/* LIVE CALIBRATION rozeti — paper trade outcome'lari kuralin

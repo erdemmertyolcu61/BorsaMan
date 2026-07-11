@@ -669,6 +669,40 @@ function _isContradictory(a, b) {
 // ════════════════════════════════════════════════════════════════════
 
 /**
+ * v29 REGIME GATE — is this an overbought-momentum rule?
+ * These rules (RSI_OVERBOUGHT / MFI_HIGH patterns) show 71-90% win rate in the
+ * 3-year training data (bull-inclusive), but the recent-6mo backtest found the
+ * same pattern loses in choppy regimes (~20% WR). We only trust them in a
+ * confirmed uptrend.
+ * @param {object} rule - discovered rule with setup_name / conditions
+ * @returns {boolean}
+ */
+export function isOverboughtMomentumRule(rule) {
+  const name = (rule.setup_name || rule.setupName || rule.conditions || '').toString().toUpperCase();
+  return /RSI_OVERBOUGHT|MFI_HIGH/.test(name);
+}
+
+/**
+ * v29 REGIME GATE — filter the rule set for a signal's regime.
+ * In a confirmed uptrend (ADX>25 + supertrend UP + weekly bull) ALL rules apply.
+ * Otherwise overbought-momentum rules are removed so v29's overbought guards are
+ * not undone by the ML boost. Missing regime data → conservative (not uptrend).
+ * @param {Array<object>} rules
+ * @param {{adx?: number, supertrendTrend?: string, weeklyTrend?: string}} ctx
+ * @returns {{rules: Array, gated: boolean, suppressed: number}}
+ */
+export function filterRulesForRegime(rules, ctx) {
+  if (!rules?.length) return { rules: rules || [], gated: false, suppressed: 0 };
+  const confirmedUptrend =
+    (ctx?.adx || 0) > 25 &&
+    ctx?.supertrendTrend === 'UP' &&
+    ctx?.weeklyTrend === 'bull';
+  if (confirmedUptrend) return { rules, gated: false, suppressed: 0 };
+  const filtered = rules.filter(r => !isOverboughtMomentumRule(r));
+  return { rules: filtered, gated: filtered.length < rules.length, suppressed: rules.length - filtered.length };
+}
+
+/**
  * Score a new signal against discovered rules.
  * Returns the matching rules and a composite confidence boost.
  *

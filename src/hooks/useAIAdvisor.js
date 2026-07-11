@@ -1052,6 +1052,7 @@ export function useAIAdvisor(portfolio) {
                 conf: Number(sig.conf) || 0,
                 rsi: ind.lastRSI,
                 adx: ind.adx,
+                weeklyTrend: htfCtx.weeklyTrend,  // v29: ML rejim-kapisi icin
                 mfi: ind.mfi,
                 cmf: ind.cmf,
                 volRatio: ind.volRatio,
@@ -2311,9 +2312,24 @@ export function useAIAdvisor(portfolio) {
           }
           console.log(`[AI Advisor] ML rules loaded: ${mlRules?.length || 0} rules`);
           if (mlRules?.length) {
+            // ── v29 ML REJIM-KAPISI (regime-aware boost) ──────────────────────
+            // ML kurallari 3 yillik veriyle (bogadonemi dahil) egitildi; en yuksek
+            // beklentili kurallar ASIRI ALIM momentum setuplari (RSI_OVERBOUGHT,
+            // MFI_HIGH — %71-90 WR). Ama v29 backtest'i son 6 ay choppy'de bu
+            // pattern'in %20 WR verdigini gosterdi. Cozum: asiri-alim momentum
+            // kurallarini SADECE teyitli yukselis trendinde uygula
+            // (ADX>25 + supertrend UP + haftalik bull). Ortak helper: filterRulesForRegime.
+            const { filterRulesForRegime } = await import('../utils/ML_BacktestEngine.js');
             let mlMatched = 0;
+            let mlGatedCount = 0;
             picks = picks.map(p => {
-              const result = scoreNewSignal(p, mlRules);
+              const { rules: rulesForPick, gated } = filterRulesForRegime(mlRules, {
+                adx: p.adx,
+                supertrendTrend: p.supertrend?.trend,
+                weeklyTrend: p.weeklyTrend,
+              });
+              const result = scoreNewSignal(p, rulesForPick);
+              if (gated) mlGatedCount++;
               if (result.ruleCount > 0) {
                 mlMatched++;
                 const best = result.matchedRules[0];
@@ -2343,12 +2359,14 @@ export function useAIAdvisor(portfolio) {
                   // can feed outcomes back into rule weights when they close.
                   mlBestRuleHash: best?.ruleHash || null,
                   mlMatchedCount: result.ruleCount,
+                  // v29: asiri-alim momentum kurallari bu pick icin devre disi mi?
+                  mlRegimeGated: gated,
                 };
               }
               // No ML match → standard signal, no badge
-              return { ...p, mlConfidenceBoost: 0, mlBestRule: null, mlBestRuleHash: null, mlMatchedCount: 0 };
+              return { ...p, mlConfidenceBoost: 0, mlBestRule: null, mlBestRuleHash: null, mlMatchedCount: 0, mlRegimeGated: gated };
             });
-            console.log(`[AI Advisor] ML scoring: ${mlMatched}/${picks.length} picks matched rules`);
+            console.log(`[AI Advisor] ML scoring: ${mlMatched}/${picks.length} picks matched rules; rejim-kapisi ${mlGatedCount} pick'te asiri-alim momentum kurallarini devre disi birakti`);
           }
         } else {
           console.log('[AI Advisor] ML scoring skipped: electronAPI.mlDb not available');
@@ -2771,7 +2789,7 @@ export function useAIAdvisor(portfolio) {
               hasRecentInsiderBuy: p.hasRecentInsiderBuy, hasRecentInsiderSell: p.hasRecentInsiderSell,
               mlConfidenceBoost: p.mlConfidenceBoost, mlBestRule: p.mlBestRule,
               mlBestRuleHash: p.mlBestRuleHash,
-              mlMatchedCount: p.mlMatchedCount,
+              mlMatchedCount: p.mlMatchedCount, mlRegimeGated: p.mlRegimeGated,
               foreignRatio: p.foreignRatio, foreignChangeDay: p.foreignChangeDay,
               foreignChangeWeek: p.foreignChangeWeek, foreignChangeMonth: p.foreignChangeMonth,
               foreignFlowScore: p.foreignFlowScore, foreignFlowLabel: p.foreignFlowLabel,
