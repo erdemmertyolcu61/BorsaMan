@@ -291,6 +291,7 @@ function _initBetterSqlite(dbPath) {
         }
       } catch {}
 
+      let _importedRules = 0;
       for (const trainDbPath of candidates) {
         if (fs.existsSync(trainDbPath)) {
           console.log(`[MLDb] Found training DB at ${trainDbPath} — importing rules...`);
@@ -323,7 +324,10 @@ function _initBetterSqlite(dbPath) {
                 }
               });
               tx();
+              _importedRules = rules.length;
               console.log(`[MLDb] Imported ${rules.length} rules from training DB`);
+            } else {
+              console.log(`[MLDb] Training DB at ${trainDbPath} has 0 active rules — trying next candidate`);
             }
             // Also import feature importance if available
             try {
@@ -347,7 +351,10 @@ function _initBetterSqlite(dbPath) {
           } catch (importErr) {
             console.warn(`[MLDb] Training DB import failed:`, importErr?.message);
           }
-          break; // stop after first successful import
+          // Only stop once we actually imported rules — an existing-but-empty
+          // training DB (e.g. bist_ml_training.db with 0 rules) must NOT block
+          // the next candidate (bist_ml_training_3yr.db with the real rules).
+          if (_importedRules > 0) break;
         }
       }
     }
