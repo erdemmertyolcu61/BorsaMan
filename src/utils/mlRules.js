@@ -20,7 +20,7 @@ let _staticCache = null;
 async function loadStaticRules() {
   if (_staticLoaded) return _staticRules;
   try {
-    const mod = await import('../data/mlRules.json');
+    const mod = await import(/* @vite-ignore */ '../data/mlRules.json');
     _staticRules = mod.default || mod;
   } catch {
     _staticRules = { rules: [] };
