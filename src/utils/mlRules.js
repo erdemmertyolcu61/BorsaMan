@@ -9,9 +9,25 @@
 // (feedback loop + weekly retraining); web/mobile fall back to the snapshot.
 // The scoring logic (scoreNewSignal + filterRulesForRegime) is platform-agnostic,
 // so both platforms now apply the SAME ML boost.
-import staticRules from '../data/mlRules.json';
+//
+// We use dynamic import() so the build never fails if the JSON is missing.
+// Vite still bundles it when present (tree-shaken chunk).
 
+let _staticRules = null;
+let _staticLoaded = false;
 let _staticCache = null;
+
+async function loadStaticRules() {
+  if (_staticLoaded) return _staticRules;
+  try {
+    const mod = await import('../data/mlRules.json');
+    _staticRules = mod.default || mod;
+  } catch {
+    _staticRules = { rules: [] };
+  }
+  _staticLoaded = true;
+  return _staticRules;
+}
 
 /**
  * Returns the ML rule set for scoring, transparently choosing the best source.
@@ -34,6 +50,7 @@ export async function getMlRules(minSamples = 10) {
 
   // 2. Web/mobile (or Electron with an empty DB) — bundled static snapshot
   if (_staticCache && _staticCache._min === minSamples) return _staticCache;
+  const staticRules = await loadStaticRules();
   const rules = (staticRules?.rules || []).filter(r => (r.total_count || 0) >= minSamples);
   _staticCache = { rules, source: 'static-snapshot', meta: staticRules?._meta, _min: minSamples };
   return _staticCache;
