@@ -3,6 +3,7 @@ import SectorHeatmap from '../Heatmap/SectorHeatmap.jsx';
 import { isMarketOpen, isMarketClosedForDay } from '../../hooks/useAIAdvisor.js';
 import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
 import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices, fetchBigParaQuote } from '../../utils/fetchEngine.js';
+import { getForeignFlowStatus } from '../../utils/foreignFlowEngine.js';
 
 function DataFreshnessBadge() {
   const [freshness, setFreshness] = useState(null);
@@ -828,6 +829,19 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
         }}>
           <span>⚡</span>
           <span>Bugün kaliteli AL setup'ı yok ama yarın %4-5 artma potansiyeli olan hisseler var. Sistem onları gösteriyor — risk daha yüksek, dikkatli işlem yap.</span>
+        </div>
+      )}
+
+      {/* v29: Yabanci akis veri kaynagi dormant — kullaniciyi bilgilendir (sessiz degil) */}
+      {hasPicks && getForeignFlowStatus().reason === 'no_source' && (
+        <div style={{
+          padding: '4px 12px', fontSize: 10, color: 'var(--t3)',
+          background: 'rgba(148,163,184,0.06)',
+          borderTop: '1px solid rgba(148,163,184,0.12)',
+          display: 'flex', alignItems: 'center', gap: 6,
+        }} title="BigPara ve İş Yatırım yabancı takas oranı verisini artık ücretsiz sunmuyor (kaynak kaldırıldı). Sistem periyodik olarak yeniden deniyor; kaynak dönerse otomatik aktifleşir.">
+          <span style={{ opacity: 0.7 }}>🌍</span>
+          <span>Yabancı akış verisi şu an kaynak yok (dormant) — skorlamaya dahil edilmiyor, kaynak dönerse otomatik aktifleşir.</span>
         </div>
       )}
 

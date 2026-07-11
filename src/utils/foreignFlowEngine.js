@@ -5,7 +5,53 @@ import { logError } from './errorLogger.js';
 const CACHE_KEY = 'bist_foreign_flow_cache';
 const CACHE_TTL = 1000 * 60 * 60 * 4; // 4 hours
 
+// ── CIRCUIT BREAKER (v29) ──────────────────────────────────────────────────
+// Turkish free foreign-investor-ratio sources are all dead: BigPara removed its
+// public section, IsYatirim removed the endpoint (404/401). Rather than hammer
+// three dead endpoints on every scan, back off aggressively after total failures
+// but keep retrying occasionally so the feature self-heals if a source returns.
+const BREAKER_KEY = 'bist_foreign_flow_breaker';
+const BACKOFF_BASE_MS = 1000 * 60 * 60 * 6;   // 6h after first total failure
+const BACKOFF_MAX_MS  = 1000 * 60 * 60 * 24;  // cap at 24h
+
 let _foreignCache = null;
+
+function getBreaker() {
+  try {
+    const raw = localStorage.getItem(BREAKER_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { failures: 0, until: 0 };
+}
+
+function recordFailure() {
+  const b = getBreaker();
+  b.failures = (b.failures || 0) + 1;
+  // Exponential backoff, capped: 6h, 12h, 24h, 24h…
+  const backoff = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * Math.pow(2, b.failures - 1));
+  b.until = Date.now() + backoff;
+  try { localStorage.setItem(BREAKER_KEY, JSON.stringify(b)); } catch {}
+}
+
+function recordSuccess() {
+  try { localStorage.removeItem(BREAKER_KEY); } catch {}
+}
+
+/**
+ * Feature availability for the UI. Returns { available, reason, retryAt }.
+ * `available` is false while the breaker is open (all sources recently dead).
+ */
+export function getForeignFlowStatus() {
+  const cached = getCache();
+  if (cached?.ratios && Object.keys(cached.ratios).length > 0) {
+    return { available: true, reason: 'ok' };
+  }
+  const b = getBreaker();
+  if (b.until && Date.now() < b.until) {
+    return { available: false, reason: 'no_source', retryAt: b.until };
+  }
+  return { available: false, reason: 'unknown' };
+}
 
 function getCache() {
   if (_foreignCache) return _foreignCache;
@@ -137,6 +183,10 @@ export async function fetchAllForeignRatios() {
   const cached = getCache();
   if (cached && cached.ratios && Object.keys(cached.ratios).length > 0) return cached.ratios;
 
+  // Circuit breaker: all sources recently dead → skip network until backoff expires.
+  const breaker = getBreaker();
+  if (breaker.until && Date.now() < breaker.until) return {};
+
   let ratios = {};
   const sources = [
     ['BigParaAPI', fetchBigParaForeignRatios],
@@ -160,6 +210,9 @@ export async function fetchAllForeignRatios() {
     const data = getCache() || {};
     data.ratios = ratios;
     setCache(data);
+    recordSuccess(); // sources alive again → reset breaker
+  } else {
+    recordFailure(); // total failure → open breaker, back off
   }
   return ratios;
 }
