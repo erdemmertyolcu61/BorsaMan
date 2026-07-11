@@ -166,25 +166,25 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
       // Fresh ML scoring fallback (only if advisor cache didn't provide enrichment)
       if (!inheritedFromAdvisor) {
         try {
-          const mlDb = window.electronAPI?.mlDb;
-          if (mlDb) {
-            let rules = await mlDb.getTopRules(50, 10);
-            if (!rules?.length) rules = await mlDb.getTopRules(50, 3);
-            if (rules?.length) {
-              const { scoreNewSignal, filterRulesForRegime } = await import('../../utils/ML_BacktestEngine.js');
-              // v29 rejim-kapisi: asiri-alim momentum kurallari sadece teyitli yukseliste
-              // (advisor taramasi ile AYNI mantik — tutarlilik icin ortak helper).
-              const { rules: rulesForRegime } = filterRulesForRegime(rules, {
-                adx: ind.adx,
-                supertrendTrend: ind.supertrend?.trend,
-                weeklyTrend: ind.weeklyTrend,
-              });
-              const mlResult = scoreNewSignal(sig, rulesForRegime);
-              mlConfidenceBoost = Math.max(0, mlResult?.boost || 0);
-              mlMatchedCount   = mlResult?.matched?.length || 0;
-              mlBestRule       = mlResult?.bestRule?.setup_name || null;
-              if (mlMatchedCount > 0 && mlConfidenceBoost < 1) mlConfidenceBoost = 1;
-            }
+          // v29 PLATFORM PARITY: getMlRules → Electron live DB or bundled static
+          // snapshot, so web/mobile single-analysis matches desktop.
+          const { getMlRules } = await import('../../utils/mlRules.js');
+          const { rules } = await getMlRules(10);
+          if (rules?.length) {
+            const { scoreNewSignal, filterRulesForRegime } = await import('../../utils/ML_BacktestEngine.js');
+            // v29 rejim-kapisi: asiri-alim momentum kurallari sadece teyitli yukseliste
+            // (advisor taramasi ile AYNI mantik — tutarlilik icin ortak helper).
+            const { rules: rulesForRegime } = filterRulesForRegime(rules, {
+              adx: ind.adx,
+              supertrendTrend: ind.supertrend?.trend,
+              weeklyTrend: ind.weeklyTrend,
+            });
+            // scoreNewSignal returns { matchedRules, confidenceBoost, ruleCount }
+            const mlResult = scoreNewSignal(sig, rulesForRegime);
+            mlConfidenceBoost = Math.max(0, mlResult?.confidenceBoost || 0);
+            mlMatchedCount   = mlResult?.ruleCount || 0;
+            mlBestRule       = mlResult?.matchedRules?.[0]?.setupName || null;
+            if (mlMatchedCount > 0 && mlConfidenceBoost < 1) mlConfidenceBoost = 1;
           }
         } catch (mlErr) {
           console.debug('[Analyze] ML scoring skipped:', mlErr?.message);

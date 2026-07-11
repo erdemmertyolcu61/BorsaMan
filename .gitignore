@@ -8,7 +8,7 @@ graphify-out/
 .codex/
 .kombai/
 _recovery/
-data/
+/data/
 *.exe
 *.msi
 *.db

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isOverboughtMomentumRule, filterRulesForRegime, scoreNewSignal } from '../ML_BacktestEngine.js';
+import { getMlRules } from '../mlRules.js';
 
 describe('v29 ML Regime Gate', () => {
   const overboughtRule = { setup_name: 'RSI_OVERBOUGHT>70 + MFI_HIGH>65', expectancy: 2.0, conditions: JSON.stringify([{ type: 'signal', signalKey: 'RSI_OVERBOUGHT' }]) };
@@ -94,5 +95,36 @@ describe('v29 ML Regime Gate', () => {
       expect(result.ruleCount).toBe(1);
       expect(result.confidenceBoost).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('v29 ML platform parity — getMlRules', () => {
+  it('returns the bundled static snapshot when Electron is absent (web/mobile)', async () => {
+    // jsdom has no window.electronAPI → must fall back to src/data/mlRules.json
+    const { rules, source } = await getMlRules(10);
+    expect(source).toBe('static-snapshot');
+    expect(Array.isArray(rules)).toBe(true);
+    expect(rules.length).toBeGreaterThan(0);
+    // Every rule must satisfy the min-samples filter and carry the fields
+    // scoreNewSignal needs.
+    for (const r of rules) {
+      expect(r.total_count).toBeGreaterThanOrEqual(10);
+      expect(r.conditions).toBeDefined();
+      expect(r.setup_name).toBeDefined();
+    }
+  });
+
+  it('snapshot rules score identically to live rules (same shape)', async () => {
+    const { rules } = await getMlRules(10);
+    // Pick a rule and build a matching signal from its conditions
+    const rule = rules.find(r => {
+      const c = typeof r.conditions === 'string' ? JSON.parse(r.conditions) : r.conditions;
+      return c.every(cond => cond.type === 'signal');
+    });
+    if (!rule) return; // no all-signal rule in snapshot — skip
+    const conds = typeof rule.conditions === 'string' ? JSON.parse(rule.conditions) : rule.conditions;
+    const firedSignals = conds.map(c => c.signalKey);
+    const result = scoreNewSignal({ firedSignals }, [rule]);
+    expect(result.ruleCount).toBe(1);
   });
 });

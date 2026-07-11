@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "ml:export": "python scripts/export_ml_rules.py",
     "lint": "eslint src --ext .js,.jsx --max-warnings 0 || true",
     "postinstall": "electron-builder install-app-deps",
     "electron:dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",

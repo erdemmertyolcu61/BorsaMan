@@ -2303,14 +2303,13 @@ export function useAIAdvisor(portfolio) {
       //   mlMatchedCount    — how many rules fired (confluence)
       // ══════════════════════════════════════════════════════════════════════
       try {
-        const mlDb = window.electronAPI?.mlDb;
-        if (mlDb) {
-          // Try lower minOccurrences first — fresh DBs may not have 10+ per rule yet
-          let mlRules = await mlDb.getTopRules(50, 10);
-          if (!mlRules?.length) {
-            mlRules = await mlDb.getTopRules(50, 3); // relaxed: 3+ occurrences
-          }
-          console.log(`[AI Advisor] ML rules loaded: ${mlRules?.length || 0} rules`);
+        // v29 PLATFORM PARITY: getMlRules returns the Electron live DB rules when
+        // available, else a bundled static snapshot (src/data/mlRules.json) so
+        // web/mobile apply the SAME ML boost as desktop — identical picks everywhere.
+        const { getMlRules } = await import('../utils/mlRules.js');
+        const { rules: mlRules, source: mlSource } = await getMlRules(10);
+        {
+          console.log(`[AI Advisor] ML rules loaded: ${mlRules?.length || 0} rules (source: ${mlSource})`);
           if (mlRules?.length) {
             // ── v29 ML REJIM-KAPISI (regime-aware boost) ──────────────────────
             // ML kurallari 3 yillik veriyle (bogadonemi dahil) egitildi; en yuksek
@@ -2367,9 +2366,9 @@ export function useAIAdvisor(portfolio) {
               return { ...p, mlConfidenceBoost: 0, mlBestRule: null, mlBestRuleHash: null, mlMatchedCount: 0, mlRegimeGated: gated };
             });
             console.log(`[AI Advisor] ML scoring: ${mlMatched}/${picks.length} picks matched rules; rejim-kapisi ${mlGatedCount} pick'te asiri-alim momentum kurallarini devre disi birakti`);
+          } else {
+            console.log('[AI Advisor] ML scoring skipped: no rules available (empty snapshot + no Electron DB)');
           }
-        } else {
-          console.log('[AI Advisor] ML scoring skipped: electronAPI.mlDb not available');
         }
       } catch (mlErr) {
         // ML scoring is best-effort — never block the scan pipeline
