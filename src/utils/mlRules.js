@@ -5,36 +5,21 @@
 // picks than desktop (violates the "same picks on mobile and PC" requirement).
 //
 // Fix: bundle a static snapshot of the top rules (src/data/mlRules.json,
-// regenerated via scripts/export_ml_rules.py). Electron keeps using the LIVE DB
-// (feedback loop + weekly retraining); web/mobile fall back to the snapshot.
+// regenerated via `npm run ml:export`). Electron keeps using the LIVE DB
+// (feedback loop + weekly retraining); web/mobile use the bundled snapshot.
 // The scoring logic (scoreNewSignal + filterRulesForRegime) is platform-agnostic,
-// so both platforms now apply the SAME ML boost.
+// so both platforms apply the SAME ML boost.
 //
-// IMPORTANT: We inline the rules directly to avoid ANY import/require of the
-// JSON file — Rollup/Vite resolves both static and dynamic imports at build
-// time, causing build failures if the file is absent (e.g. stale Vercel cache).
-// The rules are loaded lazily via dynamic import with @vite-ignore as primary,
-// and fall back to an empty set if the file doesn't exist.
+// The JSON is imported STATICALLY so Rollup/Vite bundles it into the JS chunk —
+// this is what makes it available at runtime on web/mobile. A @vite-ignore
+// dynamic import does NOT bundle the file and fails at runtime in the production
+// build (dist/data/ doesn't exist), silently zeroing ML everywhere.
+// Build safety: the file is committed to git AND the `prebuild` npm script writes
+// an empty { rules: [] } fallback if it's ever missing, so the static import
+// never breaks the build.
+import staticRulesData from '../data/mlRules.json';
 
-let _staticRules = null;
-let _staticLoaded = false;
 let _staticCache = null;
-
-async function loadStaticRules() {
-  if (_staticLoaded) return _staticRules;
-  try {
-    // Try loading the bundled JSON — @vite-ignore prevents Rollup from
-    // treating this as a build-time dependency (won't fail if file is missing)
-    const jsonPath = '../data/mlRules.json';
-    const mod = await import(/* @vite-ignore */ jsonPath);
-    _staticRules = mod.default || mod;
-  } catch {
-    // File doesn't exist or import failed — graceful degradation
-    _staticRules = { rules: [] };
-  }
-  _staticLoaded = true;
-  return _staticRules;
-}
 
 /**
  * Returns the ML rule set for scoring, transparently choosing the best source.
@@ -57,9 +42,7 @@ export async function getMlRules(minSamples = 10) {
 
   // 2. Web/mobile (or Electron with an empty DB) — bundled static snapshot
   if (_staticCache && _staticCache._min === minSamples) return _staticCache;
-  const staticRules = await loadStaticRules();
-  const rules = (staticRules?.rules || []).filter(r => (r.total_count || 0) >= minSamples);
-  _staticCache = { rules, source: 'static-snapshot', meta: staticRules?._meta, _min: minSamples };
+  const rules = (staticRulesData?.rules || []).filter(r => (r.total_count || 0) >= minSamples);
+  _staticCache = { rules, source: 'static-snapshot', meta: staticRulesData?._meta, _min: minSamples };
   return _staticCache;
 }
-
