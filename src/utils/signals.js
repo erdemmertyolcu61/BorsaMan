@@ -1301,9 +1301,12 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   if (score100 >= 75 && hasVolConfirm && hasSmartMoneyBuy && notDistribution && bullishTypes.size >= 5) { signal = 'GUCLU AL'; cls = 'buy'; }
   // AL: score100 >= 65 AND volume AND 4+ types AND akilli para teyidi (v29)
   else if (score100 >= 65 && hasVolConfirm && minBullTypes && hasSmartMoneyBuy && notDistribution) { signal = 'AL'; cls = 'buy'; }
-  // v24 ZAYIF AL: score100 >= 57 AND soft volume AND 3+ types AND 2+ smart money teyidi
-  // Tek CMF>0.05 artik yetmiyor — en az 2 bagimsiz akilli para sinyali gerekli
-  else if (score100 >= 57 && hasVolSoft && softBullTypes && hasStrongSmartMoney) { signal = 'AL'; cls = 'buy'; }
+  // v29.1 ZAYIF AL: score100 >= 57 AND soft volume AND 3+ types AND 1+ smart money teyidi
+  // Kullanici talebi: dususmarket'te 1 AL cok az. ZAYIF AL kademesi gevsetildi —
+  // 2 akilli para yerine 1 yeterli (OBV birikim VEYA CMF>0.05 VEYA MFI<35).
+  // GUCLU AL/AL kademelerinin kalitesi AYNEN korunur; sadece 'izleme' AL'lari artar.
+  // Not: tehlikeli dagilim durumu asagidaki DISTRIBUTION TRAP hard cap ile zaten yakalanir.
+  else if (score100 >= 57 && hasVolSoft && softBullTypes && hasSmartMoneyBuy) { signal = 'AL'; cls = 'buy'; }
   // GUCLU SAT: score100 <= 25 AND volume AND smart money selling AND 5+ types
   else if (score100 <= 25 && hasVolConfirm && hasSmartMoneySell && bearishTypes.size >= 5) { signal = 'GUCLU SAT'; cls = 'sell'; }
   // SAT: score100 <= 35 AND 4+ indicator types
