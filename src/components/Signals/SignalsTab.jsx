@@ -37,7 +37,10 @@ function OutcomeBadge({ outcome }) {
 }
 
 export default function SignalsTab({ tracker, onAnalyze }) {
-  const [tab, setTab] = useState('overview');
+  // v29: default 'signals' (liste) — kullanicilar Sinyal Takibi'ni acinca taranan
+  // hisseleri HEMEN gorsun. Onceki 'overview' sadece istatistik gosteriyordu, liste
+  // gizli kaliyordu → "cekilen hisseler eklenmiyor" izlenimi.
+  const [tab, setTab] = useState('signals');
   const [filterSymbol, setFilterSymbol] = useState('');
   const [filterSrc, setFilterSrc] = useState('all');
   const [sortField, setSortField] = useState('timestamp');
