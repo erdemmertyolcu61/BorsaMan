@@ -192,17 +192,21 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
         </div>
       )}
 
-      {/* Top Pick Quick View */}
+      {/* Top Pick Quick View — v29: panel ile AYNI deriveDisplayPicks siralamasi.
+          Onceki: topPicks score'a gore yeniden siralaniyor + hepsi yesil (TUT'lar
+          bile AL gibi gorunuyordu) → alt panelle celiskili. Artik ayni kaynak. */}
       {topPicks.length > 0 && !scanning && (
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
           <span style={{ color: 'var(--t3)', fontSize: 11 }}>En İyi:</span>
-          {[...topPicks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 4).map(p => {
+          {deriveDisplayPicks(topPicks, scanResults).slice(0, 4).map(p => {
             const isSell = p.cls === 'sell';
+            const isHold = p.cls === 'hold' || p.cls === 'neutral';
+            // Renk sinyale gore: AL=yesil, SAT=kirmizi, TUT=notr gri (yaniltmasin)
+            const c = isSell ? 'var(--red)' : isHold ? 'var(--t2)' : 'var(--green)';
+            const bg = isSell ? 'var(--red2)' : isHold ? 'rgba(148,163,184,0.12)' : 'var(--green2)';
             return (
               <button key={p.symbol} onClick={() => onAnalyze && onAnalyze(p.symbol)} style={{
-                background: isSell ? 'var(--red2)' : 'var(--green2)',
-                color: isSell ? 'var(--red)' : 'var(--green)',
-                border: `1px solid ${isSell ? 'var(--red)' : 'var(--green)'}`,
+                background: bg, color: c, border: `1px solid ${c}`,
                 borderRadius: 4, padding: '4px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600
               }}>
                 {isSell ? '↓' : ''}{p.symbol} ({(p.score || 0).toFixed(1)})
@@ -241,6 +245,115 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
 
     </div>
   );
+}
+
+// ── SHARED DISPLAY-PICKS DERIVATION (v29) ─────────────────────────────────
+// SINGLE SOURCE OF TRUTH for what the top "En İyi" header strip AND the bottom
+// "AI FIRSATLAR" panel show — previously they diverged (header sorted topPicks
+// by raw score, panel applied an isUnsafe filter + emergency fillers), so the
+// header could show THYAO #1 while the panel showed a filler VANGD #1. Both now
+// call this pure function so they display the SAME picks in the SAME order.
+function deriveDisplayPicks(topPicks = [], scanResults = []) {
+  const isUnsafe = (r) => {
+    const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);
+    if (tp >= 12) return true;
+    if ((r.rsi || 50) > 88) return true;
+    if ((r.mfi || 50) > 88) return true;
+    if ((r.cumulativePump || 0) >= 22) return true;
+    if (tp >= 7) {
+      const prob = r.continuationProbability;
+      if (prob == null || prob < 38) return true;
+      return false;
+    }
+    if ((r.cumulativePump || 0) >= 18) {
+      const hasCatalyst = r.newsCategories?.some(c =>
+        ['insider_buy', 'buyback', 'fund_inflow', 'contract'].includes(c));
+      if (!hasCatalyst) return true;
+    }
+    return false;
+  };
+
+  const sortByConf = (a, b) => (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
+
+  if (topPicks.length > 0) {
+    const safe = [...topPicks]
+      .filter(p => p._emergencyPick || !isUnsafe(p))
+      .sort((a, b) => {
+        const aPump = Math.max(a.todayPumpReal || 0, a.recentPump || 0);
+        const bPump = Math.max(b.todayPumpReal || 0, b.recentPump || 0);
+        if (aPump >= 7 && bPump < 7) return 1;
+        if (bPump >= 7 && aPump < 7) return -1;
+        if (aPump >= 7 && bPump >= 7) return (b.continuationProbability || 0) - (a.continuationProbability || 0);
+        return sortByConf(a, b);
+      });
+
+    if (safe.length < 8 && Array.isArray(scanResults) && scanResults.length > 0) {
+      const have = new Set(safe.map(p => p.symbol));
+      const need = 8 - safe.length;
+      const buildFiller = (rows) => rows
+        .filter(r => !have.has(r.symbol))
+        .sort(sortByConf)
+        .slice(0, need)
+        .map(r => ({ ...r, _fallback: true, _emergencyPick: true }));
+
+      let filler = buildFiller(scanResults.filter(r =>
+        (r.avgVolumeTL || 0) >= 200_000 && (r.atrPct || 0) >= 0.4 &&
+        r.cls !== 'sell' && (r.rsi || 50) <= 92 && (r.mfi || 50) <= 92));
+
+      if (filler.length < need) {
+        const t2have = new Set([...have, ...filler.map(p => p.symbol)]);
+        const t2 = buildFiller(scanResults
+          .filter(r => !t2have.has(r.symbol))
+          .filter(r => (r.avgVolumeTL || 0) >= 100_000)
+          .filter(r => (r.atrPct || 0) >= 0.2)
+          .filter(r => r.cls !== 'sell')).slice(0, need - filler.length);
+        filler = [...filler, ...t2];
+      }
+      if (filler.length < need) {
+        const t3have = new Set([...have, ...filler.map(p => p.symbol)]);
+        const t3 = scanResults
+          .filter(r => !t3have.has(r.symbol))
+          .sort(sortByConf)
+          .slice(0, need - filler.length)
+          .map(r => ({ ...r, _fallback: true, _emergencyPick: true }));
+        filler = [...filler, ...t3];
+      }
+      return [...safe, ...filler];
+    }
+    return safe;
+  }
+
+  if (scanResults.length > 0) {
+    const sortFn = (a, b) => {
+      if (a._earlyPick && !b._earlyPick) return -1;
+      if (b._earlyPick && !a._earlyPick) return 1;
+      return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
+    };
+    let pool = scanResults.filter(r => !isUnsafe(r) && (r.score || 0) >= 45 && (r.avgVolumeTL || 0) >= 1_000_000);
+    if (pool.length < 8) {
+      const have = new Set(pool.map(p => p.symbol));
+      pool = [...pool, ...scanResults.filter(r => !have.has(r.symbol) && (r.avgVolumeTL || 0) >= 200_000 && r.cls !== 'sell')];
+    }
+    if (pool.length < 8) {
+      const have2 = new Set(pool.map(p => p.symbol));
+      pool = [...pool, ...scanResults.filter(r => !have2.has(r.symbol))];
+    }
+    return pool.sort(sortFn).slice(0, 8).map(r => ({
+      symbol: r.symbol, sector: r.sector, price: r.price, change: r.change,
+      signal: r.signal, cls: r.cls, score: r.score, rr: r.rr,
+      stop: r.stop, target: r.target, stopPct: r.stopPct, targetPct: r.targetPct,
+      holdText: r.holdText, atrPct: r.atrPct,
+      recentPump: r.recentPump, cumulativePump: r.cumulativePump,
+      todayPumpReal: r.todayPumpReal, continuationProbability: r.continuationProbability,
+      confidence: r.confidence, grade: r.grade, tier: r.tier,
+      convictionTier: r.convictionTier, convictionLabel: r.convictionLabel,
+      _earlyPick: r._earlyPick, _earlyCount: r._earlyCount,
+      _fallback: true, _warningPick: true,
+      mlConfidenceBoost: r.mlConfidenceBoost, mlBestRule: r.mlBestRule,
+      mlMatchedCount: r.mlMatchedCount, mlRegimeGated: r.mlRegimeGated,
+    }));
+  }
+  return [];
 }
 
 // ── Collapsible Bottom Strip — "Son Başarılı AI Analizi" ──────────────────
@@ -316,143 +429,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
   //   - Her iki durumda da eski localStorage cache'i devirip TAZE veri goster
   useEffect(() => {
     if (lastUpdate === null) return; // Hic scan olmamis — localStorage cache'i koru
-
-    // ── PANEL-SIDE WALL STREET FILTER (v20 — akilli tavan) ──
-    // Tum displayPicks'leri buradan geciren tek nokta.
-    // v20: tp >= 7% artik MUTLAK red degil — continuationProbability >= 38% ise izin verilir.
-    // (OZATD/OZSUB/HURGZ tipi: guclu kataliz + OBV birikim → dogru tahmin edilmisti)
-    const isUnsafe = (r) => {
-      const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);
-      // Mutlak redler — kataliz bile kurtaramaz
-      if (tp >= 12) return true;                       // Gap-up / devre kesici bolge
-      if ((r.rsi || 50) > 88) return true;             // RSI 88+ tehlikeli asiri alim
-      if ((r.mfi || 50) > 88) return true;             // MFI 88+ asiri overbought
-      if ((r.cumulativePump || 0) >= 22) return true;  // 2 gun kumulatif tavan → yorgun
-      // Akilli tavan (7-12%): backend'in calcContinuationProbability değerini kullan
-      if (tp >= 7) {
-        const prob = r.continuationProbability;
-        // Backend hesaplamis → guven: >= 38% = GOSTER, < 38% = RED
-        // Backend hesaplamamis (eski cache) → konservatiF: red
-        if (prob == null || prob < 38) return true;
-        return false; // Guclu devam sinyali (OZATD/OZSUB/HURGZ tipi)
-      }
-      // Kumulatif yorgunluk (tp < 7% ama 3 gunde +%18+) — kataliz yoksa red
-      if ((r.cumulativePump || 0) >= 18) {
-        const hasCatalyst = r.newsCategories?.some(c =>
-          ['insider_buy', 'buyback', 'fund_inflow', 'contract'].includes(c));
-        if (!hasCatalyst) return true;
-      }
-      return false;
-    };
-
-    if (topPicks.length > 0) {
-      // topPicks zaten backend'de filtrelendi. Panel-side filter ikinci savunma:
-      // tavan picks icin continuationProbability >= 38% kontrolu yapar,
-      // mutlak tehlikeli senaryolar (RSI>88, gap-up) bloklanir.
-      // Non-tavan + yuksek-confidence tavan picks gecer.
-      // v27: _emergencyPick picks — engine zaten vetted, panel filter bypass et.
-      const safe = [...topPicks]
-        .filter(p => p._emergencyPick || !isUnsafe(p))
-        .sort((a, b) => {
-          // Non-tavan daima tavan'in onunde
-          const aPump = Math.max(a.todayPumpReal || 0, a.recentPump || 0);
-          const bPump = Math.max(b.todayPumpReal || 0, b.recentPump || 0);
-          if (aPump >= 7 && bPump < 7) return 1;
-          if (bPump >= 7 && aPump < 7) return -1;
-          if (aPump >= 7 && bPump >= 7) {
-            return (b.continuationProbability || 0) - (a.continuationProbability || 0);
-          }
-          return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
-        });
-
-      // v27: TOP 5 garantisi — eger panel-side filter picks 5'in altina dusurduyse,
-      // scanResults'tan kalan eksikleri doldur (emergency rozetiyle).
-      // 3-tier permissive cascade: strict → relaxed → ultra-relaxed
-      if (safe.length < 8 && Array.isArray(scanResults) && scanResults.length > 0) {
-        const have = new Set(safe.map(p => p.symbol));
-        const need = 8 - safe.length;
-        const sortByConf = (a, b) => (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
-        const buildFiller = (rows) => rows
-          .filter(r => !have.has(r.symbol))
-          .sort(sortByConf)
-          .slice(0, need)
-          .map(r => ({ ...r, _fallback: true, _emergencyPick: true }));
-
-        // TIER 1: strict (200K+ TL, ATR>=0.4, non-sell, RSI/MFI<=92)
-        let filler = buildFiller(scanResults.filter(r =>
-          (r.avgVolumeTL || 0) >= 200_000 &&
-          (r.atrPct || 0) >= 0.4 &&
-          r.cls !== 'sell' &&
-          (r.rsi || 50) <= 92 && (r.mfi || 50) <= 92
-        ));
-
-        // TIER 2: relaxed (100K+ TL, ATR>=0.2, non-sell)
-        if (filler.length < need) {
-          const t2have = new Set([...have, ...filler.map(p => p.symbol)]);
-          const t2 = buildFiller(scanResults
-            .filter(r => !t2have.has(r.symbol))
-            .filter(r => (r.avgVolumeTL || 0) >= 100_000)
-            .filter(r => (r.atrPct || 0) >= 0.2)
-            .filter(r => r.cls !== 'sell')
-          ).slice(0, need - filler.length);
-          filler = [...filler, ...t2];
-        }
-
-        // TIER 3: ultra-relaxed (any scanResult — guarantee 5 regardless)
-        if (filler.length < need) {
-          const t3have = new Set([...have, ...filler.map(p => p.symbol)]);
-          const t3 = scanResults
-            .filter(r => !t3have.has(r.symbol))
-            .sort(sortByConf)
-            .slice(0, need - filler.length)
-            .map(r => ({ ...r, _fallback: true, _emergencyPick: true }));
-          filler = [...filler, ...t3];
-        }
-
-        setDisplayPicks([...safe, ...filler]);
-      } else {
-        setDisplayPicks(safe);
-      }
-    } else if (scanResults.length > 0) {
-      // Scan calisti ama topPicks bos (strict filtreler her seyi reddetti).
-      // v27: TOP 5 GARANTI — 3 tier cascade.
-      const sortFn = (a, b) => {
-        if (a._earlyPick && !b._earlyPick) return -1;
-        if (b._earlyPick && !a._earlyPick) return 1;
-        return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
-      };
-      let pool = scanResults.filter(r => !isUnsafe(r) && (r.score || 0) >= 45 && (r.avgVolumeTL || 0) >= 1_000_000);
-      if (pool.length < 8) {
-        const have = new Set(pool.map(p => p.symbol));
-        const t2 = scanResults.filter(r => !have.has(r.symbol) && (r.avgVolumeTL || 0) >= 200_000 && r.cls !== 'sell');
-        pool = [...pool, ...t2];
-      }
-      if (pool.length < 8) {
-        const have2 = new Set(pool.map(p => p.symbol));
-        const t3 = scanResults.filter(r => !have2.has(r.symbol));
-        pool = [...pool, ...t3];
-      }
-      const freshFallback = pool
-        .sort(sortFn)
-        .slice(0, 8)
-        .map(r => ({
-          symbol: r.symbol, sector: r.sector, price: r.price, change: r.change,
-          signal: r.signal, cls: r.cls, score: r.score, rr: r.rr,
-          stop: r.stop, target: r.target, stopPct: r.stopPct, targetPct: r.targetPct,
-          holdText: r.holdText, atrPct: r.atrPct,
-          recentPump: r.recentPump, cumulativePump: r.cumulativePump,
-          todayPumpReal: r.todayPumpReal, continuationProbability: r.continuationProbability,
-          confidence: r.confidence, grade: r.grade, tier: r.tier,
-          _earlyPick: r._earlyPick, _earlyCount: r._earlyCount,
-          _fallback: true, _warningPick: true,
-          // ML Engine data (preserve if scanResults were ML-scored)
-          mlConfidenceBoost: r.mlConfidenceBoost, mlBestRule: r.mlBestRule,
-          mlMatchedCount: r.mlMatchedCount,
-        }));
-      setDisplayPicks(freshFallback);
-    } else {
-      setDisplayPicks([]);
-    }
+    // v29: SHARED derivation — header strip ve panel AYNI picks'i gosterir.
+    setDisplayPicks(deriveDisplayPicks(topPicks, scanResults));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUpdate]); // Sadece scan bitisinde calis — topPicks/scanResults bunu takip etmesin
 
@@ -625,7 +603,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       background: 'linear-gradient(180deg, #0d1320 0%, #0a0e17 100%)',
       borderTop: '2px solid transparent',
       borderImage: 'linear-gradient(90deg, #06b6d4, #8b5cf6, #06b6d4) 1',
-      maxHeight: open ? (isMobile ? 450 : 400) : (isMobile ? 44 : 40),
+      maxHeight: open ? (isMobile ? 520 : 400) : (isMobile ? 44 : 40),
       overflow: 'hidden',
       boxShadow: '0 -8px 32px rgba(0, 230, 230, 0.12), 0 -4px 24px rgba(0,0,0,0.6)',
     }}>
@@ -846,9 +824,11 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
       )}
 
       {/* ── Card strip ── */}
+      {/* v29: mobil minHeight 120→210 — kart icerigi (sembol + saran rozetler +
+          fiyat/RR + skor + stop/hedef ~200px) 120px'e sigmayip alt kesiliyordu. */}
       <div style={{
         display: 'flex', gap: 0, overflowX: 'auto', overflowY: 'hidden',
-        minHeight: isMobile ? 120 : 165,
+        minHeight: isMobile ? 210 : 165,
         height: 'auto', alignItems: 'stretch',
         padding: isMobile ? '4px 6px' : '6px 12px',
         boxSizing: 'border-box',

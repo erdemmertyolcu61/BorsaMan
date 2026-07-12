@@ -68,9 +68,12 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
   .desktop-only-panel { display: none !important; }
 
   /* ── Mobile AI Detail Panel overrides ───────────────────────── */
+  /* v29: max-height 220→420 — 220px bir kartin (~238px, saran rozetler + fiyat +
+     stop/hedef) altini kesiyordu. 420px tam bir karti + header + bantlari sigdirir;
+     kartlar zaten yatay kaydirilir, dikeyde tek kartin tamami gorunmeli. */
   .ai-detail-root {
     bottom: calc(56px + env(safe-area-inset-bottom, 0px)) !important;
-    max-height: 220px !important;
+    max-height: min(62vh, 420px) !important;
   }
   .ai-pick-card {
     width: 78vw !important;
