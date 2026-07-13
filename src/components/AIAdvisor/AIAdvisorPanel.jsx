@@ -122,6 +122,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
     scanProgress = { done: 0, total: 0 },
     manualScan = null,
     scanResults = [],
+    marketRegime = null,
   } = advisor;
   const [intradayCount, setIntradayCount] = useState(0);
 
@@ -198,7 +199,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
       {topPicks.length > 0 && !scanning && (
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
           <span style={{ color: 'var(--t3)', fontSize: 11 }}>En İyi:</span>
-          {deriveDisplayPicks(topPicks, scanResults).slice(0, 4).map(p => {
+          {deriveDisplayPicks(topPicks, scanResults, marketRegime?.regime && marketRegime.regime !== 'BULL').slice(0, 4).map(p => {
             const isSell = p.cls === 'sell';
             const isHold = p.cls === 'hold' || p.cls === 'neutral';
             // Renk sinyale gore: AL=yesil, SAT=kirmizi, TUT=notr gri (yaniltmasin)
@@ -253,7 +254,11 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
 // by raw score, panel applied an isUnsafe filter + emergency fillers), so the
 // header could show THYAO #1 while the panel showed a filler VANGD #1. Both now
 // call this pure function so they display the SAME picks in the SAME order.
-function deriveDisplayPicks(topPicks = [], scanResults = []) {
+// v29.2: regimeRestrict — DUSUS/YATAY rejiminde emergency filler/fallback KAPATILIR.
+// Backtest: AL pick'leri YUKSELIS disinda negatif beklenti veriyor; dusen/yatay
+// piyasada zorlama emergency pick gostermek zarar. Sadece gercek topPicks (BULL'da
+// filler'li, YATAY'da sniper-only) gosterilir; DUSUS'ta bos state.
+function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestrict = false) {
   const isUnsafe = (r) => {
     const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);
     if (tp >= 12) return true;
@@ -287,7 +292,7 @@ function deriveDisplayPicks(topPicks = [], scanResults = []) {
         return sortByConf(a, b);
       });
 
-    if (safe.length < 8 && Array.isArray(scanResults) && scanResults.length > 0) {
+    if (!regimeRestrict && safe.length < 8 && Array.isArray(scanResults) && scanResults.length > 0) {
       const have = new Set(safe.map(p => p.symbol));
       const need = 8 - safe.length;
       const buildFiller = (rows) => rows
@@ -323,7 +328,7 @@ function deriveDisplayPicks(topPicks = [], scanResults = []) {
     return safe;
   }
 
-  if (scanResults.length > 0) {
+  if (!regimeRestrict && scanResults.length > 0) {
     const sortFn = (a, b) => {
       if (a._earlyPick && !b._earlyPick) return -1;
       if (b._earlyPick && !a._earlyPick) return 1;
@@ -430,7 +435,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
   useEffect(() => {
     if (lastUpdate === null) return; // Hic scan olmamis — localStorage cache'i koru
     // v29: SHARED derivation — header strip ve panel AYNI picks'i gosterir.
-    setDisplayPicks(deriveDisplayPicks(topPicks, scanResults));
+    // v29.2: DUSUS/YATAY rejiminde emergency filler/fallback kapatilir (regimeRestrict).
+    const regimeRestrict = !!(marketRegime?.regime && marketRegime.regime !== 'BULL');
+    setDisplayPicks(deriveDisplayPicks(topPicks, scanResults, regimeRestrict));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUpdate]); // Sadece scan bitisinde calis — topPicks/scanResults bunu takip etmesin
 
@@ -850,14 +857,20 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             ) : lastUpdate !== null ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexDirection: 'column', textAlign: 'center' }}>
-                  <span style={{ fontSize: 22 }}>🚫</span>
-                  <span style={{ color: '#fbbf24', fontWeight: 700, fontSize: 13 }}>
-                    Bugün kaliteli AL setup'ı bulunamadı
+                  <span style={{ fontSize: 22 }}>{marketRegime?.regime === 'BEAR' ? '🐻' : '🚫'}</span>
+                  <span style={{ color: marketRegime?.regime === 'BEAR' ? '#f87171' : '#fbbf24', fontWeight: 700, fontSize: 13 }}>
+                    {marketRegime?.regime === 'BEAR'
+                      ? 'DÜŞÜŞ REJİMİ — bugün AL önerisi yok'
+                      : marketRegime?.regime === 'NEUTRAL'
+                        ? 'YATAY REJİM — sadece en güçlü setup\'lar gösterilir'
+                        : 'Bugün kaliteli AL setup\'ı bulunamadı'}
                   </span>
                   <span style={{ fontSize: 11, color: '#a8b3c7', maxWidth: 480, lineHeight: 1.5 }}>
-                    Tavan yapan hisseler ertesi gün ~%55-60 ihtimalle geri çekilir. Sistem
-                    BUGÜN tavan yapanları değil, YARIN tavan yapacakları arıyor.
-                    Bu oturumda piyasa çoğunlukla pump'larla doldu — kaliteli giriş yok.
+                    {marketRegime?.regime === 'BEAR'
+                      ? 'BIST100 düşüş trendinde. Ölçüm: düşüş rejiminde AL pick\'leri tarihsel olarak ortalama -3.4% getirmiş (%18.8 kazanma). Sistem düşen bıçağı tutmuyor — bugün nakitte kalmak en iyi "işlem". Rejim dönünce AL önerileri geri gelir.'
+                      : marketRegime?.regime === 'NEUTRAL'
+                        ? 'BIST100 yatay. Yatay piyasada zayıf kademe AL\'lar ortalama -1.7% getirmiş — bu yüzden sadece score≥75 nokta-atışı setup\'lar gösterilir. Bugün o barı geçen yok.'
+                        : 'Tavan yapan hisseler ertesi gün ~%55-60 ihtimalle geri çekilir. Sistem BUGÜN tavan yapanları değil, YARIN tavan yapacakları arıyor.'}
                   </span>
                   {advisor.manualScan && (
                     <button

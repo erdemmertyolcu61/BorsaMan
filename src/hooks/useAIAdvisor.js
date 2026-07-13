@@ -805,14 +805,29 @@ export function useAIAdvisor(portfolio) {
       // NEUTRAL: 5 pick orta-konservatif
       // Sebep: tek hisse skoru endeks dususune karsi koruyamaz; bear gunlerde
       // tum sektorler asagi gider, en guclu setup'lar bile zarar verir.
-      let marketRegime = 'NEUTRAL';
+      // v29.2: Rejim artik TREND-bazli (BIST100 MA20 + 5-gun slope) — tek-gun
+      // degisimi cok gurultuluydu. Rejim-bazli pick performans olcumu (walk-forward)
+      // net gosterdi: AL pick'leri SADECE YUKSELIS'te pozitif (+1.14% beklenti),
+      // YATAY'da -1.68%, DUSUS'ta -3.36%. Bu rejim, buyPicks'te AL kapisi surer.
+      let marketRegime = 'NEUTRAL';   // BULL=YUKSELIS, NEUTRAL=YATAY, BEAR=DUSUS
       let bistChangePct = 0;
       try {
-        const bistData = await fetchSingle('XU100', '5d', '1d', true).catch(() => null);
-        if (bistData?.prices?.length >= 2) {
-          const bars = bistData.prices;
-          const yest = bars[bars.length - 2]?.close;
-          const today = bars[bars.length - 1]?.close;
+        const bistData = await fetchSingle('XU100', '3mo', '1d', true).catch(() => null);
+        const bars = bistData?.prices || [];
+        if (bars.length >= 25) {
+          const closes = bars.map(b => b.close).filter(c => c > 0);
+          const n = closes.length;
+          const last = closes[n - 1];
+          const ma20 = closes.slice(n - 20).reduce((s, c) => s + c, 0) / 20;
+          const ref5 = closes[n - 6] || closes[0];
+          const slope5 = ref5 > 0 ? ((last - ref5) / ref5) * 100 : 0;
+          bistChangePct = slope5; // 5-gun trend egimi (tek-gun degil)
+          if (last > ma20 && slope5 > 1) marketRegime = 'BULL';
+          else if (last < ma20 && slope5 < -1) marketRegime = 'BEAR';
+          // aksi halde NEUTRAL (YATAY)
+        } else if (bars.length >= 2) {
+          // fallback: yeterli tarih yoksa tek-gun degisim
+          const yest = bars[bars.length - 2]?.close, today = bars[bars.length - 1]?.close;
           if (yest > 0 && today > 0) {
             bistChangePct = ((today - yest) / yest) * 100;
             if (bistChangePct > 1) marketRegime = 'BULL';
@@ -820,9 +835,10 @@ export function useAIAdvisor(portfolio) {
           }
         }
       } catch { /* fallback NEUTRAL */ }
+      const regimeLabel = marketRegime === 'BULL' ? 'YUKSELIS' : marketRegime === 'BEAR' ? 'DUSUS' : 'YATAY';
       pushLog({
         type: marketRegime === 'BEAR' ? 'warn' : 'info',
-        msg: `Piyasa rejimi: ${marketRegime} (BIST100 ${bistChangePct >= 0 ? '+' : ''}${bistChangePct.toFixed(1)}%)`,
+        msg: `Piyasa rejimi: ${regimeLabel} (BIST100 5g trend ${bistChangePct >= 0 ? '+' : ''}${bistChangePct.toFixed(1)}%)`,
       });
       setMarketRegime({ regime: marketRegime, bistChangePct });
       // Rejim-bazli pick limiti kapatildi, kullanici her zaman 8 pick gormek istiyor.
@@ -1785,6 +1801,27 @@ export function useAIAdvisor(portfolio) {
         }
       }
 
+      // ── v29.2 REGIME BUY-GATE (walk-forward validated) ───────────────────
+      // Olcum (1y, 81 AL sinyali, rejim x kademe): AL pick'leri SADECE YUKSELIS'te
+      // pozitif (+1.14% beklenti, %59.5 WR). YATAY -1.68%, DUSUS -3.36% (%18.8 WR).
+      // Score kademesi kurtarmiyor — REJIM baskin. Bu yuzden BIST100 trend rejimine
+      // gore AL onerilerini kapiliyoruz:
+      //   BEAR (DUSUS)   → AL'lari TAMAMEN sustur (dusen biçagi tutma)
+      //   NEUTRAL (YATAY)→ sadece score>=75 (coin-flip bandi elenir)
+      //   BULL (YUKSELIS)→ normal
+      if (marketRegime === 'BEAR') {
+        if (buyPicks.length > 0) {
+          pushLog({ type: 'warn', msg: `REJIM KAPISI (DUSUS): ${buyPicks.length} AL pick susturuldu — tarihsel dusus AL beklentisi -3.4% (%18.8 WR). Bugun kaliteli long yok.` });
+        }
+        buyPicks = [];
+      } else if (marketRegime === 'NEUTRAL') {
+        const before = buyPicks.length;
+        buyPicks = buyPicks.filter(p => (p.score || 0) >= 75);
+        if (before !== buyPicks.length) {
+          pushLog({ type: 'warn', msg: `REJIM KAPISI (YATAY): sadece score>=75 — ${before} → ${buyPicks.length} pick (YATAY'da zayif kademe -1.7% beklenti)` });
+        }
+      }
+
       // ── SELL PICKS ──
       // Kullanıcı talebi: "AI en iyi fırsatlarda sadece en güçlü 8 AL göstersin, Güçlü Sat listesini gösterme."
       const sellPicks = [];
@@ -2734,6 +2771,20 @@ export function useAIAdvisor(portfolio) {
         return p; // TUT olarak birak
       });
 
+      // ── v29.2 REGIME BUY-GATE (panel/state picks) ────────────────────────
+      // picks buy-odakli liste (setTopPicks → panel "AI FIRSATLAR"). BEAR'da
+      // buy'lari cikar → panel DUSUS bos-state gosterir. NEUTRAL'da sadece
+      // score>=75. Ayrica asagida finalPicks (dispatch) ayni kapiden gecer.
+      if (marketRegime === 'BEAR') {
+        const before = picks.length;
+        picks = picks.filter(p => p.cls === 'sell');
+        if (before !== picks.length) pushLog({ type: 'warn', msg: `REJIM KAPISI (DUSUS): ${before - picks.length} AL pick susturuldu — dusus rejiminde AL tarihsel -3.4% (%18.8 WR). Bugun kaliteli long yok.` });
+      } else if (marketRegime === 'NEUTRAL') {
+        const before = picks.length;
+        picks = picks.filter(p => p.cls === 'sell' || (p.score || 0) >= 75);
+        if (before !== picks.length) pushLog({ type: 'warn', msg: `REJIM KAPISI (YATAY): sadece score>=75 — ${before} → ${picks.length} pick (yatayda zayif AL -1.7% beklenti)` });
+      }
+
       setScanResults(results);
       setTopPicks(picks);
       setMarketSentiment(sentimentObj);
@@ -2884,6 +2935,26 @@ export function useAIAdvisor(portfolio) {
           .sort((a, b) => (a.confidence || 0) - (b.confidence || 0));
         finalPicks = [...buyish, ...sellish].slice(0, 10);
         console.warn(`[AI Advisor] picks[] empty — derived ${buyish.length} buy-side + ${sellish.length} sell from results`);
+      }
+
+      // ── v29.2 REGIME BUY-GATE — TEK CIKIS KAPISI (walk-forward validated) ──
+      // buyPicks'teki erken gate lastResort/emergency/fallback ile bypass ediliyordu.
+      // Burasi finalPicks'in TUM kaynaklardan birlestigi tek nokta — dispatch oncesi.
+      // Olcum: AL pick'leri SADECE YUKSELIS'te pozitif; YATAY -1.7%, DUSUS -3.4%.
+      //   BEAR (DUSUS)   → AL'lari tamamen ele, sadece SAT kalir ("dusen biçagi tutma")
+      //   NEUTRAL (YATAY)→ sadece score>=75 AL (+ SAT); zayif kademe elenir
+      if (marketRegime === 'BEAR') {
+        const before = finalPicks.length;
+        finalPicks = finalPicks.filter(p => p.cls === 'sell');
+        if (before !== finalPicks.length) {
+          console.warn(`[AI Advisor] REJIM KAPISI (DUSUS): ${before - finalPicks.length} AL pick susturuldu (dispatch)`);
+        }
+      } else if (marketRegime === 'NEUTRAL') {
+        const before = finalPicks.length;
+        finalPicks = finalPicks.filter(p => p.cls === 'sell' || (p.score || 0) >= 75);
+        if (before !== finalPicks.length) {
+          console.warn(`[AI Advisor] REJIM KAPISI (YATAY): ${before - finalPicks.length} zayif AL elendi (sadece score>=75)`);
+        }
       }
 
       const allResults = Array.isArray(results) ? results : [];
