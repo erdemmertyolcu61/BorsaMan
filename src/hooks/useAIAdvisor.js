@@ -2916,19 +2916,32 @@ export function useAIAdvisor(portfolio) {
         });
       }
 
-      window.dispatchEvent(new CustomEvent('advisor-scan-complete', {
-        detail: {
-          topPicks: finalPicks,
-          sellPicks: Array.isArray(sellPicks) ? sellPicks : [],
-          results: allResults,
-          marketContext: sentimentObj,
-          sectorRotation,
-          riskAlerts,
-          newsIndex,
-          timestamp: Date.now(),
-          scanMode: isAfterHours ? 'afterHours' : 'intraday',
-        },
-      }));
+      // KÖKTEN: dispatch'i KENDİ try/catch'ine izole et. Bu event sinyal kaydını
+      // (App.jsx → recordSignal), paper-trade auto-trade'i ve AlertLog'u besliyor —
+      // dev scan try/catch'i içinde bir alan patlarsa (eskiden `newsIndex`
+      // undeclared → ReferenceError) event HİÇ dispatch olmuyor ve hata sessizce
+      // yutuluyordu → "çekilen hisseler sinyale eklenmiyor" (özellikle mobilde,
+      // panel state'ten dolduğu için picks görünüp sinyal birikmiyordu). Her alan
+      // defansif + hata GÜRÜLTÜLÜ loglanır, bir daha sessiz kalmaz.
+      try {
+        window.dispatchEvent(new CustomEvent('advisor-scan-complete', {
+          detail: {
+            topPicks: Array.isArray(finalPicks) ? finalPicks : [],
+            sellPicks: Array.isArray(sellPicks) ? sellPicks : [],
+            results: Array.isArray(allResults) ? allResults : [],
+            marketContext: sentimentObj || null,
+            sectorRotation: sectorRotation || null,
+            riskAlerts: riskAlerts || [],
+            newsIndex: newsIndex || null,
+            timestamp: Date.now(),
+            scanMode: isAfterHours ? 'afterHours' : 'intraday',
+          },
+        }));
+        console.info(`[AI Advisor] advisor-scan-complete dispatched — ${(finalPicks || []).length} buy + ${(Array.isArray(sellPicks) ? sellPicks : []).length} sell picks → signal tracker + paper-trade`);
+      } catch (dispatchErr) {
+        console.error('[AI Advisor] advisor-scan-complete DISPATCH FAILED — bu tarama sinyal kaydına + paper-trade\'e ulaşmayacak:', dispatchErr);
+        pushLog({ type: 'err', msg: 'Sinyal dagitim hatasi: ' + (dispatchErr.message || dispatchErr) });
+      }
     } catch (err) {
       pushLog({ type: 'err', msg: 'Tarama hatasi: ' + (err.message || err) });
     } finally {
