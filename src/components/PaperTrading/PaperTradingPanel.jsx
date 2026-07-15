@@ -111,6 +111,117 @@ function MLBadge({ trade }) {
   );
 }
 
+// ── LIVE EDGE MATRIX — conviction tier × regime paper-trade truth ──
+const REGIME_COLS = [
+  { key: 'BULL', label: 'YUKSELIS' },
+  { key: 'NEUTRAL', label: 'YATAY' },
+  { key: 'BEAR', label: 'DUSUS' },
+];
+const TIER_ROWS = [
+  { key: 'sniper', label: 'SNIPER', hint: 'score≥75' },
+  { key: 'flagged', label: 'FLAGGED', hint: '65-74' },
+  { key: 'early', label: 'EARLY', hint: '<65' },
+];
+
+function edgeCellColor(cell) {
+  if (!cell || cell.n === 0) return { bg: 'transparent', fg: 'var(--t3)' };
+  if (!cell.reliable) return { bg: 'rgba(255,255,255,0.03)', fg: 'var(--t3)' };
+  if (cell.expectancy > 0.3) return { bg: 'rgba(16,232,122,0.12)', fg: '#10e87a' };
+  if (cell.expectancy < -0.3) return { bg: 'rgba(244,63,94,0.12)', fg: '#f43f5e' };
+  return { bg: 'rgba(251,191,36,0.10)', fg: '#fbbf24' };
+}
+
+function LiveEdgeMatrix({ liveEdge }) {
+  if (!liveEdge) return null;
+  const { overall, cells, sampleSize } = liveEdge;
+  const cellAt = (tier, regime) => cells.find(c => c.tier === tier && c.regime === regime);
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: 10, padding: '12px 14px', marginBottom: 14,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--t1)', letterSpacing: 0.5 }}>
+          {'🎯'} CANLI EDGE
+        </span>
+        <span style={{ fontSize: 8, color: 'var(--t3)' }}>
+          konviksiyon × rejim · gerçek paper-trade sonuçları (son {sampleSize} kapanış)
+        </span>
+        {overall?.n > 0 && (
+          <span style={{
+            marginLeft: 'auto', fontSize: 9, fontWeight: 700,
+            color: overall.expectancy > 0 ? '#10e87a' : '#f43f5e',
+          }}>
+            GENEL: WR %{overall.winRate.toFixed(0)} · beklenti {overall.expectancy >= 0 ? '+' : ''}{overall.expectancy.toFixed(2)}% · {overall.n} işlem
+          </span>
+        )}
+      </div>
+
+      {sampleSize === 0 ? (
+        <div style={{ fontSize: 10, color: 'var(--t3)', padding: '8px 0' }}>
+          Henüz kapanmış paper-trade yok. ML Auto aktifle — birikince her hücre o konviksiyon+rejim
+          kombinasyonunun gerçek kazanç oranını gösterecek.
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'separate', borderSpacing: 3, width: '100%', minWidth: 340 }}>
+            <thead>
+              <tr>
+                <th style={{ fontSize: 8, color: 'var(--t3)', textAlign: 'left', padding: '2px 6px', fontWeight: 600 }}></th>
+                {REGIME_COLS.map(c => (
+                  <th key={c.key} style={{ fontSize: 8, color: 'var(--t3)', fontWeight: 700, padding: '2px 6px', letterSpacing: 0.5 }}>
+                    {c.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {TIER_ROWS.map(row => (
+                <tr key={row.key}>
+                  <td style={{ fontSize: 8, color: 'var(--t2)', fontWeight: 700, padding: '2px 6px', whiteSpace: 'nowrap' }}>
+                    {row.label}<span style={{ color: 'var(--t3)', fontWeight: 400 }}> {row.hint}</span>
+                  </td>
+                  {REGIME_COLS.map(col => {
+                    const cell = cellAt(row.key, col.key);
+                    const { bg, fg } = edgeCellColor(cell);
+                    return (
+                      <td key={col.key} style={{
+                        background: bg, borderRadius: 5, padding: '5px 6px', textAlign: 'center',
+                        minWidth: 74, border: '1px solid rgba(255,255,255,0.05)',
+                      }}
+                      title={cell && cell.n > 0
+                        ? `${row.label} · ${col.label}\nİşlem: ${cell.n}${cell.reliable ? '' : ' (az örnek — güvenilmez)'}\nWR: %${cell.winRate}\nBeklenti: ${cell.expectancy >= 0 ? '+' : ''}${cell.expectancy}%\nPF: ${isFinite(cell.profitFactor) ? cell.profitFactor : '∞'}`
+                        : 'Bu kombinasyonda henüz işlem yok'}>
+                        {cell && cell.n > 0 ? (
+                          <>
+                            <div style={{ fontSize: 11, fontWeight: 800, color: fg, lineHeight: 1.1 }}>
+                              %{cell.winRate.toFixed(0)}
+                            </div>
+                            <div style={{ fontSize: 7, color: 'var(--t3)' }}>
+                              {cell.expectancy >= 0 ? '+' : ''}{cell.expectancy.toFixed(1)}% · n{cell.n}
+                            </div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 9, color: 'var(--t3)' }}>—</div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ fontSize: 7, color: 'var(--t3)', marginTop: 6 }}>
+            Yeşil = pozitif beklenti · sarı = nötr · kırmızı = negatif · soluk = &lt;8 örnek (güvenilmez).
+            Backtest &ldquo;olması gereken&rdquo;i söyler; bu tablo &ldquo;gerçekte olan&rdquo;ı.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════
 // ML FORWARD TEST PANEL
 // ══════════════════════════════════════════════════════════════
@@ -143,6 +254,7 @@ function MLForwardTestPanel({ paperML }) {
     cash, startCapital, totalEquity, totalEquityPct, totalPnl, totalPnlPct,
     winRate, wins, losses, totalTrades, avgWinPct, avgLossPct,
     expectancy, profitFactor, maxDrawdown, openTrades, closedTrades, mlBuckets,
+    liveEdge,
   } = snapshot;
 
   return (
@@ -246,6 +358,9 @@ function MLForwardTestPanel({ paperML }) {
           </div>
         )}
       </div>
+
+      {/* LIVE EDGE MATRIX — the paper-trade truth layer */}
+      <LiveEdgeMatrix liveEdge={liveEdge} />
 
       {/* TAB NAV */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: 8 }}>

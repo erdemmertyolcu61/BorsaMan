@@ -18,6 +18,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { applyEntryCost, applyExitCost, liquiditySlippagePct } from './tradingCosts.js';
+import { computeLiveEdge } from './liveEdge.js';
 
 const STORAGE_KEY = 'bist_paper_ml_engine_v1';
 const START_CAPITAL = 100_000;
@@ -193,6 +194,9 @@ export class PaperTradeEngine {
       peakEquity: s.peakEquity,
       // ML specific
       mlBuckets: s.stats?.mlBuckets || [],
+      // Live edge — win-rate/expectancy per convictionTier × regime, last 120 closes.
+      // The paper-trade truth layer: what the advisor's picks ACTUALLY did.
+      liveEdge: computeLiveEdge(closed, { limit: 120 }),
     };
   }
 
@@ -343,6 +347,8 @@ export class PaperTradeEngine {
       confidence:   pick.confidence || 0,
       grade:        pick.grade || '',
       tier:         pick.tier || '',
+      convictionTier:  pick.convictionTier || 'early',
+      convictionLabel: pick.convictionLabel || '',
       score100:     pick.score || 0,
       rr:           pick.rr || 0,
       sector:       pick.sector || '',

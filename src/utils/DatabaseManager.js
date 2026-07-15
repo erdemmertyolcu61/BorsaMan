@@ -16,7 +16,7 @@
 // All writes use WAL mode + transactions for max throughput.
 // ════════════════════════════════════════════════════════════════════
 
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const DB_FILENAME = 'bist_ml_engine.db';
 
 // ── SCHEMA ─────────────────────────────────────────────────────────
@@ -140,6 +140,7 @@ const SCHEMA_SQL = `
     confidence      REAL,                              -- composite confidence score
     grade           TEXT,                              -- A/B/C/D
     tier            TEXT,                              -- STRONG/GOOD/FAIR/WEAK
+    conviction_tier TEXT,                              -- sniper/flagged/early (live-edge segmentation key)
     score100        REAL,
     rr              REAL,
     sector          TEXT,
@@ -394,6 +395,12 @@ function _runMigrations(db, from, to) {
       }
     } catch {}
     console.log('[MLDb] Migration v4: paper_portfolio + paper_trades tables');
+  }
+  if (from < 5) {
+    // v5: conviction tier on paper trades — enables live-edge segmentation
+    // (win-rate/expectancy per convictionTier × regime, the paper-trade truth layer)
+    try { db.exec('ALTER TABLE paper_trades ADD COLUMN conviction_tier TEXT'); } catch {}
+    console.log('[MLDb] Migration v5: paper_trades.conviction_tier (live-edge segmentation)');
   }
 }
 
@@ -674,12 +681,12 @@ function _wrapApi(db) {
         INSERT INTO paper_trades (
           symbol, direction, status, entry_price, stop_price, target_price,
           size_tl, lots, ml_confidence, ml_best_rule, ml_matched,
-          confidence, grade, tier, score100, rr, sector, fired_signals,
+          confidence, grade, tier, conviction_tier, score100, rr, sector, fired_signals,
           opened_at, entry_atr_pct, entry_rsi, entry_regime, notes
         ) VALUES (
           @symbol, @direction, 'OPEN', @entryPrice, @stopPrice, @targetPrice,
           @sizeTl, @lots, @mlConfidence, @mlBestRule, @mlMatched,
-          @confidence, @grade, @tier, @score100, @rr, @sector, @firedSignals,
+          @confidence, @grade, @tier, @convictionTier, @score100, @rr, @sector, @firedSignals,
           @openedAt, @entryAtrPct, @entryRsi, @entryRegime, @notes
         )
       `);
@@ -697,6 +704,7 @@ function _wrapApi(db) {
         confidence:   trade.confidence || null,
         grade:        trade.grade || null,
         tier:         trade.tier || null,
+        convictionTier: trade.convictionTier || null,
         score100:     trade.score100 || null,
         rr:           trade.rr || null,
         sector:       trade.sector || null,
