@@ -341,50 +341,48 @@ electronAPI.paperDb.reset()
 4. TOP 3 ML boost sırasıyla seçilir, her biri max %33 capital alır
 5. Stop = entry × 0.97, target = pick.target (genSignal'dan)
 6. Her 30s BigPara batch fiyat kontrolü → stop/target hit → otomatik kapanış
-7. Kapanış SQLite'a yazılır: pnl_tl, pnl_pct, held_ms, exit_reason
-8. **v5 feedback loop**: trade'in `rule_hash`'i varsa `closePaperTrade` otomatik `applyTradeFeedback(hash, pnlPct)` çağırır → `discovered_rules`'in `total_count`/`win_count`/`loss_count`/`avg_roi_pct`/`expectancy` + ek `paper_win_count`/`paper_loss_count` sayaçları güncellenir → bir sonraki tarama bu kaliprasyonu görür
+7. Kapanış SQLite'a yazılır: pnl_tl, pnl_pct, held_ms, exit_reason, conviction_tier, entry_regime
+8. **Canlı-edge (v29.5)**: kapalı trade'ler `computeLiveEdge` ile conviction_tier × regime bazında segmentlenir → PaperTradingPanel'deki CANLI EDGE matrisi her kombinasyonun gerçek win-rate/expectancy'sini gösterir (bkz. "Canlı Edge Truth Layer")
 
-## DB Schema v5 — Paper Trade Feedback Loop (2026-05)
+## DB Schema v5 — Conviction Tier (2026-07)
 
-### Yeni kolonlar
+### Yeni kolon
 | Tablo | Kolon | Amaç |
 |---|---|---|
-| `paper_trades` | `rule_hash TEXT` | `discovered_rules.rule_hash`'a deterministik join key — trade kapandığında hangi ML kuralının outcome'unu güncelleyeceğimizi bilmek için |
-| `discovered_rules` | `paper_win_count INTEGER DEFAULT 0` | Canlı forward-test win sayacı (backtest count'larından ayrı izlenir — UI rozeti için) |
-| `discovered_rules` | `paper_loss_count INTEGER DEFAULT 0` | Canlı forward-test loss sayacı |
-| index | `idx_pt_rule_hash` ON `paper_trades(rule_hash)` | Hızlı join |
+| `paper_trades` | `conviction_tier TEXT` | sniper/flagged/early — canlı-edge segmentasyon anahtarı (win-rate/expectancy per conviction × regime) |
 
-### `applyTradeFeedback(ruleHash, pnlPct)` algoritması
-Tek-örnek incremental moving average (formül `_upsertRulesNode` weighted merge'den birebir reuse):
-```
-newTotal   = oldTotal + 1
-newWins    = oldWins  + (pnlPct > 0 ? 1 : 0)
-newLosses  = oldLosses + (pnlPct > 0 ? 0 : 1)
-newAvgRoi  = (oldAvgRoi × oldTotal + pnlPct) / newTotal
-newAvgWin  = win ise (oldAvgWin × oldWins + pnlPct) / newWins, değilse oldAvgWin
-newAvgLoss = loss ise (oldAvgLoss × oldLosses + pnlPct) / newLosses, değilse oldAvgLoss
-winRate01  = newWins / newTotal
-expectancy = newAvgWin × winRate01 + newAvgLoss × (1 - winRate01)
-last_seen_date = now
-```
-**Atomic**: tek `UPDATE`. Eski rule kaybolmaz, kural bulunamazsa (pruned/archived) sessizce no-op.
+- `DB_VERSION = 5`; migration `from < 5`: `ALTER TABLE paper_trades ADD COLUMN conviction_tier TEXT`
+- `openPaperTrade` payload'a `conviction_tier` yazar; `getClosedPaperTrades` (`SELECT *`) round-trip'te döner
+- `entry_regime` (v4'ten beri) + `conviction_tier` birlikte canlı-edge'in iki eksenini oluşturur
 
-### Wiring
-- `useAIAdvisor` scan loop → her pick'e `mlBestRuleHash` set eder
-- `PaperTradeEngine._openTrade` → `trade.ruleHash = pick.mlBestRuleHash || pick.mlBestRule?.ruleHash`
-- `openPaperTrade` payload'a `rule_hash` yazar (NULL ML eşleşmesi olmayan trade'lerde)
-- `closePaperTrade` → `api.applyTradeFeedback` otomatik tetiklenir, `{ ruleHash, feedback }` döndürür
-- `PaperTradeEngine.closeTrade` → console log `[PaperML] Rule feedback applied — hash=… paperWins=… paperLosses=… total=…`
-- IPC handler: `paper:applyTradeFeedback` (defensive manuel/replay için expose; runtime'da çağırmaya gerek yok)
+> **NOT — kaldırılan "v5 feedback loop" (2026-07):** Bu bölüm eskiden paper trade
+> outcome'larını `discovered_rules`'a geri besleyen bir döngüyü (`applyTradeFeedback`,
+> `paper_win_count`/`paper_loss_count`, `paper_trades.rule_hash`, `paper:applyTradeFeedback`
+> IPC, 🔄 LIVE rozeti) "sevk edildi" diye anlatıyordu. **Bu döngü hiçbir zaman
+> kurulmadı** — DB kolonları, fonksiyon ve IPC yoktu; sadece okuma tarafı (useAIAdvisor
+> `paperWinCount` okumaları + AIAdvisorPanel 🔄 LIVE rozeti) dead code olarak duruyordu ve
+> rozet hep 0 örnek döndüğü için asla görünmüyordu. Dead code temizlendi. Paper-trade
+> "gerçeğin kaynağı" ihtiyacı artık **Canlı Edge Truth Layer** ile gösterim seviyesinde
+> karşılanıyor (skorlamaya geri beslenmiyor — measure-first: küçük canlı örnek skorları
+> çarpıtmasın).
 
-### UI: 🔄 LIVE rozeti
-`AIAdvisorPanel.jsx` her pick kartında ML rozetinin (🎯 %WR) yanında, koşul:
-```js
-paperSamples = paperWinCount + paperLossCount
-liveShare    = paperSamples / totalCount
-SHOW if paperSamples >= 1 && totalCount >= 5 && liveShare >= 0.20
-```
-Yeşil gradient (`#10b981 → #059669`). Tooltip: paper W/L kırılımı, paper win rate, sample share.
+## Canlı Edge Truth Layer — `liveEdge.js` (v29.5, 2026-07)
+
+Backtest "olması gereken"i söyler; bu katman "gerçekte olan"ı. Kapalı paper-trade'leri
+advisor'ın pick'leri bucketladığı gibi (convictionTier × regime) segmentler.
+
+- **`computeLiveEdge(closedTrades, { limit })`** (pure, test edilmiş): kapanışları
+  `sniper/flagged/early` × `BULL/NEUTRAL/BEAR` hücrelerine böler → her hücre için win-rate,
+  expectancy, profit-factor, `reliable` (>= `MIN_SAMPLE`=8 örnek). `overall` + `byTier` +
+  `byRegime` roll-up'ları da döner. Son 120 kapanış penceresi (recency).
+- **`getLiveEdgeStat(edge, tier, regime)`**: bir hücreyi SADECE güvenilirse (>=8 örnek) döner,
+  yoksa `null` — küçük örnek yalan söyler.
+- **PaperTradeEngine**: her trade'e `convictionTier` yazar; `_buildSnapshot` `liveEdge`'i expose eder.
+- **PaperTradingPanel**: CANLI EDGE matrisi (tier satır × rejim sütun); beklentiye göre
+  yeşil/sarı/kırmızı, <8 örnekte soluk, ilk kapanıştan önce boş-durum.
+- **Salt-okunur**: henüz skorlamaya bağlı değil. Kovalar birikince `getLiveEdgeStat` hazır.
+- **Test**: `liveEdge.test.js` — 13 senaryo (segmentasyon, snake/camel alan, recency limit,
+  reliability eşiği, defensive null).
 
 ## Walk-Forward Optimizer (`ml_forward_tester.py` — 2026-05)
 
@@ -480,17 +478,19 @@ FALLBACK_TIMEFRAME = "2Y"                           # 5Y truncation rescue
   - Lookahead-safe: pozisyon t'de karar verir, t+1'de return; swing struct shift(1)
   - **`bist_bridge.fetch_ohlcv(symbol, timeframe='5Y')` reuse** — yeni 5Y→2Y truncation fallback'ten faydalanır
   - CLI: `--symbol`, `--symbols`, `--strategy {smc,adx}`, `--is-months`, `--oos-months`, `--timeframe {1M,3M,6M,1Y,2Y,5Y}`, `--out <json>`, `--quiet`
-- [x] **ML Forward Test Feedback Loop (DB v5)** — Faz 1 kapali dongu: paper trade outcomes → `discovered_rules`:
-  - **DB Schema v5**: `paper_trades.rule_hash` (deterministik join key) + `discovered_rules.paper_win_count` / `paper_loss_count` (canlı sayaçlar, backtest count'larından ayrı)
-  - `applyTradeFeedback(ruleHash, pnlPct)`: tek-örnek incremental moving average ile total/win/loss/avgRoi/expectancy günceller — formül `_upsertRulesNode` weighted merge'den birebir reuse
-  - `closePaperTrade` artık otomatik feedback tetikler ve `{ ruleHash, feedback }` döner
-  - `ML_BacktestEngine.scoreNewSignal` matched rule output'una `ruleHash`, `paperWinCount`, `paperLossCount`, `totalCount` ekler
-  - `useAIAdvisor` her pick'e `mlBestRuleHash` set eder; localStorage cache de persist eder
-  - `PaperTradeEngine._openTrade` `pick.mlBestRuleHash`'i `trade.ruleHash` olarak `openTrade` payload'una koyar
-  - IPC: `paperDb.applyTradeFeedback(ruleHash, pnlPct)` renderer'a expose (defensive — şu an server-side otomatik)
-  - **🔄 LIVE rozeti** (AIAdvisorPanel): paper sample share ≥ %20 olduğunda gösterilir; tooltip paper W/L kırılımı ve paper win rate
-  - Engine console log: `[PaperML] Rule feedback applied — hash=… paperWins=… paperLosses=… total=…`
-  - **Test**: `PaperTradeEngine.test.js` 7 senaryo (rule_hash propagation, fallback, no-ML pick, win/loss accumulator, çoklu trade aggregate, no-rule bypass) → 194/194 vitest pass
+- [x] **Canlı Edge Truth Layer (v29.5)** — paper-trade sonuçları conviction × regime bazında:
+  - **`liveEdge.js`** (pure, test edilmiş): `computeLiveEdge(closedTrades, {limit})` kapanışları
+    `sniper/flagged/early` × `BULL/NEUTRAL/BEAR` hücrelerine böler → win-rate/expectancy/PF/reliability
+  - **DB Schema v5**: `paper_trades.conviction_tier` kolonu + migration (segmentasyon anahtarı)
+  - `PaperTradeEngine`: her trade'e `convictionTier` yazar; snapshot `liveEdge` (son 120 kapanış) expose eder
+  - `PaperTradingPanel`: CANLI EDGE matrisi (tier × rejim), yeşil/sarı/kırmızı, <8 örnekte soluk
+  - Salt-okunur (skorlamaya bağlı değil — measure-first)
+  - **Test**: `liveEdge.test.js` 13 senaryo → tüm suite 350/350 pass
+- [x] **Dead "v5 feedback loop" temizliği (v29.6+)** — CLAUDE.md'de "sevk edildi" diye anlatılan
+  ama hiç kurulmamış paper→rule geri besleme döngüsünün dead reading-side kodu kaldırıldı:
+  `useAIAdvisor`'daki `paperWinCount`/`paperLossCount`/`mlBestRuleHash` okumaları + `AIAdvisorPanel`
+  🔄 LIVE rozeti (hep 0 örnek → asla görünmüyordu). Karar: build yerine sil (measure-first);
+  canlı paper-truth ihtiyacı Canlı Edge katmanıyla gösterim seviyesinde karşılanıyor.
 - [x] **`bist_bridge.py` v5 — 5Y Truncation Fallback**:
   - **TIMEFRAME_DAYS** + **TIMEFRAME_EXPECTED_CANDLES** sabitleri (`1M`/`3M`/`6M`/`1Y`/`2Y`/`5Y`); 252 sessions/yr baz
   - `COMPLETENESS_RATIO = 0.80` — 5Y request <%80 expected candles → truncated sayılır

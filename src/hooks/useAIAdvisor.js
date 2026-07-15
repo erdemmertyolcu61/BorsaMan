@@ -2364,21 +2364,15 @@ export function useAIAdvisor(portfolio) {
                     winRate: best.winRate,
                     avgRoi: best.avgRoi,
                     conditions: best.conditions,
-                    // v5: live-feedback counts for "🔄 LIVE" badge
-                    paperWinCount:  best.paperWinCount  || 0,
-                    paperLossCount: best.paperLossCount || 0,
-                    totalCount:     best.totalCount     || 0,
+                    totalCount: best.totalCount || 0, // rule's historical backtest sample count ("N örnek")
                   } : null,
-                  // v5: deterministic key into discovered_rules so paper trades
-                  // can feed outcomes back into rule weights when they close.
-                  mlBestRuleHash: best?.ruleHash || null,
                   mlMatchedCount: result.ruleCount,
                   // v29: asiri-alim momentum kurallari bu pick icin devre disi mi?
                   mlRegimeGated: gated,
                 };
               }
               // No ML match → standard signal, no badge
-              return { ...p, mlConfidenceBoost: 0, mlBestRule: null, mlBestRuleHash: null, mlMatchedCount: 0, mlRegimeGated: gated };
+              return { ...p, mlConfidenceBoost: 0, mlBestRule: null, mlMatchedCount: 0, mlRegimeGated: gated };
             });
             console.log(`[AI Advisor] ML scoring: ${mlMatched}/${picks.length} picks matched rules; rejim-kapisi ${mlGatedCount} pick'te asiri-alim momentum kurallarini devre disi birakti`);
           } else {
@@ -2779,7 +2773,6 @@ export function useAIAdvisor(portfolio) {
               insiderScore: p.insiderScore, insiderNetBuys: p.insiderNetBuys,
               hasRecentInsiderBuy: p.hasRecentInsiderBuy, hasRecentInsiderSell: p.hasRecentInsiderSell,
               mlConfidenceBoost: p.mlConfidenceBoost, mlBestRule: p.mlBestRule,
-              mlBestRuleHash: p.mlBestRuleHash,
               mlMatchedCount: p.mlMatchedCount, mlRegimeGated: p.mlRegimeGated,
               foreignRatio: p.foreignRatio, foreignChangeDay: p.foreignChangeDay,
               foreignChangeWeek: p.foreignChangeWeek, foreignChangeMonth: p.foreignChangeMonth,

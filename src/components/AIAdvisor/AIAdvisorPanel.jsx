@@ -1199,37 +1199,11 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       🎯 %{(p.mlBestRule.winRate || 0).toFixed(0)}{p.mlRegimeGated ? ' ⚙' : ''}
                     </span>
                   )}
-                  {/* LIVE CALIBRATION rozeti — paper trade outcome'lari kuralin
-                      win/loss sayilarinin >= %20'sine ulasti, yani kural artik
-                      sadece historical backtest degil canli forward-test ile de
-                      kalibre. */}
-                  {(p.mlMatchedCount || 0) > 0 && p.mlBestRule && (() => {
-                    const paperW = p.mlBestRule.paperWinCount || 0;
-                    const paperL = p.mlBestRule.paperLossCount || 0;
-                    const total = p.mlBestRule.totalCount || 0;
-                    const paperSamples = paperW + paperL;
-                    if (paperSamples < 1 || total < 3) return null;
-                    const liveShare = paperSamples / total;
-                    if (liveShare < 0.10) return null;
-                    const paperWinRate = paperSamples > 0
-                      ? (paperW / paperSamples) * 100
-                      : 0;
-                    return (
-                      <span style={{
-                        fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
-                        background: 'linear-gradient(90deg, #10b981, #059669)',
-                        color: '#fff',
-                        letterSpacing: 0.3,
-                        boxShadow: '0 0 4px rgba(16,185,129,0.35)',
-                      }} title={[
-                        `🔄 Kural canlı forward-test ile kalibre edildi`,
-                        `Paper trade örneği: ${paperSamples}/${total} (${(liveShare * 100).toFixed(0)}%)`,
-                        `Paper win rate: %${paperWinRate.toFixed(0)} (${paperW}W/${paperL}L)`,
-                      ].join('\n')}>
-                        🔄 LIVE
-                      </span>
-                    );
-                  })()}
+                  {/* Not: paper-trade → ML-kural geri besleme dongusu (v5) hic
+                      kurulmadi (DB kolonlari + applyTradeFeedback yok). Canli
+                      paper-truth artik #3 canli-edge matrisiyle (PaperTradingPanel)
+                      gosterim seviyesinde veriliyor; buradaki eski "🔄 LIVE" rozeti
+                      hep 0 ornek dondugu icin kaldirildi. */}
                   {/* TAVAN UYARI + DEVAM OLASILIGI rozeti — son bar +%9 uzeri */}
                   {Math.max(p.todayPumpReal || 0, p.recentPump || 0) >= 9 && (() => {
                     const cp = p.continuationProbability;
