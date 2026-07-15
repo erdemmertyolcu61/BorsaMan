@@ -685,7 +685,18 @@ FALLBACK_TIMEFRAME = "2Y"                           # 5Y truncation rescue
 - signals.js %55 — 1070 satirlik dosya; setup detectorlerinin ayri test dosyasina cekilmesi planli
 - SMC %54 — OrderBlock + LiquiditySweep helpers icin targeted test yok
 - Python CI'da borsapy best-effort; gercek integration `uvx saidsurucu-borsa-mcp` runner gerektirir
-- `npm run lint` hook'unda ESLint dependency eklenmeli (su an `|| true` ile pass-through)
+
+### ESLint Gate (v29.8, 2026-07) — GERCEK kapi
+- ESLint 9 flat config (`eslint.config.js`); `npm run lint` = `eslint src --max-warnings 140`
+  (herhangi bir error VEYA 140 ustu warning → exit 1). `|| true` no-op KALDIRILDI. `npm run lint:fix` mevcut.
+- Kural felsefesi: bug'lar error (rules-of-hooks, no-undef, no-const-assign, no-dupe-keys,
+  no-unreachable), stilistik gurultu kapali; unused-vars + exhaustive-deps warning.
+- Dual browser+Node `DatabaseManager.js` → node globals; test dosyalari → Vitest globals.
+- Su an: **0 error / 121 warning** (warning'ler cogunlukla god-file unused var; ratchet 140).
+- Kurulumda 17 latent bug yakalandi+duzeltildi — en kritigi: `useAIAdvisor` scan-complete
+  dispatch'inde `newsIndex` undeclared idi (blok-local `ni`) → ReferenceError outer catch'e
+  dusup `advisor-scan-complete` event'i muhtemelen HIC dispatch olmuyordu (paper-trade
+  auto-trade + AlertLog dinleyicileri sessizce bos kaliyordu).
 
 ## Intraday Engine — v2 (2026-04)
 
