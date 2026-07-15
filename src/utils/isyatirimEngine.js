@@ -189,7 +189,7 @@ function parseFinancialData(rows, symbol, periodLabels) {
     }
     if (Object.keys(vals).length === 0) {
       for (const k of Object.keys(row)) {
-        if (/^\d{4}[\/\-]\d{1,2}$/.test(k) && row[k] != null && row[k] !== '') {
+        if (/^\d{4}[/-]\d{1,2}$/.test(k) && row[k] != null && row[k] !== '') {
           vals[k] = typeof row[k] === 'number' ? row[k] : parseFloat(String(row[k]).replace(/\./g, '').replace(',', '.')) || 0;
         }
       }

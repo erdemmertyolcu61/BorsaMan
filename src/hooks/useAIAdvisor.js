@@ -1060,7 +1060,6 @@ export function useAIAdvisor(portfolio) {
                 obvDivergence: ind.obvDivergence,
                 rsiDivergence: ind.rsiDivergence,
                 wyckoff: ind.wyckoffPhase,
-                wyckoffSpring: ind.wyckoffSpring,
                 volumeClimax: ind.volumeClimax,
                 entry:     liveEntry,         // güncel piyasa fiyatı
                 stop:      liveStop,           // yapısal stop (değişmez)
@@ -2544,6 +2543,12 @@ export function useAIAdvisor(portfolio) {
       // Price refresh, news, foreign flow, insider are independent — run all at once.
       // Each has its own 12s timeout; total enrichment capped at ~12s instead of ~45s sequential.
       const enrichTimeout = 12_000;
+      // Shared across the enrichment IIFEs → carried on the scan-complete event
+      // (AlertLog/ChatPanel read detail.newsIndex). Was a bug: the [1] News block
+      // assigned a block-local `ni` while the dispatch referenced an undeclared
+      // `newsIndex` → ReferenceError swallowed by the outer catch → the whole
+      // `advisor-scan-complete` event never fired.
+      let newsIndex = null;
       const enrichResults = await Promise.allSettled([
         // [0] Price refresh
         _withTimeout((async () => {
@@ -2586,9 +2591,9 @@ export function useAIAdvisor(portfolio) {
           const universe = picks.map(p => p.symbol);
           if (!universe.length) return;
           const news = await fetchMarketNews({ universe, maxPerSource: 25 });
-          const ni = indexBySymbol(news);
+          newsIndex = indexBySymbol(news);
           for (const r of picks) {
-            const e = ni[r.symbol];
+            const e = newsIndex[r.symbol];
             if (e?.count) {
               r.newsScore = e.score;
               r.newsCount = e.count;

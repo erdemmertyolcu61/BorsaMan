@@ -762,6 +762,9 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   // ── REGIME DETECTION: Trend vs Range — Using adaptive thresholds ──
   const regimeIsTrend = isTrending && ind.adx > 25;
   const regimeIsRange = isRanging && ind.adx < 18;
+  // Volatile regime: ATR > 3% of price. Was referenced (hold-duration estimate)
+  // but never declared → those `typeof regimeIsVolatile` branches were dead code.
+  const regimeIsVolatile = !!(atr && p > 0 && atr / p > 0.03);
   if (regimeIsRange) {
     if (ind.lastRSI < thresholds.rsiOversold) { score += 1.5; reasons.push({ t: `RANGE BONUSU: RSI asiri satim ${regime.regime} daha degerli`, c: 'bullish' }); }
     if (ind.lastRSI > thresholds.rsiVeryOverbought) { score -= 1.5; reasons.push({ t: `RANGE CEZASI: RSI asiri alim ${regime.regime} daha tehlikeli`, c: 'bearish' }); }

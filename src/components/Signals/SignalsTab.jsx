@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { useSignalTracker } from '../../hooks/useSignalTracker.js';
 
 function StatCard({ label, value, color = 'var(--t1)', sub, subColor }) {
   return (
@@ -58,7 +57,8 @@ export default function SignalsTab({ tracker, onAnalyze }) {
     filterSignals,
     exportCSV,
     importCSV,
-  } = tracker || useSignalTracker();
+  } = tracker || {}; // tracker App.jsx'ten daima gecilir; hook'u kosullu cagirmak
+                     // rules-of-hooks ihlaliydi — defansif {} fallback yeterli.
 
   const reliability = parseInt(stats?.reliability || 0);
   const relColor = reliability >= 70 ? 'var(--green)' : reliability >= 50 ? 'var(--yellow)' : 'var(--red)';

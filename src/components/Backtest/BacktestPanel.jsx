@@ -271,7 +271,7 @@ function getActionAdvice(mc) {
   if (pp >= 45) {
     return { icon: '❌', label: 'GIRME', detail: 'Kar olasılığı dusuk, yikim riski yuksek. Bu kombinasyonu kullanma.', color: '#ef4444', bg: 'rgba(239,68,68,0.08)', lot: '—' };
   }
-  return { icon: '❌', label: 'KESINLIKLE GIRME', detail: `Strateji bu hissede calısmiyor. 1000 senaryonun %${(100 - pp).toFixed(0)}\'inde zarar.`, color: '#ef4444', bg: 'rgba(239,68,68,0.08)', lot: '—' };
+  return { icon: '❌', label: 'KESINLIKLE GIRME', detail: `Strateji bu hissede calısmiyor. 1000 senaryonun %${(100 - pp).toFixed(0)}'inde zarar.`, color: '#ef4444', bg: 'rgba(239,68,68,0.08)', lot: '—' };
 }
 
 function MonteCarloResults({ mc }) {

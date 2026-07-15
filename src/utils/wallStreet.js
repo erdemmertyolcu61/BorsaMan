@@ -161,7 +161,7 @@ export function assessLiquidity(prices) {
   const tail = prices.slice(-20);
   const avgVolTL = tail.reduce((s, b) => s + (b.volume || 0) * (b.close || 0), 0) / tail.length;
   let tier, message;
-  if (avgVolTL >= 100_000_000) { tier: 'INSTITUTIONAL'; tier = 'INSTITUTIONAL'; message = 'Kurumsal likidite (100M+ TL/gun)'; }
+  if (avgVolTL >= 100_000_000) { tier = 'INSTITUTIONAL'; message = 'Kurumsal likidite (100M+ TL/gun)'; }
   else if (avgVolTL >= 25_000_000) { tier = 'HIGH'; message = 'Yuksek likidite (25-100M TL/gun)'; }
   else if (avgVolTL >= 5_000_000) { tier = 'MEDIUM'; message = 'Orta likidite (5-25M TL/gun)'; }
   else if (avgVolTL >= 1_000_000) { tier = 'LOW'; message = 'Dusuk likidite — buyuk pozisyon tasimaz'; }

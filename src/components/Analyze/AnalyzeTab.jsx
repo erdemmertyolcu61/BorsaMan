@@ -307,12 +307,8 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
     const s = symbol.trim().toUpperCase() || 'THYAO';
     setBadge({ text: 'Demo', cls: 'demo' });
     log(s + ' demo veri uretiliyor...', 'info');
-    // Fallback removed
+    // Fallback removed — demo data path deleted; kept as a no-op stub.
     setLoading(false);
-    return;
-    const { ind, sig } = getUnifiedAnalysis(s, data);
-    setGData(data); setGInd(ind); setGSig(sig);
-    log(data.prices.length + ' bar demo veri yuklendi', 'ok');
   };
 
   return (
