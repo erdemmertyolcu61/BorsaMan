@@ -58,7 +58,7 @@ graphify explain <node>        # Bir node + komsulari aciklama
 - **Python kopru**: `bist_bridge.py` — borsa-mcp server'i ile TradingAgents arasingi
 - **Terminal estetigi**: Koyu tema (#0a0e17), JetBrains Mono + Space Grotesk
 - **4 ana sekme**: Tekil Analiz, Strateji/Backtest, Intraday Trade, Portfoy
-- **Sabit paneller**: AIAdvisorPanel (sol), AIAdvisorDetailPanel (alt, collapsible), SignalTrackerPanel (3 tab), AlertLog (floating sag-alt)
+- **Sabit paneller**: AIAdvisorPanel (sol), AIAdvisorDetailPanel (alt, collapsible), SignalsTab (Sinyal Takibi — 4 alt-sekme), AlertLog (floating sag-alt)
 
 ## Teknik Ozellikler (v8)
 - **Gostergeler**: MA-20/50/100/200, RSI(14), MACD(12/26/9), Bollinger Bands, ATR(14),
@@ -627,11 +627,6 @@ FALLBACK_TIMEFRAME = "2Y"                           # 5Y truncation rescue
 - `sanitizeText(dirty)`: baslik/ozet alanlari icin TUM tag'leri siler
 - ChatPanel.jsx artik AI yanitini `renderSafeMarkdown` ile render ediyor
 - Dependency: `dompurify ^3.1.6`
-
-### Sandboxed Strategy Compile — eval() KALDIRILDI
-- StrategyBuilderTab: denylist regex ile tehlikeli API'ler reddedilir
-- 4KB kod limiti + `new Function('"use strict"; return (' + code + ');')` ile izole scope
-- Kompoz edilen strateji yalnizca `ind`, `sig`, `data` argumanlarini gorur
 
 ### Claude Prompt Caching
 - `callClaude` → `system` alanini array olarak gonderiyor: `[{ text: dynamic }, { text: SMC_RULEBOOK, cache_control: { type: 'ephemeral' } }]`
