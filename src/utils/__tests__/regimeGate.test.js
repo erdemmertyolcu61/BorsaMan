@@ -69,8 +69,21 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(out.map(p => p.symbol)).toEqual(['A', 'D']); // A(80) + sell D
   });
 
-  it('BEAR — suppresses ALL buys, only sells survive', () => {
+  it('BEAR — sells + top-N strongest buys tagged counter-regime (not empty)', () => {
     const out = applyRegimeGate(picks, 'BEAR');
+    // sell D always survives; buys kept by score desc (A=80, B=66, C=50), capped at 3
+    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B', 'C']);
+    expect(out.filter(p => p.cls === 'buy').every(p => p._counterRegime === true)).toBe(true);
+    expect(out.find(p => p.symbol === 'D')._counterRegime).toBeUndefined(); // sells not tagged
+  });
+
+  it('BEAR — caps counter-regime buys via bearMaxBuys', () => {
+    const out = applyRegimeGate(picks, 'BEAR', 75, 2);
+    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B']); // only top-2 buys
+  });
+
+  it('BEAR — bearMaxBuys=0 falls back to sells-only', () => {
+    const out = applyRegimeGate(picks, 'BEAR', 75, 0);
     expect(out.map(p => p.symbol)).toEqual(['D']);
   });
 

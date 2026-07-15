@@ -45,18 +45,32 @@ export function regimeLabel(regime) {
 
 /**
  * Apply the regime buy-gate to a pick list (buy-oriented; sells pass through).
- *   BEAR (DUSUS)   → suppress ALL buys (only sells survive) — "don't catch a falling knife"
+ *   BEAR (DUSUS)   → sells + at most the top `bearMaxBuys` strongest buys, each
+ *                    tagged `_counterRegime:true`. We DON'T fully hide buys: an
+ *                    empty panel is a worse product than a clearly-flagged short
+ *                    list. The measured -3.4% edge is surfaced as a warning in the
+ *                    UI (banner + per-card badge), not by suppression. This mirrors
+ *                    the existing regime badge copy: "savunma modu (3 pick + sell)".
  *   NEUTRAL (YATAY)→ only score>=75 buys survive (+ sells)
  *   BULL (YUKSELIS)→ unchanged
  * Pure: returns a NEW array, never mutates the input.
  * @param {Array<{cls?: string, score?: number}>} picks
  * @param {'BULL'|'NEUTRAL'|'BEAR'} regime
  * @param {number} [sniperMin=75] - min score kept in NEUTRAL
+ * @param {number} [bearMaxBuys=3] - max counter-regime buys shown in BEAR
  * @returns {Array}
  */
-export function applyRegimeGate(picks, regime, sniperMin = 75) {
+export function applyRegimeGate(picks, regime, sniperMin = 75, bearMaxBuys = 3) {
   if (!Array.isArray(picks)) return [];
-  if (regime === 'BEAR') return picks.filter(p => p.cls === 'sell');
+  if (regime === 'BEAR') {
+    const sells = picks.filter(p => p.cls === 'sell');
+    const buys = picks
+      .filter(p => p.cls === 'buy')
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, Math.max(0, bearMaxBuys))
+      .map(p => (p._counterRegime ? p : { ...p, _counterRegime: true }));
+    return [...sells, ...buys];
+  }
   if (regime === 'NEUTRAL') return picks.filter(p => p.cls === 'sell' || (p.score || 0) >= sniperMin);
   return picks.slice(); // BULL — unchanged (copy for purity)
 }

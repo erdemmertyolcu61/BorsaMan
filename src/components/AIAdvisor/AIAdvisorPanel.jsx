@@ -710,12 +710,17 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                     : 'Nokta atışı (score≥75) yok — gösterilenler daha düşük konviksiyon, küçük pozisyon.',
                 }
               : r === 'BEAR'
-                ? {
-                    bg: 'linear-gradient(90deg, rgba(244,63,94,0.15), rgba(244,63,94,0.03))',
-                    border: 'rgba(244,63,94,0.4)', fg: '#f87171', icon: '📉',
-                    title: 'DÜŞÜŞ REJİMİ — AL önerilmez',
-                    sub: 'Ölçüm: düşüşte AL pick\'leri tarihsel -3.4% (%18.8 WR). Nakitte kalmak en iyi "işlem".',
-                  }
+                ? (() => {
+                    const cr = displayPicks.filter(p => p._counterRegime || p.cls === 'buy').length;
+                    return {
+                      bg: 'linear-gradient(90deg, rgba(244,63,94,0.15), rgba(244,63,94,0.03))',
+                      border: 'rgba(244,63,94,0.4)', fg: '#f87171', icon: '📉',
+                      title: 'DÜŞÜŞ REJİMİ — AL önerilmez',
+                      sub: cr > 0
+                        ? `Ölçüm: düşüşte AL'lar tarihsel -3.4% (%18.8 WR). Yine de en güçlü ${cr} AL "rejime karşı" gösteriliyor — yüksek risk, küçük pozisyon.`
+                        : 'Ölçüm: düşüşte AL pick\'leri tarihsel -3.4% (%18.8 WR). Nakitte kalmak en iyi "işlem".',
+                    };
+                  })()
                 : {
                     bg: 'linear-gradient(90deg, rgba(148,163,184,0.12), rgba(148,163,184,0.03))',
                     border: 'rgba(148,163,184,0.35)', fg: '#cbd5e1', icon: '➡️',
@@ -1028,6 +1033,20 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                     </span>
                   )}
                   {/* v29: KONVIKSIYON rozeti — backtest: Score>=75 pozitif beklenti, 65-74 yazi-tura */}
+                  {p.cls !== 'sell' && p._counterRegime && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(244,63,94,0.18)', color: '#f87171',
+                      letterSpacing: 0.3, border: '1px solid rgba(244,63,94,0.4)',
+                    }} title={[
+                      '⚠ REJİME KARŞI — piyasa düşüş trendinde',
+                      'Ölçüm: düşüş rejiminde AL pick\'leri tarihsel -3.4% (%18.8 kazanma).',
+                      'Bu en güçlü birkaç AL yine de gösteriliyor ama yüksek risk taşır.',
+                      'Küçük pozisyon / sıkı stop önerilir.',
+                    ].join('\n')}>
+                      ⚠ REJİME KARŞI
+                    </span>
+                  )}
                   {p.cls !== 'sell' && p.convictionTier === 'sniper' && (
                     <span style={{
                       fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
