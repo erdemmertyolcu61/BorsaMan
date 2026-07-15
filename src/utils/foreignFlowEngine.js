@@ -81,6 +81,54 @@ function parseNum(str) {
 }
 
 /**
+ * v29.4: Pure foreign-flow scoring — extracted from useAIAdvisor AND AnalyzeTab
+ * (the exact same block was duplicated in both, a DRY/bug risk). Weighs weekly +
+ * monthly + daily foreign-ratio change plus a high-ratio-exit / low-ratio-entry
+ * adjustment into a single [-15, +15] score, a label, and a confidence delta.
+ * @param {{ ratio?: number, changeDay?: number, changeWeek?: number, changeMonth?: number }} fr
+ * @returns {{ score: number, label: string, confDelta: number }}
+ */
+export function computeForeignFlowScore(fr) {
+  if (!fr) return { score: 0, label: 'NOTR', confDelta: 0 };
+  const cw = fr.changeWeek || 0;
+  const cm = fr.changeMonth || 0;
+  const cd = fr.changeDay || 0;
+  const ratio = fr.ratio || 0;
+  let s = 0;
+
+  // Weekly change (primary signal)
+  if (cw >= 2.0) s += 8;
+  else if (cw >= 1.0) s += 5;
+  else if (cw >= 0.3) s += 2;
+  else if (cw <= -2.0) s -= 8;
+  else if (cw <= -1.0) s -= 5;
+  else if (cw <= -0.3) s -= 2;
+
+  // Monthly trend (confirmation)
+  if (cm >= 3.0) s += 4;
+  else if (cm >= 1.0) s += 2;
+  else if (cm <= -3.0) s -= 4;
+  else if (cm <= -1.0) s -= 2;
+
+  // Daily momentum (short-term)
+  if (cd >= 0.5) s += 2;
+  else if (cd <= -0.5) s -= 2;
+
+  // High foreign ratio + exit = more dangerous; low ratio + entry = undiscovered
+  if (ratio >= 50 && cw <= -1.0) s -= 3;
+  if (ratio < 20 && cw >= 1.0) s += 3;
+
+  const score = Math.max(-15, Math.min(15, s));
+  const label = score >= 6 ? 'GUCLU GIRIS'
+    : score >= 3 ? 'GIRIS'
+    : score <= -6 ? 'GUCLU CIKIS'
+    : score <= -3 ? 'CIKIS'
+    : 'NOTR';
+  const confDelta = Math.max(-8, Math.min(8, Math.round(score * 0.6)));
+  return { score, label, confDelta };
+}
+
+/**
  * Try BigPara JSON API for yabancı oranları.
  * Tries multiple possible endpoint patterns.
  */

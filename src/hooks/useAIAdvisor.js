@@ -7,6 +7,7 @@ import { calcSectorMetrics, rankSectors } from '../utils/sectorEngine.js';
 import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
+import { classifyBistRegime, regimeLabel, applyRegimeGate } from '../utils/regimeGate.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { classifyRegime } from '../utils/regimeEngine.js';
 import { correlationCapFilter } from '../utils/portfolioOptimizer.js';
@@ -809,36 +810,19 @@ export function useAIAdvisor(portfolio) {
       // degisimi cok gurultuluydu. Rejim-bazli pick performans olcumu (walk-forward)
       // net gosterdi: AL pick'leri SADECE YUKSELIS'te pozitif (+1.14% beklenti),
       // YATAY'da -1.68%, DUSUS'ta -3.36%. Bu rejim, buyPicks'te AL kapisi surer.
+      // v29.4: rejim siniflandirmasi pure fonksiyona cikarildi (regimeGate.js) — test edilebilir.
       let marketRegime = 'NEUTRAL';   // BULL=YUKSELIS, NEUTRAL=YATAY, BEAR=DUSUS
       let bistChangePct = 0;
       try {
         const bistData = await fetchSingle('XU100', '3mo', '1d', true).catch(() => null);
-        const bars = bistData?.prices || [];
-        if (bars.length >= 25) {
-          const closes = bars.map(b => b.close).filter(c => c > 0);
-          const n = closes.length;
-          const last = closes[n - 1];
-          const ma20 = closes.slice(n - 20).reduce((s, c) => s + c, 0) / 20;
-          const ref5 = closes[n - 6] || closes[0];
-          const slope5 = ref5 > 0 ? ((last - ref5) / ref5) * 100 : 0;
-          bistChangePct = slope5; // 5-gun trend egimi (tek-gun degil)
-          if (last > ma20 && slope5 > 1) marketRegime = 'BULL';
-          else if (last < ma20 && slope5 < -1) marketRegime = 'BEAR';
-          // aksi halde NEUTRAL (YATAY)
-        } else if (bars.length >= 2) {
-          // fallback: yeterli tarih yoksa tek-gun degisim
-          const yest = bars[bars.length - 2]?.close, today = bars[bars.length - 1]?.close;
-          if (yest > 0 && today > 0) {
-            bistChangePct = ((today - yest) / yest) * 100;
-            if (bistChangePct > 1) marketRegime = 'BULL';
-            else if (bistChangePct < -0.5) marketRegime = 'BEAR';
-          }
-        }
+        const closes = (bistData?.prices || []).map(b => b.close);
+        const cls = classifyBistRegime(closes);
+        marketRegime = cls.regime;
+        bistChangePct = cls.changePct;
       } catch { /* fallback NEUTRAL */ }
-      const regimeLabel = marketRegime === 'BULL' ? 'YUKSELIS' : marketRegime === 'BEAR' ? 'DUSUS' : 'YATAY';
       pushLog({
         type: marketRegime === 'BEAR' ? 'warn' : 'info',
-        msg: `Piyasa rejimi: ${regimeLabel} (BIST100 5g trend ${bistChangePct >= 0 ? '+' : ''}${bistChangePct.toFixed(1)}%)`,
+        msg: `Piyasa rejimi: ${regimeLabel(marketRegime)} (BIST100 5g trend ${bistChangePct >= 0 ? '+' : ''}${bistChangePct.toFixed(1)}%)`,
       });
       setMarketRegime({ regime: marketRegime, bistChangePct });
       // Rejim-bazli pick limiti kapatildi, kullanici her zaman 8 pick gormek istiyor.
@@ -1801,24 +1785,18 @@ export function useAIAdvisor(portfolio) {
         }
       }
 
-      // ── v29.2 REGIME BUY-GATE (walk-forward validated) ───────────────────
-      // Olcum (1y, 81 AL sinyali, rejim x kademe): AL pick'leri SADECE YUKSELIS'te
-      // pozitif (+1.14% beklenti, %59.5 WR). YATAY -1.68%, DUSUS -3.36% (%18.8 WR).
-      // Score kademesi kurtarmiyor — REJIM baskin. Bu yuzden BIST100 trend rejimine
-      // gore AL onerilerini kapiliyoruz:
-      //   BEAR (DUSUS)   → AL'lari TAMAMEN sustur (dusen biçagi tutma)
-      //   NEUTRAL (YATAY)→ sadece score>=75 (coin-flip bandi elenir)
-      //   BULL (YUKSELIS)→ normal
-      if (marketRegime === 'BEAR') {
-        if (buyPicks.length > 0) {
-          pushLog({ type: 'warn', msg: `REJIM KAPISI (DUSUS): ${buyPicks.length} AL pick susturuldu — tarihsel dusus AL beklentisi -3.4% (%18.8 WR). Bugun kaliteli long yok.` });
-        }
-        buyPicks = [];
-      } else if (marketRegime === 'NEUTRAL') {
+      // ── v29.2 REGIME BUY-GATE (early, on buyPicks) — pure applyRegimeGate ──
+      // Olcum: AL pick'leri SADECE YUKSELIS'te pozitif; YATAY -1.7%, DUSUS -3.4%.
+      // (Nihai/authoritative kapi asagida picks + finalPicks uzerinde; bu erken
+      // katman sektor-diversifikasyon gurultusunu azaltir.) buyPicks buy-only oldugu
+      // icin BEAR → bosalir, NEUTRAL → score>=75.
+      {
         const before = buyPicks.length;
-        buyPicks = buyPicks.filter(p => (p.score || 0) >= 75);
+        buyPicks = applyRegimeGate(buyPicks, marketRegime);
         if (before !== buyPicks.length) {
-          pushLog({ type: 'warn', msg: `REJIM KAPISI (YATAY): sadece score>=75 — ${before} → ${buyPicks.length} pick (YATAY'da zayif kademe -1.7% beklenti)` });
+          pushLog({ type: 'warn', msg: marketRegime === 'BEAR'
+            ? `REJIM KAPISI (DUSUS): ${before} AL pick susturuldu — tarihsel dusus AL beklentisi -3.4% (%18.8 WR). Bugun kaliteli long yok.`
+            : `REJIM KAPISI (YATAY): sadece score>=75 — ${before} → ${buyPicks.length} pick (YATAY'da zayif kademe -1.7% beklenti)` });
         }
       }
 
@@ -2627,9 +2605,9 @@ export function useAIAdvisor(portfolio) {
           }
         })(), enrichTimeout),
 
-        // [2] Foreign flow — derinlemesine analiz
+        // [2] Foreign flow — derinlemesine analiz (skorlama: pure computeForeignFlowScore)
         _withTimeout((async () => {
-          const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');
+          const { fetchAllForeignRatios, computeForeignFlowScore } = await import('../utils/foreignFlowEngine.js');
           const foreignMap = await fetchAllForeignRatios();
           for (const p of picks) {
             const fr = foreignMap[p.symbol];
@@ -2639,48 +2617,11 @@ export function useAIAdvisor(portfolio) {
             p.foreignChangeWeek = fr.changeWeek;
             p.foreignChangeMonth = fr.changeMonth;
 
-            // Yabanci akis skoru: haftalik + aylik trend bilesik degerlendirme
-            let flowScore = 0;
-            const cw = fr.changeWeek || 0;
-            const cm = fr.changeMonth || 0;
-            const cd = fr.changeDay || 0;
-
-            // Haftalik degisim (ana sinyal)
-            if (cw >= 2.0) flowScore += 8;
-            else if (cw >= 1.0) flowScore += 5;
-            else if (cw >= 0.3) flowScore += 2;
-            else if (cw <= -2.0) flowScore -= 8;
-            else if (cw <= -1.0) flowScore -= 5;
-            else if (cw <= -0.3) flowScore -= 2;
-
-            // Aylik trend (teyit)
-            if (cm >= 3.0) flowScore += 4;
-            else if (cm >= 1.0) flowScore += 2;
-            else if (cm <= -3.0) flowScore -= 4;
-            else if (cm <= -1.0) flowScore -= 2;
-
-            // Gunluk momentum (kisa vadeli ivme)
-            if (cd >= 0.5) flowScore += 2;
-            else if (cd <= -0.5) flowScore -= 2;
-
-            // Yuksek yabanci oraniyla birlikte cikis = daha tehlikeli
-            if (fr.ratio >= 50 && cw <= -1.0) flowScore -= 3;
-            // Dusuk yabanci oranina ragmen giris = kesfedilmemis firsat
-            if (fr.ratio < 20 && cw >= 1.0) flowScore += 3;
-
-            p.foreignFlowScore = Math.max(-15, Math.min(15, flowScore));
-            p.foreignFlowLabel = flowScore >= 6 ? 'GUCLU GIRIS'
-              : flowScore >= 3 ? 'GIRIS'
-              : flowScore <= -6 ? 'GUCLU CIKIS'
-              : flowScore <= -3 ? 'CIKIS'
-              : 'NOTR';
-
-            // Confidence etkisi: [-8, +8] araliginda
-            const confDelta = Math.max(-8, Math.min(8, Math.round(flowScore * 0.6)));
+            const { score, label, confDelta } = computeForeignFlowScore(fr);
+            p.foreignFlowScore = score;
+            p.foreignFlowLabel = label;
             p.confidence = Math.max(0, Math.min(100, (p.confidence || 50) + confDelta));
-            if (p.confidenceBreakdown) {
-              p.confidenceBreakdown.foreignFlow = confDelta;
-            }
+            if (p.confidenceBreakdown) p.confidenceBreakdown.foreignFlow = confDelta;
           }
         })(), enrichTimeout),
 
@@ -2771,18 +2712,18 @@ export function useAIAdvisor(portfolio) {
         return p; // TUT olarak birak
       });
 
-      // ── v29.2 REGIME BUY-GATE (panel/state picks) ────────────────────────
+      // ── v29.2 REGIME BUY-GATE (panel/state picks) — pure applyRegimeGate ─────
       // picks buy-odakli liste (setTopPicks → panel "AI FIRSATLAR"). BEAR'da
       // buy'lari cikar → panel DUSUS bos-state gosterir. NEUTRAL'da sadece
       // score>=75. Ayrica asagida finalPicks (dispatch) ayni kapiden gecer.
-      if (marketRegime === 'BEAR') {
+      {
         const before = picks.length;
-        picks = picks.filter(p => p.cls === 'sell');
-        if (before !== picks.length) pushLog({ type: 'warn', msg: `REJIM KAPISI (DUSUS): ${before - picks.length} AL pick susturuldu — dusus rejiminde AL tarihsel -3.4% (%18.8 WR). Bugun kaliteli long yok.` });
-      } else if (marketRegime === 'NEUTRAL') {
-        const before = picks.length;
-        picks = picks.filter(p => p.cls === 'sell' || (p.score || 0) >= 75);
-        if (before !== picks.length) pushLog({ type: 'warn', msg: `REJIM KAPISI (YATAY): sadece score>=75 — ${before} → ${picks.length} pick (yatayda zayif AL -1.7% beklenti)` });
+        picks = applyRegimeGate(picks, marketRegime);
+        if (before !== picks.length) {
+          pushLog({ type: 'warn', msg: marketRegime === 'BEAR'
+            ? `REJIM KAPISI (DUSUS): ${before - picks.length} AL pick susturuldu — dusus rejiminde AL tarihsel -3.4% (%18.8 WR). Bugun kaliteli long yok.`
+            : `REJIM KAPISI (YATAY): sadece score>=75 — ${before} → ${picks.length} pick (yatayda zayif AL -1.7% beklenti)` });
+        }
       }
 
       setScanResults(results);
@@ -2937,23 +2878,15 @@ export function useAIAdvisor(portfolio) {
         console.warn(`[AI Advisor] picks[] empty — derived ${buyish.length} buy-side + ${sellish.length} sell from results`);
       }
 
-      // ── v29.2 REGIME BUY-GATE — TEK CIKIS KAPISI (walk-forward validated) ──
+      // ── v29.2 REGIME BUY-GATE — TEK CIKIS KAPISI (pure applyRegimeGate) ──
       // buyPicks'teki erken gate lastResort/emergency/fallback ile bypass ediliyordu.
       // Burasi finalPicks'in TUM kaynaklardan birlestigi tek nokta — dispatch oncesi.
       // Olcum: AL pick'leri SADECE YUKSELIS'te pozitif; YATAY -1.7%, DUSUS -3.4%.
-      //   BEAR (DUSUS)   → AL'lari tamamen ele, sadece SAT kalir ("dusen biçagi tutma")
-      //   NEUTRAL (YATAY)→ sadece score>=75 AL (+ SAT); zayif kademe elenir
-      if (marketRegime === 'BEAR') {
+      {
         const before = finalPicks.length;
-        finalPicks = finalPicks.filter(p => p.cls === 'sell');
+        finalPicks = applyRegimeGate(finalPicks, marketRegime);
         if (before !== finalPicks.length) {
-          console.warn(`[AI Advisor] REJIM KAPISI (DUSUS): ${before - finalPicks.length} AL pick susturuldu (dispatch)`);
-        }
-      } else if (marketRegime === 'NEUTRAL') {
-        const before = finalPicks.length;
-        finalPicks = finalPicks.filter(p => p.cls === 'sell' || (p.score || 0) >= 75);
-        if (before !== finalPicks.length) {
-          console.warn(`[AI Advisor] REJIM KAPISI (YATAY): ${before - finalPicks.length} zayif AL elendi (sadece score>=75)`);
+          console.warn(`[AI Advisor] REJIM KAPISI (${regimeLabel(marketRegime)}): ${before - finalPicks.length} AL pick susturuldu (dispatch)`);
         }
       }
 

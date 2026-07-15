@@ -97,30 +97,18 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
       const extraContext = { kapSentiment };
       const { ind, sig } = getUnifiedAnalysis(s, data, extraContext);
 
-      // ── Foreign Ratio Fetch ──
+      // ── Foreign Ratio Fetch (skorlama: pure computeForeignFlowScore — advisor ile AYNI) ──
       try {
-        const { fetchForeignRatio } = await import('../../utils/foreignFlowEngine.js');
+        const { fetchForeignRatio, computeForeignFlowScore } = await import('../../utils/foreignFlowEngine.js');
         const fr = await fetchForeignRatio(s);
         if (fr) {
           sig.foreignRatio = fr.ratio;
           sig.foreignChangeDay = fr.changeDay;
           sig.foreignChangeWeek = fr.changeWeek;
           sig.foreignChangeMonth = fr.changeMonth;
-          // Akis skoru hesapla
-          const cw = fr.changeWeek || 0;
-          const cm = fr.changeMonth || 0;
-          const cd = fr.changeDay || 0;
-          let fs = 0;
-          if (cw >= 2.0) fs += 8; else if (cw >= 1.0) fs += 5; else if (cw >= 0.3) fs += 2;
-          else if (cw <= -2.0) fs -= 8; else if (cw <= -1.0) fs -= 5; else if (cw <= -0.3) fs -= 2;
-          if (cm >= 3.0) fs += 4; else if (cm >= 1.0) fs += 2;
-          else if (cm <= -3.0) fs -= 4; else if (cm <= -1.0) fs -= 2;
-          if (cd >= 0.5) fs += 2; else if (cd <= -0.5) fs -= 2;
-          if (fr.ratio >= 50 && cw <= -1.0) fs -= 3;
-          if (fr.ratio < 20 && cw >= 1.0) fs += 3;
-          sig.foreignFlowScore = Math.max(-15, Math.min(15, fs));
-          sig.foreignFlowLabel = fs >= 6 ? 'GUCLU GIRIS' : fs >= 3 ? 'GIRIS'
-            : fs <= -6 ? 'GUCLU CIKIS' : fs <= -3 ? 'CIKIS' : 'NOTR';
+          const { score, label } = computeForeignFlowScore(fr);
+          sig.foreignFlowScore = score;
+          sig.foreignFlowLabel = label;
         }
       } catch (err) {}
 
