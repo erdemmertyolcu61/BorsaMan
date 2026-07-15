@@ -803,6 +803,52 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
 
       {open && (
         <>
+          {/* v29.3: REJIM + EDGE BANNER — "trend yok = islem yok" urun merkezinde.
+              Olcum: AL pick'leri SADECE YUKSELIS'te pozitif (+1.14%); YATAY -1.7%,
+              DUSUS -3.4%. Banner her zaman gorunur (mobil dahil), dogru beklenti kurar. */}
+          {hasPicks && marketRegime?.regime && (() => {
+            const r = marketRegime.regime;
+            const c = marketRegime.bistChangePct || 0;
+            const sniperCount = displayPicks.filter(p => p.convictionTier === 'sniper').length;
+            const cfg = r === 'BULL'
+              ? {
+                  bg: 'linear-gradient(90deg, rgba(16,185,129,0.15), rgba(16,185,129,0.03))',
+                  border: 'rgba(16,185,129,0.4)', fg: '#34d399', icon: '📈',
+                  title: 'YÜKSELİŞ REJİMİ — AL için uygun ortam',
+                  sub: sniperCount > 0
+                    ? `🎯 ${sniperCount} nokta atışı (score≥75) öne çıkarıldı — en yüksek beklentili kademe.`
+                    : 'Nokta atışı (score≥75) yok — gösterilenler daha düşük konviksiyon, küçük pozisyon.',
+                }
+              : r === 'BEAR'
+                ? {
+                    bg: 'linear-gradient(90deg, rgba(244,63,94,0.15), rgba(244,63,94,0.03))',
+                    border: 'rgba(244,63,94,0.4)', fg: '#f87171', icon: '📉',
+                    title: 'DÜŞÜŞ REJİMİ — AL önerilmez',
+                    sub: 'Ölçüm: düşüşte AL pick\'leri tarihsel -3.4% (%18.8 WR). Nakitte kalmak en iyi "işlem".',
+                  }
+                : {
+                    bg: 'linear-gradient(90deg, rgba(148,163,184,0.12), rgba(148,163,184,0.03))',
+                    border: 'rgba(148,163,184,0.35)', fg: '#cbd5e1', icon: '➡️',
+                    title: 'YATAY REJİM — sadece en güçlü setup\'lar',
+                    sub: 'Ölçüm: yatayda zayıf AL\'lar ort. -1.7%. Sadece score≥75 nokta atışı gösterilir.',
+                  };
+            return (
+              <div style={{
+                padding: '7px 12px', background: cfg.bg,
+                borderTop: `1px solid ${cfg.border}`, borderBottom: `1px solid ${cfg.border}`,
+                display: 'flex', alignItems: 'center', gap: 9,
+              }}>
+                <span style={{ fontSize: 16, flexShrink: 0 }}>{cfg.icon}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: cfg.fg, letterSpacing: 0.3 }}>
+                    {cfg.title} · BIST100 {c >= 0 ? '+' : ''}{c.toFixed(1)}%
+                  </span>
+                  <span style={{ fontSize: 10, color: 'var(--t3)', lineHeight: 1.35 }}>{cfg.sub}</span>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* v26: YARIN UMUT BANDI — tüm picks emergency ise */}
           {hasPicks && displayPicks.every(p => p._emergencyPick) && (
             <div style={{
@@ -915,8 +961,10 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
 
         {hasPicks && [...picks].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 8).map((p, idx) => {
           const isSell = p.cls === 'sell';
-          const accent = isSell ? 'var(--red)' : 'var(--green)';
-          const accentDim = isSell ? '#ff444418' : '#00e68618';
+          // v29.3: sniper (NOKTA ATISI, score>=75) = kahraman kart — altin accent + glow.
+          const isSniper = !isSell && p.convictionTier === 'sniper';
+          const accent = isSell ? 'var(--red)' : isSniper ? '#ffd700' : 'var(--green)';
+          const accentDim = isSell ? '#ff444418' : isSniper ? '#ffd70018' : '#00e68618';
           // Stop/Target yüzdeleri ARTIK LIVE FİYATTAN hesaplanır.
           // Önceden p.stopPct/targetPct scan anındaki fiyata göreydi → fiyat hareket
           // edince yüzdeler stale gözüküyordu (örn. TTRAK 1.7% görünürken aslında 3.6%).
@@ -1068,6 +1116,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 marginRight: 7,
                 cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                // v29.3: sniper kartlarina altin glow — kanitlanmis edge kademesi one cikar
+                boxShadow: isSniper ? '0 0 14px rgba(255,215,0,0.28), inset 0 0 0 1px rgba(255,215,0,0.35)' : undefined,
                 opacity: p._fallback ? 0.82 : 1,
                 position: 'relative',
                 scrollSnapAlign: 'start',
