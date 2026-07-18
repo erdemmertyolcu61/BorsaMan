@@ -18,9 +18,23 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
   const sentiment = marketSentiment?.sentiment || '';
   const sentimentColor = marketSentiment?.color || 'var(--t3)';
 
-  const sortedPicks = [...topPicks]
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-    .slice(0, 4);
+  // AL pick'leri DAİMA gösterilir — kullanıcı talebi: ayı rejiminde bile AL
+  // gorunmeli. Ham topPicks'i score'la sortlamak sell'lerin AL'lari ilk-4'ten
+  // itmesine yol aciyordu. Cozum: (1) once AL'lar, (2) topPicks'te AL yoksa
+  // (regime-gate hepsini elemis olabilir) scanResults'tan en guclu AL'lari cek,
+  // (3) kalan slotlari sell'lerle doldur.
+  const byScore = (a, b) => (b.score || 0) - (a.score || 0);
+  const heldSyms = new Set(topPicks.map(p => p.symbol));
+  let buyPicks = topPicks.filter(p => p.cls === 'buy').sort(byScore);
+  if (buyPicks.length === 0) {
+    buyPicks = (scanResults || [])
+      .filter(r => r?.symbol && r.cls === 'buy' && (r.score || 0) >= 45 && !heldSyms.has(r.symbol))
+      .sort(byScore)
+      .slice(0, 3)
+      .map(r => ({ ...r, _counterRegime: true })); // ayı/yatayda gate disi -> uyari rozeti
+  }
+  const sellPicks = topPicks.filter(p => p.cls === 'sell').sort(byScore);
+  const sortedPicks = [...buyPicks, ...sellPicks].slice(0, 4);
 
   return (
     <div className="m-advisor-bar">
@@ -83,13 +97,15 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
           <div className="m-advisor-chips">
             {sortedPicks.map((p) => {
               const isSell = p.cls === 'sell';
+              const counter = p._counterRegime && !isSell;
               return (
                 <button
                   key={p.symbol}
                   className={`m-advisor-chip ${isSell ? 'sell' : 'buy'}`}
                   onClick={() => onAnalyze?.(p.symbol)}
+                  title={counter ? 'Rejime karşı AL — düşüş/yatay piyasada yüksek risk, küçük pozisyon' : undefined}
                 >
-                  {p.symbol} ({(p.score || 0).toFixed(1)})
+                  {counter ? '⚠ ' : ''}{p.symbol} ({(p.score || 0).toFixed(1)})
                 </button>
               );
             })}
