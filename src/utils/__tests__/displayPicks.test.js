@@ -43,18 +43,22 @@ describe('deriveDisplayPicks', () => {
     expect(out.slice(1).every(p => p._emergencyPick)).toBe(true);
   });
 
-  it('regimeRestrict=true skips emergency fillers — only real topPicks', () => {
+  it('regimeRestrict=true STILL fills to 8, but tags fillers _counterRegime (show best, warn)', () => {
     const top = [pick({ symbol: 'T1', todayPumpReal: 1 })];
     const scan = Array.from({ length: 10 }, (_, i) =>
-      pick({ symbol: `S${i}`, avgVolumeTL: 500_000, atrPct: 1 }));
+      pick({ symbol: `S${i}`, avgVolumeTL: 500_000, atrPct: 1, confidence: 50 - i }));
     const out = deriveDisplayPicks(top, scan, true);
-    expect(out.map(p => p.symbol)).toEqual(['T1']);
+    expect(out.length).toBe(8);
+    expect(out[0].symbol).toBe('T1'); // real pick first
+    expect(out.slice(1).every(p => p._counterRegime === true)).toBe(true); // fillers warned
   });
 
-  it('regimeRestrict=true with empty topPicks → [] (no fallback, DUSUS empty state)', () => {
+  it('regimeRestrict=true with empty topPicks → still shows best from scan (no empty panel)', () => {
     const scan = Array.from({ length: 10 }, (_, i) =>
       pick({ symbol: `S${i}`, avgVolumeTL: 2_000_000, score: 60 }));
-    expect(deriveDisplayPicks([], scan, true)).toEqual([]);
+    const out = deriveDisplayPicks([], scan, true);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.every(p => p._counterRegime === true)).toBe(true); // all warned
   });
 
   it('empty topPicks + scanResults (no restrict) → fresh fallback with _fallback flag', () => {

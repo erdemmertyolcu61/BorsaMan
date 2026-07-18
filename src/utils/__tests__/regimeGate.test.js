@@ -64,9 +64,12 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(out).not.toBe(picks); // new array (pure)
   });
 
-  it('NEUTRAL — keeps only score>=75 buys plus sells', () => {
+  it('NEUTRAL — sells + best buys tagged counter-regime (shows top stocks, warns)', () => {
     const out = applyRegimeGate(picks, 'NEUTRAL');
-    expect(out.map(p => p.symbol)).toEqual(['A', 'D']); // A(80) + sell D
+    // sell D + all buys (cap 8) by score desc, buys tagged _counterRegime
+    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B', 'C']);
+    expect(out.filter(p => p.cls === 'buy').every(p => p._counterRegime === true)).toBe(true);
+    expect(out.find(p => p.symbol === 'D')._counterRegime).toBeUndefined();
   });
 
   it('BEAR — sells + top-N strongest buys tagged counter-regime (not empty)', () => {
@@ -77,13 +80,13 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(out.find(p => p.symbol === 'D')._counterRegime).toBeUndefined(); // sells not tagged
   });
 
-  it('BEAR — caps counter-regime buys via bearMaxBuys', () => {
-    const out = applyRegimeGate(picks, 'BEAR', 75, 2);
+  it('BEAR — caps counter-regime buys via bearMaxBuys (4th arg)', () => {
+    const out = applyRegimeGate(picks, 'BEAR', 8, 2);
     expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B']); // only top-2 buys
   });
 
   it('BEAR — bearMaxBuys=0 falls back to sells-only', () => {
-    const out = applyRegimeGate(picks, 'BEAR', 75, 0);
+    const out = applyRegimeGate(picks, 'BEAR', 8, 0);
     expect(out.map(p => p.symbol)).toEqual(['D']);
   });
 
@@ -93,9 +96,9 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(picks).toEqual(copy);
   });
 
-  it('respects a custom sniperMin', () => {
-    const out = applyRegimeGate(picks, 'NEUTRAL', 60);
-    expect(out.map(p => p.symbol)).toEqual(['A', 'B', 'D']); // 80, 66 >= 60, + sell
+  it('NEUTRAL — caps counter-regime buys via neutralMaxBuys (3rd arg)', () => {
+    const out = applyRegimeGate(picks, 'NEUTRAL', 2);
+    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B']); // sell + top-2 buys
   });
 
   it('is defensive against non-array input', () => {

@@ -5,10 +5,11 @@
 // + emergency fillers), so the header could show THYAO #1 while the panel showed
 // a filler VANGD #1. Both now call this pure function → same picks, same order.
 //
-// regimeRestrict — in DUSUS/YATAY the emergency filler/fallback is OFF. Backtest:
-// buy picks have negative expectancy outside YUKSELIS; forcing emergency picks in
-// a down/sideways market hurts. Only real topPicks show (fillers in BULL,
-// sniper-only in YATAY); DUSUS → empty state.
+// regimeRestrict — product decision: the system ALWAYS shows the best stocks in
+// every regime (the user wants opportunities visible, not an empty panel). Regime
+// is a WARNING layer, not a suppressor: in DUSUS/YATAY the fillers/fallback still
+// run, but every buy shown is tagged `_counterRegime` so the UI can warn (⚠ badge
+// + banner). Measured edge is negative outside YUKSELIS — surfaced, not hidden.
 
 function isUnsafe(r) {
   const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);
@@ -50,14 +51,17 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
         return sortByConf(a, b);
       });
 
-    if (!regimeRestrict && safe.length < 8 && Array.isArray(scanResults) && scanResults.length > 0) {
+    // Always fill up to 8 with the best available — every regime shows the top
+    // stocks. In DUSUS/YATAY the fillers are tagged _counterRegime for the warning.
+    if (safe.length < 8 && Array.isArray(scanResults) && scanResults.length > 0) {
       const have = new Set(safe.map(p => p.symbol));
       const need = 8 - safe.length;
+      const tag = (r) => ({ ...r, _fallback: true, _emergencyPick: true, ...(regimeRestrict ? { _counterRegime: true } : {}) });
       const buildFiller = (rows) => rows
         .filter(r => !have.has(r.symbol))
         .sort(sortByConf)
         .slice(0, need)
-        .map(r => ({ ...r, _fallback: true, _emergencyPick: true }));
+        .map(tag);
 
       let filler = buildFiller(scanResults.filter(r =>
         (r.avgVolumeTL || 0) >= 200_000 && (r.atrPct || 0) >= 0.4 &&
@@ -78,7 +82,7 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
           .filter(r => !t3have.has(r.symbol))
           .sort(sortByConf)
           .slice(0, need - filler.length)
-          .map(r => ({ ...r, _fallback: true, _emergencyPick: true }));
+          .map(tag);
         filler = [...filler, ...t3];
       }
       return [...safe, ...filler];
@@ -86,7 +90,7 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
     return safe;
   }
 
-  if (!regimeRestrict && scanResults.length > 0) {
+  if (scanResults.length > 0) {
     const sortFn = (a, b) => {
       if (a._earlyPick && !b._earlyPick) return -1;
       if (b._earlyPick && !a._earlyPick) return 1;
@@ -112,6 +116,7 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
       convictionTier: r.convictionTier, convictionLabel: r.convictionLabel,
       _earlyPick: r._earlyPick, _earlyCount: r._earlyCount,
       _fallback: true, _warningPick: true,
+      _counterRegime: regimeRestrict && r.cls !== 'sell' ? true : undefined,
       mlConfidenceBoost: r.mlConfidenceBoost, mlBestRule: r.mlBestRule,
       mlMatchedCount: r.mlMatchedCount, mlRegimeGated: r.mlRegimeGated,
     }));
