@@ -2916,6 +2916,26 @@ export function useAIAdvisor(portfolio) {
         });
       }
 
+      // ── VERİ KALİTESİ: canlı-edge segmentasyon anahtarlarını HER result'a damgala ──
+      // Paper trade'ler topPicks'ten VEYA `results` icinden cekilen ML havuzundan
+      // acilir; convictionTier yalniz `picks`'e, _regime yalniz `buyPicks`'e
+      // yaziliyordu → results-havuzu trade'leri early/NEUTRAL cop kaydediyordu.
+      // Ikisini de damgala (idempotent) → her kapali paper trade temiz segmentlensin
+      // (convictionTier × regime), boylece #1 canli-edge->skor dongusu icin veri saglam birikir.
+      const stampSegKeys = (arr) => {
+        if (!Array.isArray(arr)) return;
+        for (const r of arr) {
+          if (!r || typeof r !== 'object') continue;
+          if (!r.convictionTier) {
+            const s = r.score || 0;
+            r.convictionTier = r.cls === 'sell' ? 'sell' : s >= 75 ? 'sniper' : s >= 65 ? 'flagged' : 'early';
+          }
+          if (!r._regime) r._regime = marketRegime;
+        }
+      };
+      stampSegKeys(allResults);
+      stampSegKeys(finalPicks);
+
       // KÖKTEN: dispatch'i KENDİ try/catch'ine izole et. Bu event sinyal kaydını
       // (App.jsx → recordSignal), paper-trade auto-trade'i ve AlertLog'u besliyor —
       // dev scan try/catch'i içinde bir alan patlarsa (eskiden `newsIndex`
