@@ -727,6 +727,7 @@ export function useAIAdvisor(portfolio) {
   // Tarama agresifligini belirler (BEAR=3 pick, NEUTRAL=5, BULL=8).
   const [marketRegime, setMarketRegime] = useState({ regime: 'NEUTRAL', bistChangePct: 0 });
   const runningRef = useRef(false);
+  const lastAutoScanRef = useRef(0); // ML-auto continuous-scan throttle (mobile "keep working")
   // Önceki taramadan kalan sektör güç haritası — mevcut taramada sinyal skorunu besler.
   // { 'Teknoloji': 72, 'Banka': 58, ... }
   const prevSectorMapRef = useRef({});
@@ -2997,6 +2998,37 @@ export function useAIAdvisor(portfolio) {
     }, 60000); // Dakikada bir kontrol et
 
     return () => clearInterval(iv);
+  }, [runScan]);
+
+  // ── MOBIL "SUREKLI CALIS" — ML AUTO acikken on-planda surekli tarama + resume catch-up ──
+  // Platform gercegi: mobil WebView (Capacitor) uygulama ARKA PLANA atilinca JS'i dondurur
+  // (OS siniri — gercek arka-plan yurutme iOS'ta bu kullanim icin verilmez). Bu yuzden:
+  // ML AUTO acik + piyasa acik + uygulama GORUNUR oldugu surece belirli araliklarla tara,
+  // ve uygulama arka plandan DONDUGU an (visibilitychange) hemen yakala. Boylece uygulama
+  // kullanildigi her an paper-trade verisi birikir ve donuste piyasa zamani kaybolmaz.
+  // ML AUTO kapaliyken davranis degismez (gunde 2 kez: 09:55 / 18:15).
+  useEffect(() => {
+    const AUTO_MIN_GAP_MS = 1000 * 60 * 20; // en sik 20 dakikada bir otomatik tara
+    const mlAutoOn = () => {
+      try { return localStorage.getItem('bist_paper_ml_auto') === 'true'; } catch { return false; }
+    };
+    const maybeAutoScan = () => {
+      if (!mlAutoOn()) return;                                    // sadece ML AUTO modunda
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (!isMarketOpen()) return;                               // sadece piyasa saatinde
+      if (runningRef.current) return;                            // tarama zaten suruyor
+      if (Date.now() - lastAutoScanRef.current < AUTO_MIN_GAP_MS) return;
+      lastAutoScanRef.current = Date.now();
+      runScan({ universe: SCAN_UNIVERSE });
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') maybeAutoScan(); };
+    document.addEventListener('visibilitychange', onVisible);
+    const iv = setInterval(maybeAutoScan, 1000 * 60 * 5);        // on-planda her 5 dk kontrol
+    maybeAutoScan();                                             // mount/resume'da bir kez dene
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      clearInterval(iv);
+    };
   }, [runScan]);
 
   return {

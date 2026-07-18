@@ -136,7 +136,15 @@ export function usePaperTradeML() {
     const interval = setInterval(monitor, MONITOR_MS);
     // Run once immediately
     monitor();
-    return () => clearInterval(interval);
+    // Mobile: WebView freezes timers when backgrounded — the instant the app
+    // returns to the foreground, check prices right away so a stop/target hit
+    // during suspension is acted on without waiting for the next 30s tick.
+    const onVisible = () => { if (document.visibilityState === 'visible') monitor(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   // ── Actions ──
