@@ -32,30 +32,36 @@ function isUnsafe(r) {
 
 const sortByConf = (a, b) => (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
 
+// Buy-oriented sort: push already-pumped names to the back, else by confidence.
+const pickSort = (a, b) => {
+  const aPump = Math.max(a.todayPumpReal || 0, a.recentPump || 0);
+  const bPump = Math.max(b.todayPumpReal || 0, b.recentPump || 0);
+  if (aPump >= 7 && bPump < 7) return 1;
+  if (bPump >= 7 && aPump < 7) return -1;
+  if (aPump >= 7 && bPump >= 7) return (b.continuationProbability || 0) - (a.continuationProbability || 0);
+  return sortByConf(a, b);
+};
+
 /**
  * @param {Array} topPicks - backend-filtered picks
  * @param {Array} scanResults - full scan output (for fillers/fallback)
- * @param {boolean} regimeRestrict - true in DUSUS/YATAY → no emergency fillers
- * @returns {Array} the picks to display, deterministic from the inputs
+ * @param {boolean} regimeRestrict - true in DUSUS/YATAY → tag buys _counterRegime
+ * @returns {Array} the picks to display, deterministic from the inputs (buys first)
  */
 export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestrict = false) {
+  const scan = Array.isArray(scanResults) ? scanResults : [];
   if (topPicks.length > 0) {
-    const safe = [...topPicks]
-      .filter(p => p._emergencyPick || !isUnsafe(p))
-      .sort((a, b) => {
-        const aPump = Math.max(a.todayPumpReal || 0, a.recentPump || 0);
-        const bPump = Math.max(b.todayPumpReal || 0, b.recentPump || 0);
-        if (aPump >= 7 && bPump < 7) return 1;
-        if (bPump >= 7 && aPump < 7) return -1;
-        if (aPump >= 7 && bPump >= 7) return (b.continuationProbability || 0) - (a.continuationProbability || 0);
-        return sortByConf(a, b);
-      });
+    const safe = [...topPicks].filter(p => p._emergencyPick || !isUnsafe(p));
+    // Split buys / sells. Buys MUST always be represented: in a sell-heavy YATAY/
+    // DUSUS market the sells could otherwise fill all 8 slots and hide every AL —
+    // that was the "YATAY rejimde AL gozukmedi" bug. Buys go first, sells fill the rest.
+    let buys = safe.filter(p => p.cls !== 'sell').sort(pickSort);
+    const sells = safe.filter(p => p.cls === 'sell').sort(sortByConf);
 
-    // Always fill up to 8 with the best available — every regime shows the top
-    // stocks. In DUSUS/YATAY the fillers are tagged _counterRegime for the warning.
-    if (safe.length < 8 && Array.isArray(scanResults) && scanResults.length > 0) {
+    // Top up buys from the full scan when topPicks carries fewer than 8.
+    if (buys.length < 8 && scan.length > 0) {
       const have = new Set(safe.map(p => p.symbol));
-      const need = 8 - safe.length;
+      const need = 8 - buys.length;
       const tag = (r) => ({ ...r, _fallback: true, _emergencyPick: true, ...(regimeRestrict ? { _counterRegime: true } : {}) });
       const buildFiller = (rows) => rows
         .filter(r => !have.has(r.symbol))
@@ -63,13 +69,13 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
         .slice(0, need)
         .map(tag);
 
-      let filler = buildFiller(scanResults.filter(r =>
+      let filler = buildFiller(scan.filter(r =>
         (r.avgVolumeTL || 0) >= 200_000 && (r.atrPct || 0) >= 0.4 &&
         r.cls !== 'sell' && (r.rsi || 50) <= 92 && (r.mfi || 50) <= 92));
 
       if (filler.length < need) {
         const t2have = new Set([...have, ...filler.map(p => p.symbol)]);
-        const t2 = buildFiller(scanResults
+        const t2 = buildFiller(scan
           .filter(r => !t2have.has(r.symbol))
           .filter(r => (r.avgVolumeTL || 0) >= 100_000)
           .filter(r => (r.atrPct || 0) >= 0.2)
@@ -78,16 +84,17 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
       }
       if (filler.length < need) {
         const t3have = new Set([...have, ...filler.map(p => p.symbol)]);
-        const t3 = scanResults
-          .filter(r => !t3have.has(r.symbol))
+        const t3 = scan
+          .filter(r => !t3have.has(r.symbol) && r.cls !== 'sell')
           .sort(sortByConf)
           .slice(0, need - filler.length)
           .map(tag);
         filler = [...filler, ...t3];
       }
-      return [...safe, ...filler];
+      buys = [...buys, ...filler];
     }
-    return safe;
+    // Buys first (always visible), sells fill the remaining slots. Cap at 10.
+    return [...buys, ...sells].slice(0, 10);
   }
 
   if (scanResults.length > 0) {
