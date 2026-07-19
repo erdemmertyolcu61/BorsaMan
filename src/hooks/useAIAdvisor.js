@@ -9,6 +9,7 @@ import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate } from '../utils/regimeGate.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
+import { computeThematicAdjust, activeThemes } from '../utils/thematicMacro.js';
 import { classifyRegime } from '../utils/regimeEngine.js';
 import { correlationCapFilter } from '../utils/portfolioOptimizer.js';
 import { netRR, TOTAL_COST_PCT } from '../utils/tradingCosts.js';
@@ -1474,6 +1475,27 @@ export function useAIAdvisor(portfolio) {
       };
 
       // ── BUY PICKS ──
+      // ── THEMATIC MACRO TAILWIND — surface macro-beneficiaries into the buy list ──
+      // Ornek: Brent 5g +%4 → TUPRS (rafineri marji). Scan tek-hisse gostergeleri
+      // gorur ama yapisal makro baglantiyi goremez. Beneficiary'lerin SCORE'unu
+      // buyPicks filtresinden ONCE nudge et (TUPRS 'TUT'/dusuk-skor kalsa bile AL
+      // esigini gecip listeye girebilsin); headwind'leri (THYAO/PGSUS) cezalandir.
+      // Ranking icin confidence'a da asagida (_thematicBoost) yansitilir.
+      if (macroCtx) {
+        const _themeLabels = activeThemes(macroCtx);
+        if (_themeLabels.length) {
+          pushLog({ type: 'info', msg: `Tematik makro ruzgar: ${_themeLabels.join(' · ')}` });
+        }
+        for (const r of results) {
+          if (!r || r.cls === 'sell') continue;
+          const th = computeThematicAdjust(macroCtx, r.symbol);
+          if (!th.delta) continue;
+          r._thematicBoost = th.delta;
+          r._thematicReasons = th.reasons;
+          r.score = Math.max(0, Math.min(100, (r.score || 0) + th.delta));
+        }
+      }
+
       let buyPicks = results
         .filter(r => {
           // v24: atrPct 1.2 → 0.8 — blue-chip hisseler (THYAO, SISE, ASELS) 1.0-1.2 arasi
@@ -2306,6 +2328,18 @@ export function useAIAdvisor(portfolio) {
         });
       }
 
+      // ── THEMATIC MACRO TAILWIND (confidence/ranking) ──
+      // Score'u yukarida (buyPicks oncesi) nudge ettik → beneficiary listeye girdi.
+      // Simdi confidence'a da yansit → TUPRS gibi rüzgâr alan hisseler ust siralara ciksin.
+      picks = picks.map(p => {
+        const d = p._thematicBoost || 0;
+        if (!d || p.cls === 'sell') return p;
+        const adjusted = Math.max(0, Math.min(100, (p.confidence || 50) + d));
+        const grade = adjusted >= 75 ? 'A' : adjusted >= 65 ? 'B' : adjusted >= 55 ? 'C' : 'D';
+        const tier = adjusted >= 75 ? 'STRONG' : adjusted >= 65 ? 'GOOD' : adjusted >= 55 ? 'FAIR' : 'WEAK';
+        return { ...p, confidence: adjusted, grade, tier };
+      });
+
       // ══════════════════════════════════════════════════════════════════════
       //  ML RULE SCORING — Discovered rules from SQLite self-learning engine
       // ══════════════════════════════════════════════════════════════════════
@@ -2784,6 +2818,7 @@ export function useAIAdvisor(portfolio) {
               foreignChangeWeek: p.foreignChangeWeek, foreignChangeMonth: p.foreignChangeMonth,
               foreignFlowScore: p.foreignFlowScore, foreignFlowLabel: p.foreignFlowLabel,
               convictionTier: p.convictionTier, convictionLabel: p.convictionLabel,
+              _thematicBoost: p._thematicBoost, _thematicReasons: p._thematicReasons,
             })),
             // ── COMPACT VERDICT MAP — ALL scanned symbols ──
             // Tekil Analiz icin kullanilir: herhangi bir hisse ne karar aldi?

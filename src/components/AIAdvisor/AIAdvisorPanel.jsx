@@ -1047,6 +1047,19 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       ⚠ REJİME KARŞI
                     </span>
                   )}
+                  {p.cls !== 'sell' && (p._thematicBoost || 0) > 0 && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(56,189,248,0.16)', color: '#38bdf8',
+                      letterSpacing: 0.3, border: '1px solid rgba(56,189,248,0.4)',
+                    }} title={[
+                      '🌍 MAKRO RÜZGÂR — yapısal makro avantaj',
+                      ...(p._thematicReasons || []),
+                      `Confidence +${p._thematicBoost}`,
+                    ].join('\n')}>
+                      🌍 MAKRO +{p._thematicBoost}
+                    </span>
+                  )}
                   {p.cls !== 'sell' && p.convictionTier === 'sniper' && (
                     <span style={{
                       fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
