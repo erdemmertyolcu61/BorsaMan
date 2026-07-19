@@ -15,7 +15,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "ml:export": "python scripts/export_ml_rules.py",
-    "lint": "eslint src --max-warnings 140",
+    "lint": "eslint src --max-warnings 90",
     "lint:fix": "eslint src --fix",
     "postinstall": "electron-builder install-app-deps",
     "electron:dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",

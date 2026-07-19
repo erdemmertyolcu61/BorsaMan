@@ -58,7 +58,7 @@ graphify explain <node>        # Bir node + komsulari aciklama
 - **Python kopru**: `bist_bridge.py` — borsa-mcp server'i ile TradingAgents arasingi
 - **Terminal estetigi**: Koyu tema (#0a0e17), JetBrains Mono + Space Grotesk
 - **4 ana sekme**: Tekil Analiz, Strateji/Backtest, Intraday Trade, Portfoy
-- **Sabit paneller**: AIAdvisorPanel (sol), AIAdvisorDetailPanel (alt, collapsible), SignalsTab (Sinyal Takibi — 4 alt-sekme), AlertLog (floating sag-alt)
+- **Sabit paneller**: AIAdvisorPanel (sol), AIAdvisorDetailPanel (alt, collapsible), SignalsTab (Sinyal Takibi — 4 alt-sekme)
 
 ## Teknik Ozellikler (v8)
 - **Gostergeler**: MA-20/50/100/200, RSI(14), MACD(12/26/9), Bollinger Bands, ATR(14),
@@ -245,10 +245,11 @@ graphify explain <node>        # Bir node + komsulari aciklama
 - **`correlationMatrix(series)`**: UI heatmap icin korelasyon matrisi
 - **Test**: 13/13 — single-asset trivial, weight cap, minVar < maxSharpe variance, target nearest
 
-## AlertLog (Floating panel)
-- Sag-alt sabit konum, collapsible
-- Kaynak filtresi (live_guard / watchlist / advisor / signal_tracker / manual)
-- **24s Ozet**: marketContext, portfoy ozeti, topPicks, riskAlerts, critical signals
+## AlertLog
+- `useAlertLog(advisor)` hook'u ALARM verilerini toplar (source: live_guard / watchlist /
+  advisor / signal_tracker / manual). Uyarılar bu hook üzerinden akar.
+- **NOT (v31 temizlik):** Floating `AlertLog.jsx` bileşeni App.jsx'e import ediliyordu ama HİÇ
+  render edilmiyordu (ölü kod) — kaldırıldı. Hook duruyor.
 
 ## Veri Cekme Motoru (v14)
 - **Self-hosted Vercel Proxy** (ONCELIKLI): `proxy/api/proxy.js`, 10 domain whitelist
@@ -468,6 +469,40 @@ FALLBACK_TIMEFRAME = "2Y"                           # 5Y truncation rescue
 - `graphify explain <node>` — bir node + komşuları plain-language
 - Hook otomatik fallback'i yönetir; bilinçli grep gerekirse hook izin verir
 
+## Son Yapilanlar (2026-07 — v31)
+
+> **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75
+> AL sinyalleri pozitif beklentili (YATAY/DUSUS negatif). Hiçbir meşru sistematik strateji günlük
+> +%2-3 net kârı istikrarlı VEREMEZ. Bu sürüm getiri vaat etmez; ölçülen expectancy'yi maksimize
+> etmeyi + riski gerçekçi yönetmeyi hedefler. Canlı-edge birikince skorlamayı otomatik kalibre eder.
+
+- [x] **Gerçekçi Monte Carlo (hibrit, v31)** — `monteCarlo.js` + `monteCarloWorker.js`:
+  - Sabit-vol + normal GBM yerine: analiz edilen hissenin gerçek log-getirilerinin **moving-block
+    bootstrap**'ı (fat-tail + çarpıklık + kısa-menzil otokorelasyon ampirik korunur; <20 getiri →
+    Gaussian fallback). Paylaşılan `_mcCore` sync + worker'ı besler (model asla sapmaz).
+  - **Sinyal-güdümlü drift eğimi** (opts.driftBias ±0.01/gün) — güçlü AL ile SAT artık aynı drift
+    şeklini üretmiyor. **BIST ±%10 günlük limit** her adımda clamp. **Stop/hedef yol-sonlandırma**
+    → pStopFirst/pTargetFirst/pNoExit/expectedExitPct/avgHoldDays. **Maliyet-farkında profitProbNet**
+    (TOTAL_COST_PCT) + interpolasyonlu percentile. `AnalyzeTab` off-thread `runMonteCarloAsync` (5-10k yol).
+  - Test: 11 (bootstrap/gaussian, ±%10 clamp, stop/hedef partisyon, cost-adj, drift yönü).
+- [x] **Canlı-edge döngü kapanışı + entry-timing lever (v31.1)**:
+  - **A1**: `useAIAdvisor` tarama başında paper engine kapalı trade'lerinden `computeLiveEdge` hesaplar;
+    convictionTier atandıktan sonra `getLiveEdgeStat(edge, tier, regime)` ile confidence'ı gerçek
+    expectancy'ye göre ±%15 ölçekler. Güvenilir hücre (≥8 örnek) yoksa no-op (bugünkü davranış).
+    📊 %WR rozeti + `_liveEdge` persist. Veri birikince ("⚡ ML AUTO") otomatik aktifleşir. Bkz.
+    [[scan-complete-event-critical]] / Canlı Edge Truth Layer.
+  - **A2**: `_scoreEntryTiming` (MA20/RSI/BB/sessiz-çekilme) hesaplanıp UI'da gösteriliyordu ama
+    skora girmiyordu → `enhancePick` entryQuality'sine harmanlandı (%60 pump/MA20 + %40 timing).
+- [x] **Kapsamlı ölü-kod temizliği (v31)** — gerçekten ölü olanlar kaldırıldı:
+  - top10 keşif kümesi (7 dosya + test — hiçbir tüketicisi yoktu; canlı ML yolu `ML_BacktestEngine`+
+    `DatabaseManager` IPC), `AlertLog.jsx` + `ScanHistoryDrawer.jsx` (import edilip render edilmeyen),
+    `borsajsAdapter.js` (+ fetchEngine ölü import'ları), root scratch script'ler, useSignalTracker
+    yorumlu DISABLED bloğu, çeşitli ölü top-level import.
+  - **KORUNDU (ölü DEĞİL):** `walkForward.js` (`scripts/tune-thresholds.mjs` kullanıyor + 9 test),
+    `portfolioOptimizer.js` Markowitz yüzeyi (tested; `correlationCapFilter` app'te kullanılıyor) —
+    körüne silme yerine dürüst mühendislik: tested offline araçlar durur.
+  - ESLint warning 121 → 84; ratchet `--max-warnings 140` → 90.
+
 ## Son Yapilanlar (2026-05)
 - [x] **Walk-Forward Optimizer (Python)** — `ml_forward_tester.py` root-level CLI:
   - `WalkForwardEngine` sınıfı: rolling 12M IS / 3M OOS pencereleri, IS'de grid-search → max-PF parametre seçimi, OOS'da seçili setle teyit
@@ -661,7 +696,7 @@ FALLBACK_TIMEFRAME = "2Y"                           # 5Y truncation rescue
   - `monteCarlo.test.js` — percentile ordering + profit prob + vol caps — %81
   - `errorLogger.test.js` — dedupe window + silent flag + safeAsync/safeSync — **%97.53**
   - `walkForward.test.js` / `portfolioOptimizer.test.js` / `marketNewsEngine.test.js` /
-    `signalCalibration.test.js` / `top10Intelligence.test.js` / `fetchEngine.test.js`
+    `signalCalibration.test.js` / `fetchEngine.test.js`
 - Coverage raporu HTML: `coverage/index.html`
 
 ### GitHub Actions CI — `.github/workflows/ci.yml`

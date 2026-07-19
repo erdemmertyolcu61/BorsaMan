@@ -292,28 +292,8 @@ export function useSignalTracker() {
     }
   }, []);
 
-  // ── (DISABLED) Auto-ingest AI Advisor scan results via event ──
-  // Now handled centrally by App.jsx to prevent race conditions and duplicate listeners
-  // across multiple mounted instances of useSignalTracker.
-
-  // ── Auto-ingest single-stock analyze results (DISABLED by user request) ──
-  // The user requested to strictly follow the 8 best buy picks rule from AI Advisor.
-  /*
-  useEffect(() => {
-    const handler = (e) => {
-      const r = e.detail || {};
-      if (!r.symbol || (r.cls !== 'buy' && r.cls !== 'sell')) return;
-      console.log(`[SignalTracker] Ingesting analyze-result: ${r.symbol} ${r.cls}`);
-      recordSignal({
-        symbol: r.symbol, cls: r.cls, signal: r.signal,
-        price: r.price, entry: r.price, score: r.score, score100: r.score,
-        source: 'analyze',
-      });
-    };
-    window.addEventListener('analyze-result', handler);
-    return () => window.removeEventListener('analyze-result', handler);
-  }, [recordSignal]);
-  */
+  // Auto-ingest of scan/analyze results is handled centrally by App.jsx
+  // (advisor-scan-complete → recordSignal) to avoid duplicate listeners.
 
   const updateSignal = useCallback((signalId, updates) => {
     setSignals(prev => prev.map(sig => (sig.id === signalId ? { ...sig, ...updates } : sig)));

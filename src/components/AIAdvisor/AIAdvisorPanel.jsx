@@ -444,7 +444,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     doLivePriceUpdate();
     const iv = setInterval(doLivePriceUpdate, 30_000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [displayPicks.length, isFromCache]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [displayPicks.length, isFromCache]);  
 
   // ── ADVERSE COUNT — OTOMATIK TARAMA DEVRE DISI ──
   // Onceden: kartlarin yarisi adverse oldugunda otomatik manualScan() tetikleniyordu.

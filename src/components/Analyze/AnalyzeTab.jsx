@@ -1,14 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
-import { QUICK_STOCKS } from '../../utils/constants.js';
 import { fetchData, fetchFundamentals, fetchBigParaBatchPrices } from '../../utils/fetchEngine.js';
-import { calcAll } from '../../utils/indicators.js';
-import { genSignal, calcPosition, getUnifiedAnalysis } from '../../utils/signals.js';
+import { calcPosition, getUnifiedAnalysis } from '../../utils/signals.js';
 import { getUnifiedDecision } from '../../utils/unifiedDecision.js';
-import { setApiKey, buildExpertPrompt } from '../../utils/claude.js';
-import { analyzeDetailedFinancials, getFundamentalGrade, analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
+import { analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
 import { fetchIsYatirimFinancials } from '../../utils/isyatirimEngine.js';
-import { fetchKAPDisclosures, calcKAPSentiment, fetchKAPSummaryFinancials } from '../../utils/kapEngine.js';
-import { getSector } from '../../utils/sectorEngine.js';
+import { fetchKAPDisclosures, calcKAPSentiment } from '../../utils/kapEngine.js';
 import { runMonteCarloAsync } from '../../utils/monteCarlo.js';
 import Chart from '../Chart/Chart.jsx';
 import BacktestPanel from '../Backtest/BacktestPanel.jsx';

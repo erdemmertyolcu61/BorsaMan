@@ -20,8 +20,6 @@ export function setProxyBaseUrl(url) {
 }
 import { fetchKAPSummaryFinancials } from './kapEngine.js';
 import { logError } from './errorLogger.js';
-import { traceFetch, recordFetchMetric, isTelemetryEnabled } from './telemetry.js';
-import { fetchAsenaxList, fetchWithFallback, fetchBorsajsQuote } from './borsajsAdapter.js';
 
 const _isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
 
@@ -93,7 +91,7 @@ function _scheduleL2Persist() {
         if (!v || !Array.isArray(v.prices)) { cacheCopy[k] = v; continue; }
         const cleanPrices = v.prices.map(b => {
           if (!b || !b._isForming) return b;
-          const { _isForming, ...rest } = b; // eslint-disable-line no-unused-vars
+          const { _isForming, ...rest } = b;  
           return rest;
         });
         cacheCopy[k] = { ...v, prices: cleanPrices };
