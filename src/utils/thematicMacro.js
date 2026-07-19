@@ -6,7 +6,7 @@
 // tailwind name can SURFACE into the AL list even if the raw scan left it at TUT —
 // and penalizes clear headwind names. Hand-curated structural priors, NOT a
 // correlation model. Only themes whose driver series is actually fetched
-// (macroContextEngine: brent, usdtry, gold, silver, copper) are active.
+// (macroContextEngine: brent, usdtry, gold, silver, copper, vix, sp500) are active.
 
 export const THEMES = [
   {
@@ -56,6 +56,30 @@ export const THEMES = [
     beneficiaries: ['SARKY'],            // Sarkuysan — Turkiye'nin ana bakir ureticisi
     headwinds: [],
     boost: 6, penalty: 0,
+  },
+  {
+    id: 'lira_strong',
+    label: 'TL degerlenmesi → FX-borc rahatlamasi',
+    active: (m) => (m?.usdtry?.change5d ?? 0) <= -2.5,   // mirror of lira_weak_exporters
+    beneficiaries: ['TTKOM', 'TCELL', 'TAVHL'],          // FX-denominated debt/capex heavy
+    headwinds: ['EREGL', 'KRDMD', 'SISE'],               // exporters — margin squeezed
+    boost: 4, penalty: -4,
+  },
+  {
+    id: 'risk_off_haven',
+    label: 'Kuresel risk-off (VIX yuksek) → guvenli liman',
+    active: (m) => (m?.vix?.value ?? 0) >= 25,
+    beneficiaries: ['KOZAL', 'KOZAA'],                   // gold miners bid as safe haven
+    headwinds: [],
+    boost: 5, penalty: 0,
+  },
+  {
+    id: 'risk_on_beta',
+    label: 'Kuresel risk-on (S&P guclu) → yuksek-beta holding',
+    active: (m) => (m?.sp500?.change5d ?? 0) >= 3,
+    beneficiaries: ['KCHOL', 'SAHOL', 'ASELS'],          // index-beta proxies (modest link)
+    headwinds: [],
+    boost: 3, penalty: 0,
   },
 ];
 

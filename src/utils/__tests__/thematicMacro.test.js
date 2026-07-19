@@ -8,6 +8,9 @@ const calm = { brent: { change5d: 1 }, usdtry: { change5d: 0.5 } };
 const goldUp = { gold: { change5d: 5 } };
 const silverUp = { silver: { change5d: 5 } };
 const copperUp = { copper: { change5d: 5 } };
+const liraStrong = { usdtry: { change5d: -3 } };
+const riskOff = { vix: { value: 30 } };
+const riskOn = { sp500: { change5d: 4 } };
 
 describe('computeThematicAdjust', () => {
   it('Brent up → TUPRS gets a positive boost (the reported use case)', () => {
@@ -52,11 +55,35 @@ describe('computeThematicAdjust', () => {
     expect(computeThematicAdjust(copperUp, 'KOZAL').delta).toBe(0);
   });
 
+  it('lira strong → FX-debt names (TTKOM/TCELL/TAVHL) benefit, exporters penalized', () => {
+    expect(computeThematicAdjust(liraStrong, 'TTKOM').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(liraStrong, 'TAVHL').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(liraStrong, 'EREGL').delta).toBeLessThan(0);
+  });
+
+  it('lira weak vs lira strong are opposite conditions (never both fire)', () => {
+    // EREGL: boosted when lira weak, penalized when lira strong
+    expect(computeThematicAdjust(liraWeak, 'EREGL').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(liraStrong, 'EREGL').delta).toBeLessThan(0);
+  });
+
+  it('risk-off (VIX high) → gold miners bid as safe haven', () => {
+    expect(computeThematicAdjust(riskOff, 'KOZAL').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(riskOff, 'GARAN').delta).toBe(0);
+  });
+
+  it('risk-on (S&P strong) → high-beta holdings get a modest boost', () => {
+    expect(computeThematicAdjust(riskOn, 'KCHOL').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(riskOn, 'SAHOL').delta).toBeGreaterThan(0);
+  });
+
   it('calm macro → no adjustment for anyone', () => {
     expect(computeThematicAdjust(calm, 'TUPRS').delta).toBe(0);
     expect(computeThematicAdjust(calm, 'EREGL').delta).toBe(0);
     expect(computeThematicAdjust(calm, 'KOZAL').delta).toBe(0);
     expect(computeThematicAdjust(calm, 'SARKY').delta).toBe(0);
+    expect(computeThematicAdjust(calm, 'TTKOM').delta).toBe(0);
+    expect(computeThematicAdjust(calm, 'KCHOL').delta).toBe(0);
   });
 
   it('unrelated symbol → zero even when a theme is active', () => {
@@ -96,6 +123,7 @@ describe('activeThemes', () => {
     const probe = {
       brent: { change5d: 99 }, usdtry: { change5d: 99 },
       gold: { change5d: 99 }, silver: { change5d: 99 }, copper: { change5d: 99 },
+      vix: { value: 99 }, sp500: { change5d: 99 },
     };
     for (const t of THEMES) {
       expect(() => t.active(probe)).not.toThrow();
