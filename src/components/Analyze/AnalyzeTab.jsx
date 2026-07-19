@@ -9,7 +9,7 @@ import { analyzeDetailedFinancials, getFundamentalGrade, analyzeComprehensiveFin
 import { fetchIsYatirimFinancials } from '../../utils/isyatirimEngine.js';
 import { fetchKAPDisclosures, calcKAPSentiment, fetchKAPSummaryFinancials } from '../../utils/kapEngine.js';
 import { getSector } from '../../utils/sectorEngine.js';
-import { runMonteCarlo } from '../../utils/monteCarlo.js';
+import { runMonteCarloAsync } from '../../utils/monteCarlo.js';
 import Chart from '../Chart/Chart.jsx';
 import BacktestPanel from '../Backtest/BacktestPanel.jsx';
 import KAPPanel from './KAPPanel.jsx';
@@ -270,9 +270,19 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
           },
         }));
       } catch { /* event dispatch best-effort */ }
-      // Monte Carlo simulation
+      // Monte Carlo simulation — hybrid (block-bootstrap + signal drift + BIST limits
+      // + stop/target exit stats), off-thread via worker so the UI stays responsive.
       if (data.prices.length > 30) {
-        try { setMcData(runMonteCarlo(data.prices, 20, 500)); } catch { setMcData(null); }
+        const sc = Number(sig.score) || 50; // score100 (50 = neutral)
+        let driftBias = ((sc - 50) / 50) * 0.006; // ±0.006/day tilt at extremes
+        if (sig.cls === 'sell') driftBias = -Math.abs(driftBias);
+        else if (sig.cls === 'buy') driftBias = Math.abs(driftBias);
+        else driftBias *= 0.3; // TUT → weak tilt
+        const mcOpts = { driftBias, stop: sig.stop, target: sig.target || sig.t1 };
+        setMcData(null);
+        runMonteCarloAsync(data.prices, 20, 5000, mcOpts)
+          .then(r => setMcData(r))
+          .catch(() => setMcData(null));
       } else { setMcData(null); }
       setFundamentals(null);
       setBilanco(null);
@@ -470,6 +480,13 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
                   <div className="tr-row"><span className="tr-l">MC Medyan ({mcData.days}G)</span><span className="tr-v" style={{ color: mcData.median > mcData.lastPrice ? 'var(--green)' : 'var(--red)' }}>{(mcData.median || 0).toFixed(2)} TL</span></div>
                   <div className="tr-row"><span className="tr-l">En Kötü %5</span><span className="tr-v" style={{ color: 'var(--red)' }}>{(mcData.worst5 || 0).toFixed(2)} TL ({(Math.abs((mcData.worst5 / mcData.lastPrice - 1) * 100) || 0).toFixed(1)}%)</span></div>
                   <div className="tr-row"><span className="tr-l">En İyi %5</span><span className="tr-v" style={{ color: 'var(--green)' }}>{(mcData.best5 || 0).toFixed(2)} TL (+{(Math.abs((mcData.best5 / mcData.lastPrice - 1) * 100) || 0).toFixed(1)}%)</span></div>
+                  <div className="tr-row"><span className="tr-l">MC Kar (maliyet sonrası)</span><span className="tr-v" style={{ color: (mcData.profitProbNet || 0) > 50 ? 'var(--green)' : (mcData.profitProbNet || 0) < 40 ? 'var(--red)' : 'var(--yellow)' }}>%{(mcData.profitProbNet || 0).toFixed(0)}</span></div>
+                  {(mcData.pNoExit || 100) < 100 && <>
+                    <div className="tr-row"><span className="tr-l">Hedef Önce Vurma</span><span className="tr-v" style={{ color: 'var(--green)' }}>%{(mcData.pTargetFirst || 0).toFixed(0)}</span></div>
+                    <div className="tr-row"><span className="tr-l">Stop Önce Vurma</span><span className="tr-v" style={{ color: 'var(--red)' }}>%{(mcData.pStopFirst || 0).toFixed(0)}</span></div>
+                    <div className="tr-row"><span className="tr-l">Beklenen Çıkış</span><span className="tr-v" style={{ color: (mcData.expectedExitPct || 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{(mcData.expectedExitPct || 0) >= 0 ? '+' : ''}{(mcData.expectedExitPct || 0).toFixed(1)}% (~{Math.round(mcData.avgHoldDays || 0)}g)</span></div>
+                  </>}
+                  {mcData.method === 'bootstrap' && <div className="tr-row"><span className="tr-l">MC Model</span><span className="tr-v" style={{ color: 'var(--cyan)', fontSize: 9 }}>Blok-bootstrap (gerçek dağılım)</span></div>}
                 </>}
               </div>
               {/* Compact risk gauge */}
