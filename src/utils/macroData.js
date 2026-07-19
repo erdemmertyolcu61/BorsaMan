@@ -41,12 +41,18 @@ export async function getLiveIndicators() {
   const tcmbRate = ctx?.tcmb?.rate ?? 50.0;
   const vixVal = ctx?.vix?.value ?? 0;
   const brentVal = ctx?.brent?.value ?? 0;
-  return {
+  const trendOf = (s) => (s?.change5d >= 0 ? 'yukselis' : 'dusus');
+  const out = {
     policyRate: { label: 'TCMB Faiz', value: tcmbRate, unit: '%', trend: 'yatay' },
     vix:        { label: 'VIX',       value: vixVal,   unit: '', trend: ctx?.vix?.change5d >= 0 ? 'yukselis' : 'dusus' },
     usdtry:     { label: 'USDTRY',    value: usdtryVal, unit: '', trend: usdtryTrend },
     brent:      { label: 'BRENT',     value: brentVal, unit: '$', trend: ctx?.brent?.change5d >= 0 ? 'yukselis' : 'dusus' },
   };
+  // Thematic metal drivers — shown only when fetched (thematicMacro consumes these).
+  if (ctx?.gold)   out.gold   = { label: 'ALTIN',  value: ctx.gold.value,   unit: '$', trend: trendOf(ctx.gold) };
+  if (ctx?.silver) out.silver = { label: 'GUMUS',  value: ctx.silver.value, unit: '$', trend: trendOf(ctx.silver) };
+  if (ctx?.copper) out.copper = { label: 'BAKIR',  value: ctx.copper.value, unit: '$', trend: trendOf(ctx.copper) };
+  return out;
 }
 
 // ── Upcoming macro events (promise) ────────────────────────────────────────

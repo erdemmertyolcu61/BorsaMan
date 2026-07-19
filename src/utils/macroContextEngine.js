@@ -110,6 +110,21 @@ async function fetchBrent() {
   return { value: last.close, change5d };
 }
 
+// ── Precious / industrial metals: thematic drivers (altin/gumus/bakir) ──
+// Same Yahoo futures pattern as Brent. Consumed by thematicMacro.js to boost
+// KOZAL/KOZAA (gold), precious-metals proxy (silver), SARKY (copper).
+async function fetchMetal(ticker) {
+  const series = await fetchYahooSeries(ticker, '1mo', '1d');
+  if (!series || series.length < 5) return null;
+  const last = series[series.length - 1];
+  const ref5 = series[Math.max(0, series.length - 6)];
+  const change5d = ((last.close - ref5.close) / ref5.close) * 100;
+  return { value: last.close, change5d };
+}
+const fetchGold   = () => fetchMetal('GC=F'); // Gold futures
+const fetchSilver = () => fetchMetal('SI=F'); // Silver futures
+const fetchCopper = () => fetchMetal('HG=F'); // Copper futures
+
 // ── BIST100 / USD (yabanci gozu) ───────────────────────────────────
 async function fetchBistUsd(usdtryNow) {
   if (!usdtryNow) return null;
@@ -212,16 +227,19 @@ export async function getMacroContext({ forceFresh = false } = {}) {
 
   _inflight = (async () => {
     try {
-      const [usdtry, vix, tcmb, sp500, brent] = await Promise.all([
+      const [usdtry, vix, tcmb, sp500, brent, gold, silver, copper] = await Promise.all([
         fetchUSDTRY().catch(() => null),
         fetchVIX().catch(() => null),
         fetchTCMB().catch(() => ({ ...TCMB_FALLBACK })),
         fetchSP500().catch(() => null),
         fetchBrent().catch(() => null),
+        fetchGold().catch(() => null),
+        fetchSilver().catch(() => null),
+        fetchCopper().catch(() => null),
       ]);
       const bistUsd = await fetchBistUsd(usdtry?.value).catch(() => null);
 
-      const parts = { usdtry, vix, tcmb, bistUsd, sp500, brent };
+      const parts = { usdtry, vix, tcmb, bistUsd, sp500, brent, gold, silver, copper };
       const regime = computeRegime(parts);
 
       const ctx = {
@@ -237,6 +255,9 @@ export async function getMacroContext({ forceFresh = false } = {}) {
         bistUsd,
         sp500,
         brent,
+        gold,
+        silver,
+        copper,
         isStale: !usdtry && !vix && !sp500,   // tum kaynaklar fail
       };
       _cache = { ts: now, value: ctx };

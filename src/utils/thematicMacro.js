@@ -6,7 +6,7 @@
 // tailwind name can SURFACE into the AL list even if the raw scan left it at TUT —
 // and penalizes clear headwind names. Hand-curated structural priors, NOT a
 // correlation model. Only themes whose driver series is actually fetched
-// (macroContextEngine: brent, usdtry) are active.
+// (macroContextEngine: brent, usdtry, gold, silver, copper) are active.
 
 export const THEMES = [
   {
@@ -32,6 +32,30 @@ export const THEMES = [
     beneficiaries: ['EREGL', 'KRDMD', 'SISE', 'KORDS', 'HEKTS', 'CIMSA'], // FX-revenue heavy
     headwinds: [],
     boost: 4, penalty: 0,
+  },
+  {
+    id: 'gold_up',
+    label: 'Altin yukselisi → altin madencisi',
+    active: (m) => (m?.gold?.change5d ?? 0) >= 3,
+    beneficiaries: ['KOZAL', 'KOZAA'],   // Koza Altin / Koza Anadolu — BIST gold miners
+    headwinds: [],
+    boost: 6, penalty: 0,
+  },
+  {
+    id: 'silver_up',
+    label: 'Gumus yukselisi → degerli metal ralisi',
+    active: (m) => (m?.silver?.change5d ?? 0) >= 4,
+    beneficiaries: ['KOZAL', 'KOZAA'],   // proxy — precious-metals correlated
+    headwinds: [],
+    boost: 4, penalty: 0,
+  },
+  {
+    id: 'copper_up',
+    label: 'Bakir yukselisi → bakir ureticisi marji',
+    active: (m) => (m?.copper?.change5d ?? 0) >= 4,
+    beneficiaries: ['SARKY'],            // Sarkuysan — Turkiye'nin ana bakir ureticisi
+    headwinds: [],
+    boost: 6, penalty: 0,
   },
 ];
 

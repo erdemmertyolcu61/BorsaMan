@@ -5,6 +5,9 @@ const brentUp = { brent: { change5d: 6 }, usdtry: { change5d: 0 } };
 const brentDown = { brent: { change5d: -6 }, usdtry: { change5d: 0 } };
 const liraWeak = { brent: { change5d: 0 }, usdtry: { change5d: 3 } };
 const calm = { brent: { change5d: 1 }, usdtry: { change5d: 0.5 } };
+const goldUp = { gold: { change5d: 5 } };
+const silverUp = { silver: { change5d: 5 } };
+const copperUp = { copper: { change5d: 5 } };
 
 describe('computeThematicAdjust', () => {
   it('Brent up → TUPRS gets a positive boost (the reported use case)', () => {
@@ -29,9 +32,31 @@ describe('computeThematicAdjust', () => {
     expect(computeThematicAdjust(liraWeak, 'KRDMD').delta).toBeGreaterThan(0);
   });
 
+  it('gold up → KOZAL/KOZAA (gold miners) get a boost', () => {
+    expect(computeThematicAdjust(goldUp, 'KOZAL').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(goldUp, 'KOZAA').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(goldUp, 'KOZAL').themes).toContain('gold_up');
+  });
+
+  it('silver up → precious-metals proxy boosts the gold miners', () => {
+    expect(computeThematicAdjust(silverUp, 'KOZAL').delta).toBeGreaterThan(0);
+  });
+
+  it('copper up → SARKY (copper producer) gets a boost', () => {
+    expect(computeThematicAdjust(copperUp, 'SARKY').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(copperUp, 'SARKY').themes).toContain('copper_up');
+  });
+
+  it('gold up does not boast copper/oil names, and vice-versa', () => {
+    expect(computeThematicAdjust(goldUp, 'SARKY').delta).toBe(0);
+    expect(computeThematicAdjust(copperUp, 'KOZAL').delta).toBe(0);
+  });
+
   it('calm macro → no adjustment for anyone', () => {
     expect(computeThematicAdjust(calm, 'TUPRS').delta).toBe(0);
     expect(computeThematicAdjust(calm, 'EREGL').delta).toBe(0);
+    expect(computeThematicAdjust(calm, 'KOZAL').delta).toBe(0);
+    expect(computeThematicAdjust(calm, 'SARKY').delta).toBe(0);
   });
 
   it('unrelated symbol → zero even when a theme is active', () => {
@@ -68,7 +93,10 @@ describe('activeThemes', () => {
 
   it('THEMES only reference the fetched macro series (brent/usdtry)', () => {
     // guard: a theme whose driver isn't fetched would silently never fire
-    const probe = { brent: { change5d: 99 }, usdtry: { change5d: 99 } };
+    const probe = {
+      brent: { change5d: 99 }, usdtry: { change5d: 99 },
+      gold: { change5d: 99 }, silver: { change5d: 99 }, copper: { change5d: 99 },
+    };
     for (const t of THEMES) {
       expect(() => t.active(probe)).not.toThrow();
     }
