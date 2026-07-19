@@ -110,10 +110,10 @@ async function fetchBrent() {
   return { value: last.close, change5d };
 }
 
-// ── Precious / industrial metals: thematic drivers (altin/gumus/bakir) ──
-// Same Yahoo futures pattern as Brent. Consumed by thematicMacro.js to boost
-// KOZAL/KOZAA (gold), precious-metals proxy (silver), SARKY (copper).
-async function fetchMetal(ticker) {
+// ── Commodity futures: thematic drivers (metals, energy, grains) ──
+// Same Yahoo futures pattern as Brent → { value, change5d }. Consumed by
+// thematicMacro.js: gold→KOZAL/KOZAA, copper→SARKY, natgas→power gens, wheat→food.
+async function fetchFutureSeries(ticker) {
   const series = await fetchYahooSeries(ticker, '1mo', '1d');
   if (!series || series.length < 5) return null;
   const last = series[series.length - 1];
@@ -121,9 +121,12 @@ async function fetchMetal(ticker) {
   const change5d = ((last.close - ref5.close) / ref5.close) * 100;
   return { value: last.close, change5d };
 }
-const fetchGold   = () => fetchMetal('GC=F'); // Gold futures
+const fetchMetal  = fetchFutureSeries;        // back-compat alias
+const fetchGold   = () => fetchFutureSeries('GC=F'); // Gold futures
 const fetchSilver = () => fetchMetal('SI=F'); // Silver futures
 const fetchCopper = () => fetchMetal('HG=F'); // Copper futures
+const fetchNatgas = () => fetchFutureSeries('NG=F'); // Natural gas — power-price driver
+const fetchWheat  = () => fetchFutureSeries('ZW=F'); // Wheat — food producer input cost
 
 // ── BIST100 / USD (yabanci gozu) ───────────────────────────────────
 async function fetchBistUsd(usdtryNow) {
@@ -227,7 +230,7 @@ export async function getMacroContext({ forceFresh = false } = {}) {
 
   _inflight = (async () => {
     try {
-      const [usdtry, vix, tcmb, sp500, brent, gold, silver, copper] = await Promise.all([
+      const [usdtry, vix, tcmb, sp500, brent, gold, silver, copper, natgas, wheat] = await Promise.all([
         fetchUSDTRY().catch(() => null),
         fetchVIX().catch(() => null),
         fetchTCMB().catch(() => ({ ...TCMB_FALLBACK })),
@@ -236,10 +239,12 @@ export async function getMacroContext({ forceFresh = false } = {}) {
         fetchGold().catch(() => null),
         fetchSilver().catch(() => null),
         fetchCopper().catch(() => null),
+        fetchNatgas().catch(() => null),
+        fetchWheat().catch(() => null),
       ]);
       const bistUsd = await fetchBistUsd(usdtry?.value).catch(() => null);
 
-      const parts = { usdtry, vix, tcmb, bistUsd, sp500, brent, gold, silver, copper };
+      const parts = { usdtry, vix, tcmb, bistUsd, sp500, brent, gold, silver, copper, natgas, wheat };
       const regime = computeRegime(parts);
 
       const ctx = {
@@ -258,6 +263,8 @@ export async function getMacroContext({ forceFresh = false } = {}) {
         gold,
         silver,
         copper,
+        natgas,
+        wheat,
         isStale: !usdtry && !vix && !sp500,   // tum kaynaklar fail
       };
       _cache = { ts: now, value: ctx };

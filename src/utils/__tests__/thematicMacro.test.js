@@ -11,6 +11,9 @@ const copperUp = { copper: { change5d: 5 } };
 const liraStrong = { usdtry: { change5d: -3 } };
 const riskOff = { vix: { value: 30 } };
 const riskOn = { sp500: { change5d: 4 } };
+const natgasUp = { natgas: { change5d: 8 } };
+const wheatUp = { wheat: { change5d: 7 } };
+const wheatDown = { wheat: { change5d: -7 } };
 
 describe('computeThematicAdjust', () => {
   it('Brent up → TUPRS gets a positive boost (the reported use case)', () => {
@@ -77,6 +80,25 @@ describe('computeThematicAdjust', () => {
     expect(computeThematicAdjust(riskOn, 'SAHOL').delta).toBeGreaterThan(0);
   });
 
+  it('ENERGY: natural gas up → renewable power generators (GWIND/AYDEM/ZOREN) benefit', () => {
+    expect(computeThematicAdjust(natgasUp, 'GWIND').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(natgasUp, 'AYDEM').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(natgasUp, 'GARAN').delta).toBe(0);
+  });
+
+  it('FOOD: wheat down → food producers relieved; wheat up → penalized', () => {
+    expect(computeThematicAdjust(wheatDown, 'ULKER').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(wheatDown, 'BANVT').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(wheatUp, 'ULKER').delta).toBeLessThan(0);
+    expect(computeThematicAdjust(wheatUp, 'TUKAS').delta).toBeLessThan(0);
+  });
+
+  it('BANKING: lira strong → big private banks (GARAN/AKBNK/YKBNK/ISCTR) benefit', () => {
+    expect(computeThematicAdjust(liraStrong, 'GARAN').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(liraStrong, 'AKBNK').delta).toBeGreaterThan(0);
+    expect(computeThematicAdjust(liraStrong, 'ISCTR').themes).toContain('lira_strong_banks');
+  });
+
   it('calm macro → no adjustment for anyone', () => {
     expect(computeThematicAdjust(calm, 'TUPRS').delta).toBe(0);
     expect(computeThematicAdjust(calm, 'EREGL').delta).toBe(0);
@@ -124,6 +146,7 @@ describe('activeThemes', () => {
       brent: { change5d: 99 }, usdtry: { change5d: 99 },
       gold: { change5d: 99 }, silver: { change5d: 99 }, copper: { change5d: 99 },
       vix: { value: 99 }, sp500: { change5d: 99 },
+      natgas: { change5d: 99 }, wheat: { change5d: 99 },
     };
     for (const t of THEMES) {
       expect(() => t.active(probe)).not.toThrow();

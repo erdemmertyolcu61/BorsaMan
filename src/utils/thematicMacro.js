@@ -6,7 +6,7 @@
 // tailwind name can SURFACE into the AL list even if the raw scan left it at TUT —
 // and penalizes clear headwind names. Hand-curated structural priors, NOT a
 // correlation model. Only themes whose driver series is actually fetched
-// (macroContextEngine: brent, usdtry, gold, silver, copper, vix, sp500) are active.
+// (macroContextEngine: brent, usdtry, gold, silver, copper, vix, sp500, natgas, wheat) are active.
 
 export const THEMES = [
   {
@@ -80,6 +80,41 @@ export const THEMES = [
     beneficiaries: ['KCHOL', 'SAHOL', 'ASELS'],          // index-beta proxies (modest link)
     headwinds: [],
     boost: 3, penalty: 0,
+  },
+  // ── ENERJI — elektrik ureticileri ──
+  {
+    id: 'natgas_up_power',
+    label: 'Dogalgaz yukselisi → elektrik fiyati / yenilenebilir marji',
+    active: (m) => (m?.natgas?.change5d ?? 0) >= 6,
+    beneficiaries: ['GWIND', 'AYDEM', 'ZOREN'],          // dusuk-yakit-maliyetli yenilenebilir uretici
+    headwinds: [],
+    boost: 5, penalty: 0,
+  },
+  // ── GIDA — tahil girdi maliyeti ──
+  {
+    id: 'wheat_down_food',
+    label: 'Bugday dususu → gida ureticisi girdi rahatlamasi',
+    active: (m) => (m?.wheat?.change5d ?? 0) <= -5,
+    beneficiaries: ['ULKER', 'BANVT', 'PNSUT', 'TUKAS', 'PETUN'],
+    headwinds: [],
+    boost: 5, penalty: 0,
+  },
+  {
+    id: 'wheat_up_food',
+    label: 'Bugday yukselisi → gida ureticisi girdi maliyeti artar',
+    active: (m) => (m?.wheat?.change5d ?? 0) >= 5,
+    beneficiaries: [],
+    headwinds: ['ULKER', 'BANVT', 'PNSUT', 'TUKAS', 'PETUN'],
+    boost: 0, penalty: -5,
+  },
+  // ── BANKACILIK — TL istikrari / yabanci girisi ──
+  {
+    id: 'lira_strong_banks',
+    label: 'TL istikrari → banka yabanci girisi / dusuk kredi riski',
+    active: (m) => (m?.usdtry?.change5d ?? 0) <= -2.5,
+    beneficiaries: ['GARAN', 'AKBNK', 'YKBNK', 'ISCTR'], // big private banks — foreign inflow beta
+    headwinds: [],
+    boost: 5, penalty: 0,
   },
 ];
 
