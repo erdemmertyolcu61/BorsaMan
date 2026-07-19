@@ -1047,6 +1047,20 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       ⚠ REJİME KARŞI
                     </span>
                   )}
+                  {p.cls !== 'sell' && p._liveEdge && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: (p._liveEdge.expectancy || 0) >= 0 ? 'rgba(16,232,122,0.16)' : 'rgba(244,63,94,0.16)',
+                      color: (p._liveEdge.expectancy || 0) >= 0 ? '#10e87a' : '#f87171',
+                      letterSpacing: 0.3, border: `1px solid ${(p._liveEdge.expectancy || 0) >= 0 ? 'rgba(16,232,122,0.4)' : 'rgba(244,63,94,0.4)'}`,
+                    }} title={[
+                      '📊 CANLI EDGE — gerçek paper-trade sonucu',
+                      `Bu konviksiyon×rejim: WR %${(p._liveEdge.winRate || 0).toFixed(0)}, beklenti ${(p._liveEdge.expectancy || 0) >= 0 ? '+' : ''}${(p._liveEdge.expectancy || 0).toFixed(2)}%`,
+                      `Örnek: ${p._liveEdge.n} kapanış — confidence buna göre kalibre edildi`,
+                    ].join('\n')}>
+                      📊 %{(p._liveEdge.winRate || 0).toFixed(0)}
+                    </span>
+                  )}
                   {p.cls !== 'sell' && (p._thematicBoost || 0) > 0 && (
                     <span style={{
                       fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,

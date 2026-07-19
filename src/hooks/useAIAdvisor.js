@@ -10,6 +10,8 @@ import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate } from '../utils/regimeGate.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { computeThematicAdjust, activeThemes } from '../utils/thematicMacro.js';
+import { getPaperTradeEngine } from '../utils/PaperTradeEngine.js';
+import { computeLiveEdge, getLiveEdgeStat, MIN_SAMPLE } from '../utils/liveEdge.js';
 import { classifyRegime } from '../utils/regimeEngine.js';
 import { correlationCapFilter } from '../utils/portfolioOptimizer.js';
 import { netRR, TOTAL_COST_PCT } from '../utils/tradingCosts.js';
@@ -2173,6 +2175,13 @@ export function useAIAdvisor(portfolio) {
           entryQuality = Math.max(10, entryQuality - 20);
         }
 
+        // A2: zengin giris-zamanlamasi scorer'ini (MA20/RSI/BB/sessiz-cekilme) entryQuality'e
+        // harmanla — hesaplaniyor + UI'da gosteriliyordu ama skora HIC girmiyordu.
+        if (p.entryTimingScore != null && !isSell) {
+          const timingQuality = Math.max(0, Math.min(100, 50 + p.entryTimingScore / 2));
+          entryQuality = Math.round(entryQuality * 0.6 + timingQuality * 0.4);
+        }
+
         // ── LIKIDITE SKORU (0-100) — pozisyon buyukluguyle olceklendiribiliriz ──
         // 2M TL: minimum (gecer-gecmez), 10M+ TL: BIST50 sinif, 50M+ TL: cok likit
         const volTL = p.avgVolumeTL || 0;
@@ -2502,6 +2511,33 @@ export function useAIAdvisor(portfolio) {
         else if (sigScore >= 65) { p.convictionTier = 'flagged'; p.convictionLabel = 'DUSUK KONVIKSIYON'; }
         else { p.convictionTier = 'early'; p.convictionLabel = ''; }
       }
+
+      // ── A1: CANLI-EDGE KALIBRASYONU (measure-first döngü kapanışı) ──
+      // Backtest "olması gereken"i söyler; kapalı paper-trade'ler "gerçekte olan"ı.
+      // convictionTier × regime hücresi GÜVENİLİR (>=8 örnek) ise confidence'ı o
+      // hücrenin gerçek expectancy'sine göre ±%15 ölçekle. Hücre yoksa (null) → no-op
+      // (bugünkü davranış). Veri birikene kadar hiçbir şey değişmez; birikince otomatik.
+      let liveEdgeModel = null;
+      try {
+        const closed = getPaperTradeEngine()?.getState?.()?.closedTrades || [];
+        if (closed.length >= MIN_SAMPLE) liveEdgeModel = computeLiveEdge(closed, { limit: 120 });
+      } catch { liveEdgeModel = null; }
+      if (liveEdgeModel) {
+        let _calibrated = 0;
+        for (const p of picks) {
+          if (p.cls === 'sell') continue;
+          const stat = getLiveEdgeStat(liveEdgeModel, p.convictionTier, marketRegime);
+          if (!stat) continue; // örnek yok → dokunma
+          const factor = Math.max(0.85, Math.min(1.15, 1 + (stat.expectancy / 100) * 3));
+          p.confidence = Math.max(0, Math.min(100, Math.round((p.confidence || 50) * factor)));
+          p.grade = p.confidence >= 75 ? 'A' : p.confidence >= 65 ? 'B' : p.confidence >= 55 ? 'C' : 'D';
+          p.tier = p.confidence >= 75 ? 'STRONG' : p.confidence >= 65 ? 'GOOD' : p.confidence >= 55 ? 'FAIR' : 'WEAK';
+          p._liveEdge = { winRate: stat.winRate, expectancy: stat.expectancy, n: stat.n };
+          _calibrated++;
+        }
+        if (_calibrated) pushLog({ type: 'info', msg: `Canlı-edge kalibrasyonu: ${_calibrated} pick gerçek paper-trade sonucuna göre ayarlandı` });
+      }
+
       // Yumusak konviksiyon bonusu (erken/near-breakout bonuslarini EZMEZ, onlarla toplanir):
       // sniper +20 one gecer, flagged -8 geri kalir, early notr (kendi bonusu var).
       const convictionBonus = (pick) => {
@@ -2819,6 +2855,7 @@ export function useAIAdvisor(portfolio) {
               foreignFlowScore: p.foreignFlowScore, foreignFlowLabel: p.foreignFlowLabel,
               convictionTier: p.convictionTier, convictionLabel: p.convictionLabel,
               _thematicBoost: p._thematicBoost, _thematicReasons: p._thematicReasons,
+              _liveEdge: p._liveEdge,
             })),
             // ── COMPACT VERDICT MAP — ALL scanned symbols ──
             // Tekil Analiz icin kullanilir: herhangi bir hisse ne karar aldi?
