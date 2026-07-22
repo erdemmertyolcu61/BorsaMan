@@ -20,6 +20,7 @@ import Tabs from './components/Tabs/Tabs.jsx';
 import MobileNav from './components/MobileNav/MobileNav.jsx';
 import MobilePicksStrip from './components/MobileNav/MobilePicksStrip.jsx';
 import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
+import RealPortfolioTab from './components/RealPortfolio/RealPortfolioTab.jsx';
 import MarketIntelPanel from './components/MarketIntel/MarketIntelPanel.jsx';
 import DashboardTab from './components/Dashboard/DashboardTab.jsx';
 
@@ -325,6 +326,10 @@ export default function App() {
           watchlist={watchlist}
           setWatchlist={setWatchlist}
         />
+      </div>
+
+      <div className={`tab-content ${state.activeTab === 'realport' ? 'active' : ''}`}>
+        <RealPortfolioTab />
       </div>
 
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>

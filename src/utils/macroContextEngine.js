@@ -48,7 +48,10 @@ function parseYahooSeries(text) {
   } catch { return null; }
 }
 
-async function fetchYahooSeries(symbol, range = '1mo', interval = '1d', ms = 8000) {
+// Exported: generic RAW-symbol Yahoo series fetcher (no .IS suffix — unlike
+// fetchEngine's BIST-only helpers). Reused by the real-portfolio tab for US
+// tickers (NVDA/MRVL/ETN) and by the macro drivers (USDTRY=X, ^VIX, GC=F...).
+export async function fetchYahooSeries(symbol, range = '1mo', interval = '1d', ms = 8000) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`;
   try {
     const text = await getDataViaProxies(url, ms);

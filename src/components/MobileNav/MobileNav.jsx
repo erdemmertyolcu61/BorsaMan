@@ -12,8 +12,9 @@ export default function MobileNav({ activeTab, onTabChange }) {
   ];
 
   const overflowTabs = [
-    { id: 'intel',  label: 'İstihbarat', icon: '🌍' },
-    { id: 'paper',  label: 'Paper Trading', icon: '📄' },
+    { id: 'intel',    label: 'İstihbarat', icon: '🌍' },
+    { id: 'paper',    label: 'Paper Trading', icon: '📄' },
+    { id: 'realport', label: 'Gerçek Portföy', icon: '💼' },
   ];
 
   const handleTab = (id) => {

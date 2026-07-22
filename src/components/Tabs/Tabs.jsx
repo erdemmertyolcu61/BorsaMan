@@ -7,6 +7,7 @@ export default function Tabs({ activeTab, onTabChange }) {
     { id: 'signals',  label: '◈ Sinyal Takibi' },
     { id: 'paper',    label: '📄 Paper Trading' },
     { id: 'portfolio',label: '◆ Portföy' },
+    { id: 'realport', label: '💼 Gerçek Portföy' },
   ];
   return (
     <div className="tabs">

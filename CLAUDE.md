@@ -245,6 +245,24 @@ graphify explain <node>        # Bir node + komsulari aciklama
 - **`correlationMatrix(series)`**: UI heatmap icin korelasyon matrisi
 - **Test**: 13/13 — single-asset trivial, weight cap, minVar < maxSharpe variance, target nearest
 
+## Gerçek Portföy (`RealPortfolioTab` — v31.2)
+Terminalin "Portföy" sekmesi **sanal** paper hesaptır; bu sekme **gerçek** çok-piyasalı
+(ABD + BIST) pozisyonları takip eder. Ayrı bir Python CLI projesinden (`models.py` /
+`calculations.py` / `alerts.py`) porte edildi.
+- **`realPortfolio.js`** (saf, 17 test): `normalizePositions` (Python `portfolio.json`
+  şeklini — snake_case `avg_cost` dahil — kabul eder), `positionMetrics`, `summarizeGroup`
+  (fiyatı çekilemeyen pozisyon toplamlara GİRMEZ, `missingTickers`'da raporlanır),
+  `allocationPct`, `biggestWinner/Loser`, `checkAlerts` (varsayılan -%10 / +%20, ticker
+  bazlı override), `portfolioTotals` (USD bacağını USD/TRY ile çevirip birleşik TRY toplamı;
+  kur yoksa `usConversionMissing` ile dürüstçe hariç tutar).
+- **`useRealPortfolio.js`**: BIST fiyatları **önce `fetchBigParaBatchPrices` (batch)**, eksikler
+  için `fetchBigParaQuote` fallback (per-symbol endpoint kırılgan — testte KCHOL'ü sessizce
+  düşürdü). ABD fiyatları `fetchYahooSeries` ile (ham sembol; `fetchEngine`'in Yahoo
+  yardımcıları `.IS` hardcode ettiği için kullanılamaz). USD/TRY `getMacroContext().usdtry`.
+- **Gizlilik**: pozisyonlar YALNIZCA `localStorage` (`bist_real_portfolio`) — depoya asla
+  girmez. UI'dan JSON ile düzenlenir (Python `portfolio.json` içeriği doğrudan yapıştırılabilir).
+- Finnhub anahtarı gerekmez (ABD fiyatları Yahoo'dan).
+
 ## AlertLog
 - `useAlertLog(advisor)` hook'u ALARM verilerini toplar (source: live_guard / watchlist /
   advisor / signal_tracker / manual). Uyarılar bu hook üzerinden akar.
