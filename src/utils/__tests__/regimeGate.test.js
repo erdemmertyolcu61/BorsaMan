@@ -64,20 +64,31 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(out).not.toBe(picks); // new array (pure)
   });
 
-  it('NEUTRAL — sells + best buys tagged counter-regime (shows top stocks, warns)', () => {
+  it('NEUTRAL — sells + quality buys (score>=65) tagged counter-regime', () => {
     const out = applyRegimeGate(picks, 'NEUTRAL');
-    // sell D + all buys (cap 8) by score desc, buys tagged _counterRegime
-    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B', 'C']);
+    // sell D + buys clearing the 65 floor (A=80, B=66); C=50 is cut
+    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B']);
     expect(out.filter(p => p.cls === 'buy').every(p => p._counterRegime === true)).toBe(true);
     expect(out.find(p => p.symbol === 'D')._counterRegime).toBeUndefined();
   });
 
-  it('BEAR — sells + top-N strongest buys tagged counter-regime (not empty)', () => {
+  it('BEAR — sells + quality buys, tighter cap, tagged counter-regime', () => {
     const out = applyRegimeGate(picks, 'BEAR');
-    // sell D always survives; buys kept by score desc (A=80, B=66, C=50), capped at 3
-    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B', 'C']);
+    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B']);
     expect(out.filter(p => p.cls === 'buy').every(p => p._counterRegime === true)).toBe(true);
     expect(out.find(p => p.symbol === 'D')._counterRegime).toBeUndefined(); // sells not tagged
+  });
+
+  it('v31.4 quality floor: sub-65 buys are cut outside BULL but kept in BULL', () => {
+    const weak = [{ symbol: 'W', cls: 'buy', score: 50 }];
+    expect(applyRegimeGate(weak, 'NEUTRAL').map(p => p.symbol)).toEqual([]);
+    expect(applyRegimeGate(weak, 'BEAR').map(p => p.symbol)).toEqual([]);
+    expect(applyRegimeGate(weak, 'BULL').map(p => p.symbol)).toEqual(['W']); // BULL untouched
+  });
+
+  it('the floor is configurable (5th arg)', () => {
+    const out = applyRegimeGate(picks, 'NEUTRAL', 8, 3, 40);
+    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B', 'C']); // C=50 now passes
   });
 
   it('BEAR — caps counter-regime buys via bearMaxBuys (4th arg)', () => {

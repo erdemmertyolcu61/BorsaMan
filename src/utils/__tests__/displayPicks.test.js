@@ -43,22 +43,33 @@ describe('deriveDisplayPicks', () => {
     expect(out.slice(1).every(p => p._emergencyPick)).toBe(true);
   });
 
-  it('regimeRestrict=true STILL fills to 8, but tags fillers _counterRegime (show best, warn)', () => {
+  it('regimeRestrict=true fills only to 4 and tags fillers _counterRegime (v31.4)', () => {
     const top = [pick({ symbol: 'T1', todayPumpReal: 1 })];
     const scan = Array.from({ length: 10 }, (_, i) =>
-      pick({ symbol: `S${i}`, avgVolumeTL: 500_000, atrPct: 1, confidence: 50 - i }));
+      pick({ symbol: `S${i}`, avgVolumeTL: 500_000, atrPct: 1, score: 70, confidence: 70 - i }));
     const out = deriveDisplayPicks(top, scan, true);
-    expect(out.length).toBe(8);
+    expect(out.length).toBe(4); // counter-regime target, NOT 8
     expect(out[0].symbol).toBe('T1'); // real pick first
     expect(out.slice(1).every(p => p._counterRegime === true)).toBe(true); // fillers warned
   });
 
-  it('regimeRestrict=true with empty topPicks → still shows best from scan (no empty panel)', () => {
+  it('regimeRestrict=true cuts sub-65 fillers (quality floor, no back door)', () => {
+    const top = [pick({ symbol: 'T1', todayPumpReal: 1 })];
+    const weakScan = Array.from({ length: 10 }, (_, i) =>
+      pick({ symbol: `W${i}`, avgVolumeTL: 500_000, atrPct: 1, score: 50 }));
+    const out = deriveDisplayPicks(top, weakScan, true);
+    expect(out.map(p => p.symbol)).toEqual(['T1']); // nothing weak sneaks in
+  });
+
+  it('regimeRestrict=true with empty topPicks → only quality names, capped at 4', () => {
     const scan = Array.from({ length: 10 }, (_, i) =>
-      pick({ symbol: `S${i}`, avgVolumeTL: 2_000_000, score: 60 }));
+      pick({ symbol: `S${i}`, avgVolumeTL: 2_000_000, score: 70, confidence: 70 - i }));
     const out = deriveDisplayPicks([], scan, true);
-    expect(out.length).toBeGreaterThan(0);
+    expect(out.length).toBe(4);
     expect(out.every(p => p._counterRegime === true)).toBe(true); // all warned
+    // and a sub-65 scan yields nothing rather than filling with junk
+    const weak = Array.from({ length: 10 }, (_, i) => pick({ symbol: `W${i}`, avgVolumeTL: 2_000_000, score: 50 }));
+    expect(deriveDisplayPicks([], weak, true)).toEqual([]);
   });
 
   it('empty topPicks + scanResults (no restrict) → fresh fallback with _fallback flag', () => {
@@ -75,7 +86,7 @@ describe('deriveDisplayPicks', () => {
     const sells = Array.from({ length: 8 }, (_, i) =>
       pick({ symbol: `SELL${i}`, cls: 'sell', confidence: 90 - i }));
     const scan = Array.from({ length: 5 }, (_, i) =>
-      pick({ symbol: `BUY${i}`, cls: 'buy', avgVolumeTL: 2_000_000, atrPct: 1, confidence: 60 - i }));
+      pick({ symbol: `BUY${i}`, cls: 'buy', avgVolumeTL: 2_000_000, atrPct: 1, score: 70, confidence: 60 - i }));
     const out = deriveDisplayPicks(sells, scan, true);
     const buys = out.filter(p => p.cls === 'buy');
     expect(buys.length).toBeGreaterThan(0);        // AL must appear

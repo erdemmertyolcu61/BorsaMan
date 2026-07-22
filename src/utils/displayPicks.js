@@ -11,6 +11,12 @@
 // run, but every buy shown is tagged `_counterRegime` so the UI can warn (⚠ badge
 // + banner). Measured edge is negative outside YUKSELIS — surfaced, not hidden.
 
+import { COUNTER_REGIME_MIN_SCORE } from './regimeGate.js';
+
+// Outside YUKSELIS the panel targets fewer buys (matches applyRegimeGate's
+// neutralMaxBuys) so the filler can't re-inflate a counter-regime list back to 8.
+export const COUNTER_REGIME_BUY_TARGET = 4;
+
 function isUnsafe(r) {
   const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);
   if (tp >= 12) return true;
@@ -58,13 +64,18 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
     let buys = safe.filter(p => p.cls !== 'sell').sort(pickSort);
     const sells = safe.filter(p => p.cls === 'sell').sort(sortByConf);
 
-    // Top up buys from the full scan when topPicks carries fewer than 8.
-    if (buys.length < 8 && scan.length > 0) {
+    // v31.4: outside YUKSELIS the panel targets FEWER buys and the fillers must
+    // clear the same quality floor as the gate — otherwise the sub-65 "early" tier
+    // sneaks back in through the filler and undoes the tightening.
+    const buyTarget = regimeRestrict ? COUNTER_REGIME_BUY_TARGET : 8;
+    const qualityOk = (r) => !regimeRestrict || (r.score || 0) >= COUNTER_REGIME_MIN_SCORE;
+
+    if (buys.length < buyTarget && scan.length > 0) {
       const have = new Set(safe.map(p => p.symbol));
-      const need = 8 - buys.length;
+      const need = buyTarget - buys.length;
       const tag = (r) => ({ ...r, _fallback: true, _emergencyPick: true, ...(regimeRestrict ? { _counterRegime: true } : {}) });
       const buildFiller = (rows) => rows
-        .filter(r => !have.has(r.symbol))
+        .filter(r => !have.has(r.symbol) && qualityOk(r))
         .sort(sortByConf)
         .slice(0, need)
         .map(tag);
@@ -85,7 +96,7 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
       if (filler.length < need) {
         const t3have = new Set([...have, ...filler.map(p => p.symbol)]);
         const t3 = scan
-          .filter(r => !t3have.has(r.symbol) && r.cls !== 'sell')
+          .filter(r => !t3have.has(r.symbol) && r.cls !== 'sell' && qualityOk(r))
           .sort(sortByConf)
           .slice(0, need - filler.length)
           .map(tag);
@@ -103,16 +114,21 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
       if (b._earlyPick && !a._earlyPick) return 1;
       return (b.confidence || b.score || 0) - (a.confidence || a.score || 0);
     };
-    let pool = scanResults.filter(r => !isUnsafe(r) && (r.score || 0) >= 45 && (r.avgVolumeTL || 0) >= 1_000_000);
-    if (pool.length < 8) {
+    // v31.4: in a counter-regime the score floor and the smaller target apply here
+    // too — this branch must not become a back door for the sub-65 tier.
+    const minScore = regimeRestrict ? COUNTER_REGIME_MIN_SCORE : 45;
+    const target = regimeRestrict ? COUNTER_REGIME_BUY_TARGET : 8;
+    let pool = scanResults.filter(r => !isUnsafe(r) && (r.score || 0) >= minScore && (r.avgVolumeTL || 0) >= 1_000_000);
+    if (pool.length < target) {
       const have = new Set(pool.map(p => p.symbol));
-      pool = [...pool, ...scanResults.filter(r => !have.has(r.symbol) && (r.avgVolumeTL || 0) >= 200_000 && r.cls !== 'sell')];
+      pool = [...pool, ...scanResults.filter(r => !have.has(r.symbol) && (r.avgVolumeTL || 0) >= 200_000
+        && r.cls !== 'sell' && (r.score || 0) >= minScore)];
     }
-    if (pool.length < 8) {
+    if (pool.length < target && !regimeRestrict) {
       const have2 = new Set(pool.map(p => p.symbol));
       pool = [...pool, ...scanResults.filter(r => !have2.has(r.symbol))];
     }
-    return pool.sort(sortFn).slice(0, 8).map(r => ({
+    return pool.sort(sortFn).slice(0, target).map(r => ({
       symbol: r.symbol, sector: r.sector, price: r.price, change: r.change,
       signal: r.signal, cls: r.cls, score: r.score, rr: r.rr,
       stop: r.stop, target: r.target, stopPct: r.stopPct, targetPct: r.targetPct,

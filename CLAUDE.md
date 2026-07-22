@@ -492,6 +492,23 @@ FALLBACK_TIMEFRAME = "2Y"                           # 5Y truncation rescue
 - `graphify explain <node>` — bir node + komşuları plain-language
 - Hook otomatik fallback'i yönetir; bilinçli grep gerekirse hook izin verir
 
+## Rejim Kalite Tabani (v31.4) — "gevsettik, sonra dengeledik"
+
+v29.2'de olcume dayali sert kapi vardi (DUSUS'te AL yok, YATAY'da sadece score>=75).
+v30.x'te kullanici istegiyle **gevsetildi** (her rejimde 8 AL goster + uyari rozeti).
+Sonuc: YATAY'da panel, olcumun kaybettigini soyledigi sub-65 "early" kademeyi 8 pick
+olarak sunmaya basladi (**YATAY -%1,68 / WR %26** — 4 denemeden 3'u kayip).
+
+v31.4 orta yol (kullanici karari):
+- `regimeGate.COUNTER_REGIME_MIN_SCORE = 65` — BULL disinda sadece flagged+sniper AL gecer.
+- `applyRegimeGate` neutralMaxBuys 8 → **4** (BEAR 3 olarak kaldi); 5. arg ile taban ayarlanabilir.
+- `displayPicks.COUNTER_REGIME_BUY_TARGET = 4` + filler'lara ayni skor tabani —
+  **kritik**: sadece gate'i sikmak yetmiyordu, panel filler'i listeyi 8'e geri sisiriyordu
+  (sub-65 arka kapi). Bos-topPicks fallback dali da ayni tabana tabi.
+- BULL'da hicbir sey degismedi (olcum orada pozitif: +%1,14 / WR %59,5).
+- Dogrulama: YATAY simulasyonu — 23 AL'lik taramada panel 8 (cogu score 52) yerine
+  **3 (hepsi score 72)** gosteriyor, zayif sizinti yok, hepsi ⚠ uyarili.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

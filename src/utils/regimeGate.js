@@ -43,30 +43,36 @@ export function regimeLabel(regime) {
   return regime === 'BULL' ? 'YUKSELIS' : regime === 'BEAR' ? 'DUSUS' : 'YATAY';
 }
 
+// v31.4 QUALITY FLOOR: outside YUKSELIS only flagged+ (score>=65) buys survive.
+// Measured: YATAY -1.68% / 26% WR, DUSUS -3.36% / 18.8% WR — the sub-65 "early"
+// tier is where those losses concentrate. We still SHOW picks (regime warns, not
+// hides) but the weakest tier no longer reaches the panel in a counter-regime.
+export const COUNTER_REGIME_MIN_SCORE = 65;
+
 /**
  * Apply the regime buy-gate to a pick list (buy-oriented; sells pass through).
- * Product decision: the system ALWAYS shows the best stocks — regime WARNS, it
- * never hides. An empty panel is a worse product than a clearly-flagged list.
+ * Regime WARNS rather than fully hiding — but a quality floor applies outside BULL.
  *   BULL (YUKSELIS)→ unchanged (all picks).
- *   NEUTRAL (YATAY)→ sells + top `neutralMaxBuys` strongest buys, tagged _counterRegime.
- *   BEAR (DUSUS)   → sells + top `bearMaxBuys` strongest buys (tighter cap — worst
- *                    measured edge), tagged _counterRegime.
- * The measured negative edge outside YUKSELIS is surfaced in the UI (banner +
- * ⚠ per-card badge), not by suppression.
+ *   NEUTRAL (YATAY)→ sells + up to `neutralMaxBuys` buys with score>=minScore.
+ *   BEAR (DUSUS)   → sells + up to `bearMaxBuys` buys with score>=minScore
+ *                    (tighter cap — worst measured edge).
+ * Surviving buys are tagged `_counterRegime` for the ⚠ badge + banner.
  * Pure: returns a NEW array, never mutates the input.
  * @param {Array<{cls?: string, score?: number}>} picks
  * @param {'BULL'|'NEUTRAL'|'BEAR'} regime
- * @param {number} [neutralMaxBuys=8] - max counter-regime buys shown in NEUTRAL
+ * @param {number} [neutralMaxBuys=4] - max counter-regime buys shown in NEUTRAL
  * @param {number} [bearMaxBuys=3] - max counter-regime buys shown in BEAR
+ * @param {number} [minScore=65] - quality floor for counter-regime buys
  * @returns {Array}
  */
-export function applyRegimeGate(picks, regime, neutralMaxBuys = 8, bearMaxBuys = 3) {
+export function applyRegimeGate(picks, regime, neutralMaxBuys = 4, bearMaxBuys = 3,
+                                minScore = COUNTER_REGIME_MIN_SCORE) {
   if (!Array.isArray(picks)) return [];
   if (regime === 'BULL') return picks.slice(); // copy for purity
   const cap = regime === 'BEAR' ? Math.max(0, bearMaxBuys) : Math.max(0, neutralMaxBuys);
   const sells = picks.filter(p => p.cls === 'sell');
   const buys = picks
-    .filter(p => p.cls === 'buy')
+    .filter(p => p.cls === 'buy' && (p.score || 0) >= minScore) // kalite tabani
     .sort((a, b) => (b.score || 0) - (a.score || 0))
     .slice(0, cap)
     .map(p => (p._counterRegime ? p : { ...p, _counterRegime: true }));
