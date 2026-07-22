@@ -18,12 +18,28 @@ import { normalizePositions, portfolioTotals, checkAlerts } from '../utils/realP
 
 const STORAGE_KEY = 'bist_real_portfolio';
 
+// First-run seed: src/data/realPortfolio.local.json (gitignored — personal data).
+// import.meta.glob resolves to {} when the file is absent, so builds/CI on a
+// machine without it still work. Copy realPortfolio.example.json to create one.
+const _seedModules = import.meta.glob('../data/realPortfolio.local.json', { eager: true });
+function seedPositions() {
+  try {
+    const mod = Object.values(_seedModules)[0];
+    const data = mod?.default ?? mod;
+    return data ? normalizePositions(data) : [];
+  } catch { return []; }
+}
+
 function loadPositions() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return normalizePositions(JSON.parse(raw));
-  } catch { return []; }
+    if (raw) return normalizePositions(JSON.parse(raw));
+  } catch { /* fall through to seed */ }
+  // Nothing stored yet → seed from the local file so the tab is populated
+  // immediately after an update, with no manual paste.
+  const seeded = seedPositions();
+  if (seeded.length) savePositions(seeded);
+  return seeded;
 }
 
 function savePositions(positions) {

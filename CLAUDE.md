@@ -259,8 +259,13 @@ Terminalin "Portföy" sekmesi **sanal** paper hesaptır; bu sekme **gerçek** ç
   için `fetchBigParaQuote` fallback (per-symbol endpoint kırılgan — testte KCHOL'ü sessizce
   düşürdü). ABD fiyatları `fetchYahooSeries` ile (ham sembol; `fetchEngine`'in Yahoo
   yardımcıları `.IS` hardcode ettiği için kullanılamaz). USD/TRY `getMacroContext().usdtry`.
-- **Gizlilik**: pozisyonlar YALNIZCA `localStorage` (`bist_real_portfolio`) — depoya asla
-  girmez. UI'dan JSON ile düzenlenir (Python `portfolio.json` içeriği doğrudan yapıştırılabilir).
+- **Otomatik seed**: ilk açılışta (localStorage boşken) `src/data/realPortfolio.local.json`
+  varsa otomatik yüklenir → güncellemeden sonra elle yapıştırma gerekmez. Dosya
+  **gitignore'lu** (kişisel finansal veri); şablonu `realPortfolio.example.json`. Yükleme
+  `import.meta.glob` ile yapılır → dosya yoksa `{}` döner, build/CI kırılmaz.
+- **Gizlilik**: pozisyonlar YALNIZCA yerel — `localStorage` (`bist_real_portfolio`) +
+  gitignore'lu seed dosyası. Depoya asla girmez. UI'dan JSON ile de düzenlenebilir
+  (Python `portfolio.json` içeriği doğrudan yapıştırılabilir).
 - Finnhub anahtarı gerekmez (ABD fiyatları Yahoo'dan).
 
 ## AlertLog

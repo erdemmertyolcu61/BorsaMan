@@ -1,0 +1,8 @@
+{
+  "_comment": "Kopyala → realPortfolio.local.json (gitignore'da). Uygulama ilk acilista bunu otomatik yukler. Gercek pozisyonlar ASLA depoya girmez.",
+  "last_updated": "2026-01-01",
+  "positions": [
+    { "ticker": "AAPL",  "market": "US",   "quantity": 1.5, "avgCost": 180.00, "currency": "USD" },
+    { "ticker": "THYAO", "market": "BIST", "quantity": 100, "avgCost": 250.00, "currency": "TRY" }
+  ]
+}

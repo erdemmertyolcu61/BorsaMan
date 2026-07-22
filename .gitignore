@@ -9,6 +9,9 @@ graphify-out/
 .kombai/
 _recovery/
 /data/
+# Real portfolio holdings — personal financial data, never committed.
+# Copy realPortfolio.example.json → realPortfolio.local.json and fill it in.
+src/data/realPortfolio.local.json
 *.exe
 *.msi
 *.db
