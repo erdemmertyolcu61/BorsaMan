@@ -1079,6 +1079,22 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       🌍 MAKRO +{p._thematicBoost}
                     </span>
                   )}
+                  {/* v31.9: RELATİF GÜÇ — XU100'e göre liderlik/geride kalma */}
+                  {p.cls !== 'sell' && (p.rsLeading || p.rsLagging) && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: p.rsLeading ? 'rgba(16,232,122,0.16)' : 'rgba(148,163,184,0.14)',
+                      color: p.rsLeading ? '#10e87a' : '#94a3b8',
+                      letterSpacing: 0.3,
+                      border: `1px solid ${p.rsLeading ? 'rgba(16,232,122,0.4)' : 'rgba(148,163,184,0.35)'}`,
+                    }} title={[
+                      p.rsLeading ? '🚀 LİDER — XU100 endeksinden güçlü' : '🐢 GERİDE — XU100 endeksinden zayıf',
+                      `Endekse göre ${(p.rsOutperf ?? 0) >= 0 ? '+' : ''}${p.rsOutperf ?? 0} puan (20g/60g)`,
+                      `Confidence ${(p.rsScore ?? 0) >= 0 ? '+' : ''}${p.rsScore ?? 0}`,
+                    ].join('\n')}>
+                      {p.rsLeading ? '🚀 LİDER' : '🐢 GERİDE'} {(p.rsOutperf ?? 0) >= 0 ? '+' : ''}{p.rsOutperf ?? 0}
+                    </span>
+                  )}
                   {p.cls !== 'sell' && p.convictionTier === 'sniper' && (
                     <span style={{
                       fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,

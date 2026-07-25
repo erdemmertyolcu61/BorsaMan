@@ -8,6 +8,7 @@ import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../utils/regimeGate.js';
+import { computeRelativeStrength } from '../utils/relativeStrength.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { computeThematicAdjust, activeThemes } from '../utils/thematicMacro.js';
 import { getPaperTradeEngine } from '../utils/PaperTradeEngine.js';
@@ -816,9 +817,13 @@ export function useAIAdvisor(portfolio) {
       // v29.4: rejim siniflandirmasi pure fonksiyona cikarildi (regimeGate.js) — test edilebilir.
       let marketRegime = 'NEUTRAL';   // BULL=YUKSELIS, NEUTRAL=YATAY, BEAR=DUSUS
       let bistChangePct = 0;
+      // v31.9: XU100 kapanis serisi — hem rejim hem relatif-guc (RS) icin. 1y pencere
+      // ki 60-gunluk RS ufku ve hisse tarafindaki MA200 ayni tazelikte olsun.
+      let bistCloses = [];
       try {
-        const bistData = await fetchSingle('XU100', '3mo', '1d', true).catch(() => null);
+        const bistData = await fetchSingle('XU100', '1y', '1d', true).catch(() => null);
         const closes = (bistData?.prices || []).map(b => b.close);
+        bistCloses = closes;
         const cls = classifyBistRegime(closes);
         marketRegime = cls.regime;
         bistChangePct = cls.changePct;
@@ -848,7 +853,9 @@ export function useAIAdvisor(portfolio) {
         const chunk = symbols.slice(i, i + SCAN_CONCURRENCY);
         const chunkResults = await Promise.all(chunk.map(async (sym) => {
           try {
-            const data = await withSymTimeout(() => fetchSingle(sym, '6mo', '1d', true));
+            // v31.9: 6mo → 1y. 6 ay ~126 bar → MA200 hesaplanamiyordu (hep null);
+            // 1y ~252 bar ile MA200 + uzun trend yapisi + 60g RS ufku calisir.
+            const data = await withSymTimeout(() => fetchSingle(sym, '1y', '1d', true));
             if (data && data.prices && data.prices.length >= 20) {
               // ── BATCH OVERLAY ──
               // Per-sembol applyLiveOverlay() yerine batch'ten gelen canli fiyati uygula.
@@ -1121,6 +1128,17 @@ export function useAIAdvisor(portfolio) {
                     entryTimingScore:  timing.score,
                     entryTimingLabel:  timing.label,
                     entryTimingReasons: timing.reasons,
+                  };
+                })(),
+                // ── RELATİF GÜÇ (XU100 liderliği) ──
+                // Endeksten güçlü = lider, zayıf = geride kalan. 20g/60g outperformans.
+                ...(() => {
+                  const rs = computeRelativeStrength(calcPrices.map(b => b.close), bistCloses);
+                  return {
+                    rsOutperf: rs.outperf,   // yüzde puan (pp) endekse göre
+                    rsScore: rs.rsScore,     // [-8,+8] confidence modifiye
+                    rsLeading: rs.leading,
+                    rsLagging: rs.lagging,
                   };
                 })(),
                 // ── HTF bağlamı özeti (UI tooltip + Claude prompt için) ──
@@ -2137,9 +2155,14 @@ export function useAIAdvisor(portfolio) {
           macroAdj = isSell ? -macroCtx.scoreAdjust : macroCtx.scoreAdjust;
         }
 
+        // ── RELATİF GÜÇ (XU100 liderliği) — v31.9 ──
+        // Endeksten güçlü hisse (lider) küçük prim, geride kalan küçük ceza.
+        // rsScore zaten [-8,+8] sınırlı; sell için ters yön (zayıf hisse = iyi sat).
+        const rsAdj = isSell ? -(p.rsScore || 0) : (p.rsScore || 0);
+
         let confidence = Math.round(
           techComponent + potentialComponent + sectorComponent +
-          newsComponent + entryComponent + liqComponent + healthComponent + macroAdj
+          newsComponent + entryComponent + liqComponent + healthComponent + macroAdj + rsAdj
         );
 
         // TAVAN CEZASI: tavan hisselerin confidence'ini continuation prob'a gore asagi cek.
@@ -2184,6 +2207,7 @@ export function useAIAdvisor(portfolio) {
             liquidity: Math.round(liqComponent),
             momentumHealth: Math.round(healthComponent),
             macro: Math.round(macroAdj),
+            relativeStrength: Math.round(rsAdj), // XU100 liderlik primi/cezasi
             foreignFlow: 0, // enrichment asamasinda guncellenir
           },
         };
@@ -2779,6 +2803,7 @@ export function useAIAdvisor(portfolio) {
               _earlyPick: p._earlyPick, _earlySignals: p._earlySignals, _earlyCount: p._earlyCount,
               _nearBreakoutPick: p._nearBreakoutPick, _nearBreakoutSignals: p._nearBreakoutSignals, _nearBreakoutCount: p._nearBreakoutCount,
               _bestOfDay: p._bestOfDay, // v31.6: ⭐ garantili gunluk pick (persist)
+              rsOutperf: p.rsOutperf, rsScore: p.rsScore, rsLeading: p.rsLeading, rsLagging: p.rsLagging, // v31.9 RS
               recentPump: p.recentPump, cumulativePump: p.cumulativePump,
               prevDayChange: p.prevDayChange, // v26 FIX 3: 2-day exhaustion icin
               todayPumpReal: p.todayPumpReal,
