@@ -43,11 +43,13 @@ export function regimeLabel(regime) {
   return regime === 'BULL' ? 'YUKSELIS' : regime === 'BEAR' ? 'DUSUS' : 'YATAY';
 }
 
-// v31.4 QUALITY FLOOR: outside YUKSELIS only flagged+ (score>=65) buys survive.
-// Measured: YATAY -1.68% / 26% WR, DUSUS -3.36% / 18.8% WR — the sub-65 "early"
-// tier is where those losses concentrate. We still SHOW picks (regime warns, not
-// hides) but the weakest tier no longer reaches the panel in a counter-regime.
-export const COUNTER_REGIME_MIN_SCORE = 65;
+// v31.5 QUALITY FLOOR (relaxed from 65 at user request): outside YUKSELIS buys
+// must clear score>=58. Measured: YATAY -1.68% / 26% WR, DUSUS -3.36% / 18.8% WR.
+// v31.4 pinned this at 65 (flagged+ only) which left the panel almost empty in a
+// counter-regime — the user reported "cok siki, ne kaybediyorum ne kazaniyorum".
+// 58 lets the upper "early" band through (still warned via _counterRegime), while
+// the guaranteed daily pick (ensureBestOfDay) makes sure a name always shows.
+export const COUNTER_REGIME_MIN_SCORE = 58;
 
 /**
  * Apply the regime buy-gate to a pick list (buy-oriented; sells pass through).
@@ -60,12 +62,12 @@ export const COUNTER_REGIME_MIN_SCORE = 65;
  * Pure: returns a NEW array, never mutates the input.
  * @param {Array<{cls?: string, score?: number}>} picks
  * @param {'BULL'|'NEUTRAL'|'BEAR'} regime
- * @param {number} [neutralMaxBuys=4] - max counter-regime buys shown in NEUTRAL
- * @param {number} [bearMaxBuys=3] - max counter-regime buys shown in BEAR
- * @param {number} [minScore=65] - quality floor for counter-regime buys
+ * @param {number} [neutralMaxBuys=6] - max counter-regime buys shown in NEUTRAL
+ * @param {number} [bearMaxBuys=4] - max counter-regime buys shown in BEAR
+ * @param {number} [minScore=58] - quality floor for counter-regime buys
  * @returns {Array}
  */
-export function applyRegimeGate(picks, regime, neutralMaxBuys = 4, bearMaxBuys = 3,
+export function applyRegimeGate(picks, regime, neutralMaxBuys = 6, bearMaxBuys = 4,
                                 minScore = COUNTER_REGIME_MIN_SCORE) {
   if (!Array.isArray(picks)) return [];
   if (regime === 'BULL') return picks.slice(); // copy for purity
@@ -77,4 +79,33 @@ export function applyRegimeGate(picks, regime, neutralMaxBuys = 4, bearMaxBuys =
     .slice(0, cap)
     .map(p => (p._counterRegime ? p : { ...p, _counterRegime: true }));
   return [...sells, ...buys];
+}
+
+// v31.5 GUARANTEED DAILY PICK — "her gun bir tane".
+// The user wants the panel to never be empty: at least ONE buy candidate every
+// day, chosen from the PRE-MARKET pool as the coil about to move — explicitly NOT
+// a name that has already pumped (that was the FOMO trap isUnsafeForTomorrow
+// blocks). Fires ONLY when the gate leaves zero buys, so it never overrides a
+// real gated list. The pick is tagged `_bestOfDay` (⭐ GUNUN EN IYISI) and, outside
+// YUKSELIS, `_counterRegime` (⚠) so the honest regime warning stays attached.
+export function ensureBestOfDay(gatedPicks, candidates, regime) {
+  const picks = Array.isArray(gatedPicks) ? gatedPicks.slice() : [];
+  if (picks.some(p => p && p.cls === 'buy')) return picks; // already have a long
+  const pool = (Array.isArray(candidates) ? candidates : []).filter(r =>
+    r && typeof r === 'object' && r.cls !== 'sell' &&
+    // henuz patlamamis (pre-pump) — piyasa acilinca hareket edecek olan
+    Math.max(r.todayPumpReal || 0, r.recentPump || 0) < 7 &&
+    (r.cumulativePump || 0) < 15 &&
+    // asiri alim bolgesinde degil (tavan/exhaustion adayi olmasin)
+    (r.rsi || 50) <= 78 && (r.mfi || 50) <= 82);
+  if (!pool.length) return picks;
+  // Rank: early-accumulation (pre-pump coil) first, then signal strength, then score.
+  const rank = (r) => (r._earlyPick ? 1000 : 0) + (r._earlyCount || 0) * 10 +
+    (r.score || r.confidence || 0);
+  const best = pool.slice().sort((a, b) => rank(b) - rank(a))[0];
+  const tagged = {
+    ...best, _bestOfDay: true,
+    ...(regime !== 'BULL' ? { _counterRegime: true } : {}),
+  };
+  return [tagged, ...picks];
 }

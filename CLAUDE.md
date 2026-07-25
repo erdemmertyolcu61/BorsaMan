@@ -509,6 +509,33 @@ v31.4 orta yol (kullanici karari):
 - Dogrulama: YATAY simulasyonu — 23 AL'lik taramada panel 8 (cogu score 52) yerine
   **3 (hepsi score 72)** gosteriyor, zayif sizinti yok, hepsi ⚠ uyarili.
 
+## Rejim Gevsetme + Garantili Gunluk Pick (v31.5) — "her gun bir tane"
+
+Kullanici geri bildirimi: v31.4 tabani (65) YATAY/DUSUS'te paneli **neredeyse bos**
+biraktu — "cok siki, ne kaybediyorum ne kazaniyorum; her gun BIST'ten bir aday
+mutlaka gormeliyim (piyasa acilinca hareket edecek pre-pump coil, patlamis isim degil)".
+
+Iki degisiklik:
+- **Dengeli gevsetme**: `COUNTER_REGIME_MIN_SCORE` 65 → **58** (ust "early" bandi gecer,
+  hepsi hala `_counterRegime` uyarili); `applyRegimeGate` neutralMaxBuys 4 → **6**,
+  bearMaxBuys 3 → **4**; `displayPicks.COUNTER_REGIME_BUY_TARGET` 4 → **6**. BULL yine serbest.
+- **`ensureBestOfDay(gatedPicks, candidates, regime)`** (saf, `regimeGate.js`, test edilmis):
+  rejim kapisi TUM AL'leri sustursa bile, `results` havuzundan **en iyi pre-pump adayini**
+  garanti eder → panel asla bos kalmaz. Secim: `_earlyPick` (erken birikim/coil) once,
+  sonra sinyal gucu/score. **Zaten patlamis isim DEGIL** — filtre: recentPump<7,
+  cumulativePump<15, RSI<=78, MFI<=82 (FOMO/tavan kovalamiyor). Tag: `_bestOfDay`
+  (⭐ GUNUN EN IYISI rozeti) + rejim disiysa `_counterRegime` (⚠). SADECE gatelenmis
+  listede sifir AL kaldiginda tetiklenir — gercek bir gated liste varsa dokunmaz.
+- Wiring: `useAIAdvisor` TEK CIKIS KAPISI'nda (finalPicks, dispatch oncesi, satir ~2957)
+  `applyRegimeGate`'ten hemen sonra cagrilir; `stampSegKeys` convictionTier'i sonra basar.
+- UI: `AIAdvisorPanel` altin ⭐ rozet + tooltip; `MobilePicksStrip` chip'te ⭐ prefix.
+- Dogrulama: `regimeGate.test.js` +7 (ensureBestOfDay: injection, early-oncelik, pump/
+  overbought disi, no-op-if-buy-exists, BULL tag yok, bos-havuz defansif); tum suite 402 pass.
+
+**Dürüst not degismedi**: garantili pick de rejim uyarisini tasir; olcum YATAY/DUSUS'te
+negatif. Bu ozellik "her gun gorunurluk" saglar, edge yaratmaz — kullanici karariyle kucuk
+pozisyon/siki stop onerilir.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

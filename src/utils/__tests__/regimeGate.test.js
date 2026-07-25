@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyBistRegime, regimeLabel, applyRegimeGate } from '../regimeGate.js';
+import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../regimeGate.js';
 
 // Helper: build a rising/falling/flat close series of length n
 const rising = (n, start = 100, step = 1) => Array.from({ length: n }, (_, i) => start + i * step);
@@ -114,5 +114,64 @@ describe('regimeGate.applyRegimeGate', () => {
 
   it('is defensive against non-array input', () => {
     expect(applyRegimeGate(null, 'BEAR')).toEqual([]);
+  });
+
+  it('v31.5 defaults: quality floor is 58, NEUTRAL cap 6, BEAR cap 4', () => {
+    // 7 buys straddling 58; NEUTRAL default keeps up to 6 that clear the floor.
+    const many = Array.from({ length: 8 }, (_, i) => ({ symbol: `B${i}`, cls: 'buy', score: 60 + i }));
+    many.push({ symbol: 'LOW', cls: 'buy', score: 50 }); // below 58 → cut
+    const neutral = applyRegimeGate(many, 'NEUTRAL');
+    expect(neutral.filter(p => p.cls === 'buy')).toHaveLength(6);
+    expect(neutral.some(p => p.symbol === 'LOW')).toBe(false);
+    const bear = applyRegimeGate(many, 'BEAR');
+    expect(bear.filter(p => p.cls === 'buy')).toHaveLength(4);
+  });
+});
+
+describe('regimeGate.ensureBestOfDay', () => {
+  const cand = (o) => ({ cls: 'buy', score: 60, rsi: 55, mfi: 50, todayPumpReal: 1, ...o });
+
+  it('injects the best pre-pump candidate when the gate left zero buys', () => {
+    const gated = [{ symbol: 'S', cls: 'sell', score: 80 }];
+    const pool = [cand({ symbol: 'A', score: 62 }), cand({ symbol: 'B', score: 70 })];
+    const out = ensureBestOfDay(gated, pool, 'NEUTRAL');
+    expect(out[0].symbol).toBe('B');           // highest-ranked injected first
+    expect(out[0]._bestOfDay).toBe(true);
+    expect(out[0]._counterRegime).toBe(true);  // NEUTRAL → warned
+    expect(out).toHaveLength(2);               // sell preserved
+  });
+
+  it('prefers early-accumulation (pre-pump coil) over a higher raw score', () => {
+    const pool = [cand({ symbol: 'HI', score: 74 }), cand({ symbol: 'COIL', score: 60, _earlyPick: true, _earlyCount: 5 })];
+    expect(ensureBestOfDay([], pool, 'NEUTRAL')[0].symbol).toBe('COIL');
+  });
+
+  it('excludes already-pumped and overbought names (not a FOMO chaser)', () => {
+    const pool = [
+      cand({ symbol: 'PUMPED', score: 90, todayPumpReal: 9 }),   // already popped
+      cand({ symbol: 'HOT', score: 88, rsi: 85 }),               // overbought
+      cand({ symbol: 'CALM', score: 61 }),                       // clean pre-pump
+    ];
+    expect(ensureBestOfDay([], pool, 'NEUTRAL')[0].symbol).toBe('CALM');
+  });
+
+  it('does nothing when a real buy already survived the gate', () => {
+    const gated = [{ symbol: 'REAL', cls: 'buy', score: 80, _counterRegime: true }];
+    const out = ensureBestOfDay(gated, [cand({ symbol: 'X' })], 'NEUTRAL');
+    expect(out).toEqual(gated);
+    expect(out.some(p => p._bestOfDay)).toBe(false);
+  });
+
+  it('does NOT tag _counterRegime in BULL', () => {
+    const out = ensureBestOfDay([], [cand({ symbol: 'A' })], 'BULL');
+    expect(out[0]._bestOfDay).toBe(true);
+    expect(out[0]._counterRegime).toBeUndefined();
+  });
+
+  it('returns the gate output unchanged when no eligible candidate exists', () => {
+    const gated = [{ symbol: 'S', cls: 'sell', score: 80 }];
+    expect(ensureBestOfDay(gated, [cand({ symbol: 'P', todayPumpReal: 11 })], 'BEAR')).toEqual(gated);
+    expect(ensureBestOfDay([], [], 'BEAR')).toEqual([]);
+    expect(ensureBestOfDay([], null, 'BEAR')).toEqual([]);
   });
 });

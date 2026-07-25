@@ -98,14 +98,17 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
             {sortedPicks.map((p) => {
               const isSell = p.cls === 'sell';
               const counter = p._counterRegime && !isSell;
+              const bestOfDay = p._bestOfDay && !isSell;
               return (
                 <button
                   key={p.symbol}
                   className={`m-advisor-chip ${isSell ? 'sell' : 'buy'}`}
                   onClick={() => onAnalyze?.(p.symbol)}
-                  title={counter ? 'Rejime karşı AL — düşüş/yatay piyasada yüksek risk, küçük pozisyon' : undefined}
+                  title={bestOfDay
+                    ? 'Günün en iyisi — rejim kapısı boş bıraktı, pre-pump havuzundan garanti pick (yüksek risk, küçük pozisyon)'
+                    : counter ? 'Rejime karşı AL — düşüş/yatay piyasada yüksek risk, küçük pozisyon' : undefined}
                 >
-                  {counter ? '⚠ ' : ''}{p.symbol} ({(p.score || 0).toFixed(1)})
+                  {bestOfDay ? '⭐ ' : counter ? '⚠ ' : ''}{p.symbol} ({(p.score || 0).toFixed(1)})
                 </button>
               );
             })}

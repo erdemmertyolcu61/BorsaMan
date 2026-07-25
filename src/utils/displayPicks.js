@@ -14,8 +14,9 @@
 import { COUNTER_REGIME_MIN_SCORE } from './regimeGate.js';
 
 // Outside YUKSELIS the panel targets fewer buys (matches applyRegimeGate's
-// neutralMaxBuys) so the filler can't re-inflate a counter-regime list back to 8.
-export const COUNTER_REGIME_BUY_TARGET = 4;
+// neutralMaxBuys=6) so the filler can't re-inflate a counter-regime list back to 8.
+// v31.5: 4 → 6 (relaxed with the gate; user wanted more names visible).
+export const COUNTER_REGIME_BUY_TARGET = 6;
 
 function isUnsafe(r) {
   const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);

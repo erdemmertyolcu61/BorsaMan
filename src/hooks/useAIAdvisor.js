@@ -7,7 +7,7 @@ import { calcSectorMetrics, rankSectors } from '../utils/sectorEngine.js';
 import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
-import { classifyBistRegime, regimeLabel, applyRegimeGate } from '../utils/regimeGate.js';
+import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../utils/regimeGate.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { computeThematicAdjust, activeThemes } from '../utils/thematicMacro.js';
 import { getPaperTradeEngine } from '../utils/PaperTradeEngine.js';
@@ -2957,6 +2957,21 @@ export function useAIAdvisor(portfolio) {
         finalPicks = applyRegimeGate(finalPicks, marketRegime);
         if (before !== finalPicks.length) {
           console.warn(`[AI Advisor] REJIM KAPISI (${regimeLabel(marketRegime)}): ${before - finalPicks.length} AL pick susturuldu (dispatch)`);
+        }
+      }
+
+      // ── v31.5 GARANTILI GUNLUK PICK — "her gun bir tane" ──
+      // Rejim kapisi TUM AL'leri sustursa bile, pre-pump havuzundan en iyi coil'i
+      // garanti et: panel asla bos kalmaz. Zaten patlamis isim DEGIL (ensureBestOfDay
+      // recentPump<7 + asiri-alim disi filtreler) — piyasa acilinca hareket edecek
+      // adayi secer, ⭐ GUNUN EN IYISI (+ rejim disiysa ⚠) rozetiyle.
+      {
+        const beforeGuarantee = finalPicks.some(p => p && p.cls === 'buy');
+        finalPicks = ensureBestOfDay(finalPicks, results, marketRegime);
+        if (!beforeGuarantee && finalPicks.some(p => p._bestOfDay)) {
+          const bod = finalPicks.find(p => p._bestOfDay);
+          console.info(`[AI Advisor] GUNUN EN IYISI garantisi: ${bod?.symbol} (score ${bod?.score}, ${bod?._earlyPick ? 'erken birikim' : 'en yuksek skor'})`);
+          pushLog({ type: 'info', msg: `⭐ Gunun en iyisi: ${bod?.symbol} — rejim kapisi bos birakti, pre-pump havuzundan garanti pick.` });
         }
       }
 

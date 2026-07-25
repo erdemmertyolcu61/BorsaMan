@@ -43,12 +43,12 @@ describe('deriveDisplayPicks', () => {
     expect(out.slice(1).every(p => p._emergencyPick)).toBe(true);
   });
 
-  it('regimeRestrict=true fills only to 4 and tags fillers _counterRegime (v31.4)', () => {
+  it('regimeRestrict=true fills only to 6 and tags fillers _counterRegime (v31.5)', () => {
     const top = [pick({ symbol: 'T1', todayPumpReal: 1 })];
     const scan = Array.from({ length: 10 }, (_, i) =>
       pick({ symbol: `S${i}`, avgVolumeTL: 500_000, atrPct: 1, score: 70, confidence: 70 - i }));
     const out = deriveDisplayPicks(top, scan, true);
-    expect(out.length).toBe(4); // counter-regime target, NOT 8
+    expect(out.length).toBe(6); // counter-regime target (v31.5: 4 → 6), NOT 8
     expect(out[0].symbol).toBe('T1'); // real pick first
     expect(out.slice(1).every(p => p._counterRegime === true)).toBe(true); // fillers warned
   });
@@ -61,13 +61,13 @@ describe('deriveDisplayPicks', () => {
     expect(out.map(p => p.symbol)).toEqual(['T1']); // nothing weak sneaks in
   });
 
-  it('regimeRestrict=true with empty topPicks → only quality names, capped at 4', () => {
+  it('regimeRestrict=true with empty topPicks → only quality names, capped at 6', () => {
     const scan = Array.from({ length: 10 }, (_, i) =>
       pick({ symbol: `S${i}`, avgVolumeTL: 2_000_000, score: 70, confidence: 70 - i }));
     const out = deriveDisplayPicks([], scan, true);
-    expect(out.length).toBe(4);
+    expect(out.length).toBe(6);
     expect(out.every(p => p._counterRegime === true)).toBe(true); // all warned
-    // and a sub-65 scan yields nothing rather than filling with junk
+    // and a sub-58 scan yields nothing rather than filling with junk
     const weak = Array.from({ length: 10 }, (_, i) => pick({ symbol: `W${i}`, avgVolumeTL: 2_000_000, score: 50 }));
     expect(deriveDisplayPicks([], weak, true)).toEqual([]);
   });

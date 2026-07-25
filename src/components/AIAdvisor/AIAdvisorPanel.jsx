@@ -1032,6 +1032,22 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       {p.grade}
                     </span>
                   )}
+                  {/* v31.5: GÜNÜN EN İYİSİ — rejim kapısı boş bıraksa bile garanti pre-pump pick */}
+                  {p.cls !== 'sell' && p._bestOfDay && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(250,204,21,0.18)', color: '#facc15',
+                      letterSpacing: 0.3, border: '1px solid rgba(250,204,21,0.45)',
+                    }} title={[
+                      '⭐ GÜNÜN EN İYİSİ — garantili günlük pick',
+                      'Rejim kapısı bugün kaliteli AL bırakmadı; sistem pre-pump havuzundan',
+                      'en iyi coil\'i (henüz patlamamış, aşırı-alım dışı) garanti gösteriyor.',
+                      'Zaten yükselmiş bir isim DEĞİL — piyasa açılınca hareket edebilecek aday.',
+                      'Yine de rejim uyarısı geçerli: küçük pozisyon / sıkı stop.',
+                    ].join('\n')}>
+                      ⭐ GÜNÜN EN İYİSİ
+                    </span>
+                  )}
                   {/* v29: KONVIKSIYON rozeti — backtest: Score>=75 pozitif beklenti, 65-74 yazi-tura */}
                   {p.cls !== 'sell' && p._counterRegime && (
                     <span style={{
