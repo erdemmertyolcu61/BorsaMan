@@ -1095,6 +1095,21 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       {p.rsLeading ? '🚀 LİDER' : '🐢 GERİDE'} {(p.rsOutperf ?? 0) >= 0 ? '+' : ''}{p.rsOutperf ?? 0}
                     </span>
                   )}
+                  {/* v31.10: TEMEL KALİTE — zayıf bilanço uyarısı (çöp bilançolar zaten elendi) */}
+                  {p.cls !== 'sell' && (p._fundPenalty || 0) > 0 && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(249,115,22,0.16)', color: '#fb923c',
+                      letterSpacing: 0.3, border: '1px solid rgba(249,115,22,0.4)',
+                    }} title={[
+                      '⚠ TEMEL ZAYIF — bilanço kalitesi düşük',
+                      ...((p._fundReasons || [])),
+                      p.fundGrade ? `Temel not: ${p.fundGrade}` : '',
+                      `Confidence -${p._fundPenalty}`,
+                    ].filter(Boolean).join('\n')}>
+                      ⚠ TEMEL -{p._fundPenalty}
+                    </span>
+                  )}
                   {p.cls !== 'sell' && p.convictionTier === 'sniper' && (
                     <span style={{
                       fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,

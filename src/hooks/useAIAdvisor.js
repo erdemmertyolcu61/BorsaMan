@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchSingle, fetchBigParaBatchPrices, fetchBigParaQuote, clearCache as clearFetchCache } from '../utils/fetchEngine.js';
+import { fetchSingle, fetchBigParaBatchPrices, fetchBigParaQuote, fetchFundamentals, clearCache as clearFetchCache } from '../utils/fetchEngine.js';
+import { analyzeComprehensiveFinancials, fundamentalQualityGate } from '../utils/fundamentalEngine.js';
 import { genSignal, extractFiredSignals } from '../utils/signals.js';
 import { calcAll } from '../utils/indicators.js';
 import { getStockList, SECTORS } from '../utils/constants.js';
@@ -2509,6 +2510,57 @@ export function useAIAdvisor(portfolio) {
         }
       } catch { /* haber best-effort — secim haber olmadan da devam eder */ }
 
+      // ── v31.10 TEMEL KALİTE KAPISI (pre-selection) ──────────────────────────
+      // 25 yillik masa: cop bilancolu (asiri borc / agir likidite riski / agir
+      // zarar) bir hisseyi grafik ne kadar iyi olsa da ALMA. Temel veri sembol
+      // basina fetch gerektirir → 612'ye DEGIL, sadece final yarisa kalan en yuksek
+      // ~18 buy adayina uygulanir. Best-effort + 6s timeout; EKSIK veri cezalandirilmaz
+      // (veri bosuysa teknik secim aynen devam eder). reject → listeden cikar (cop
+      // bilanco onerilmez); soft → confidence dusur (kalite suzgeci).
+      try {
+        const fundCandidates = picks
+          .filter(p => p.cls !== 'sell')
+          .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+          .slice(0, 18);
+        if (fundCandidates.length) {
+          const rejectSet = new Set();
+          await Promise.all(fundCandidates.map(async (p) => {
+            try {
+              const f = await Promise.race([
+                fetchFundamentals(p.symbol),
+                new Promise(res => setTimeout(() => res(null), 6000)),
+              ]);
+              if (!f) return;
+              const comp = analyzeComprehensiveFinancials(f.yahoo, f.kap);
+              if (!comp) return;
+              p.fundScore = comp.score;
+              p.fundGrade = comp.grade?.label || comp.grade || null;
+              p.fundDebtToEquity = comp.debtToEquity;
+              p.fundCurrentRatio = comp.currentRatio;
+              p.fundNetMargin = comp.netMargin;
+              p.fundProfitTrend = comp.profitTrend;
+              const gate = fundamentalQualityGate(comp);
+              p._fundReasons = gate.reasons;
+              if (gate.reject) {
+                p._fundReject = true;
+                p._fundReason = gate.reason;
+                rejectSet.add(p.symbol);
+              } else if (gate.penalty > 0) {
+                p._fundPenalty = gate.penalty;
+                p.confidence = Math.max(0, Math.min(100, (p.confidence || 50) - gate.penalty));
+                if (p.confidenceBreakdown) p.confidenceBreakdown.fundamental = -gate.penalty;
+                p.grade = p.confidence >= 75 ? 'A' : p.confidence >= 65 ? 'B' : p.confidence >= 55 ? 'C' : 'D';
+                p.tier = p.confidence >= 75 ? 'STRONG' : p.confidence >= 65 ? 'GOOD' : p.confidence >= 55 ? 'FAIR' : 'WEAK';
+              }
+            } catch { /* per-symbol best-effort */ }
+          }));
+          if (rejectSet.size) {
+            picks = picks.filter(p => !rejectSet.has(p.symbol));
+            pushLog({ type: 'warn', msg: `Temel kalite kapisi: ${rejectSet.size} cop bilanco elendi (${[...rejectSet].join(', ')})` });
+          }
+        }
+      } catch { /* temel gate best-effort — temel veri yoksa teknik secim devam eder */ }
+
       picks.sort((a, b) => {
         // Sells: her zaman en sona
         if (a.cls === 'sell' && b.cls !== 'sell') return 1;
@@ -2804,6 +2856,9 @@ export function useAIAdvisor(portfolio) {
               _nearBreakoutPick: p._nearBreakoutPick, _nearBreakoutSignals: p._nearBreakoutSignals, _nearBreakoutCount: p._nearBreakoutCount,
               _bestOfDay: p._bestOfDay, // v31.6: ⭐ garantili gunluk pick (persist)
               rsOutperf: p.rsOutperf, rsScore: p.rsScore, rsLeading: p.rsLeading, rsLagging: p.rsLagging, // v31.9 RS
+              fundGrade: p.fundGrade, fundDebtToEquity: p.fundDebtToEquity, fundCurrentRatio: p.fundCurrentRatio,
+              fundNetMargin: p.fundNetMargin, fundProfitTrend: p.fundProfitTrend,
+              _fundPenalty: p._fundPenalty, _fundReasons: p._fundReasons, // v31.10 temel kalite kapisi
               recentPump: p.recentPump, cumulativePump: p.cumulativePump,
               prevDayChange: p.prevDayChange, // v26 FIX 3: 2-day exhaustion icin
               todayPumpReal: p.todayPumpReal,

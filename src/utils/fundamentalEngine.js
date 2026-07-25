@@ -196,3 +196,52 @@ function scoreQuickFromYahoo(y) {
   }
   return Math.max(0, Math.min(10, Math.round(s * 10) / 10));
 }
+
+// ── FUNDAMENTAL QUALITY GATE (v31.10) — pure, testable ────────────────────
+// A 25yr desk never buys a chart on a broken balance sheet. The advisor scan was
+// 100% technical; this gate lets the scan HARD-REJECT clearly broken names (extreme
+// leverage / severe illiquidity / heavy losses) and SOFT-PENALIZE moderate weakness.
+// Conservative by design: it only acts when the datum EXISTS (missing fundamentals
+// are NOT punished — a data gap must not silently kill a good stock), and the
+// hard-reject thresholds are deliberately extreme so a normal holding co like KCHOL
+// (current ratio ~0.86) is never rejected.
+const FUND_GATE = {
+  DE_HARD: 5,        // debt/equity > 5 → near-insolvent leverage
+  CR_HARD: 0.4,      // current ratio < 0.4 → severe going-concern liquidity risk
+  NM_HARD: -25,      // net margin < -25% → bleeding heavily
+  DE_SOFT: 2,        // > 2 → high leverage (penalty)
+  CR_SOFT: 0.8,      // < 0.8 → weak liquidity (penalty)
+};
+
+/**
+ * Fundamental quality verdict for one stock.
+ * @param {object|null} fund - analyzeComprehensiveFinancials() output (or null)
+ * @returns {{ reject: boolean, penalty: number, reasons: string[], reason: string|null }}
+ *   reject → drop from buy candidates; penalty → confidence points to subtract (0..15).
+ */
+export function fundamentalQualityGate(fund) {
+  if (!fund || typeof fund !== 'object') {
+    return { reject: false, penalty: 0, reasons: [], reason: null };
+  }
+  const de = num(fund.debtToEquity);
+  const cr = num(fund.currentRatio);
+  const nm = num(fund.netMargin);
+  const trend = fund.profitTrend;
+  const reasons = [];
+
+  // HARD REJECT — clearly broken (only when the datum exists).
+  let reject = false;
+  if (de != null && de > FUND_GATE.DE_HARD) { reject = true; reasons.push(`Asiri borc (D/O ${de.toFixed(1)})`); }
+  if (cr != null && cr < FUND_GATE.CR_HARD) { reject = true; reasons.push(`Agir likidite riski (cari ${cr.toFixed(2)})`); }
+  if (nm != null && nm < FUND_GATE.NM_HARD) { reject = true; reasons.push(`Agir zarar (net marj %${nm.toFixed(0)})`); }
+  if (reject) return { reject: true, penalty: 0, reasons, reason: reasons[0] };
+
+  // SOFT PENALTY — quality drag, not exclusion.
+  let penalty = 0;
+  if (de != null && de > FUND_GATE.DE_SOFT) { penalty += 6; reasons.push(`Yuksek borc (D/O ${de.toFixed(1)})`); }
+  if (cr != null && cr < FUND_GATE.CR_SOFT) { penalty += 4; reasons.push(`Zayif likidite (cari ${cr.toFixed(2)})`); }
+  if (nm != null && nm < 0) { penalty += 5; reasons.push('Net zarar'); }
+  if (trend === 'DECLINING') { penalty += 4; reasons.push('Kar 3 ceyrek dusuyor'); }
+  penalty = Math.min(penalty, 15);
+  return { reject: false, penalty, reasons, reason: reasons[0] || null };
+}
