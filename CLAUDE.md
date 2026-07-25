@@ -536,6 +536,24 @@ Iki degisiklik:
 negatif. Bu ozellik "her gun gorunurluk" saglar, edge yaratmaz — kullanici karariyle kucuk
 pozisyon/siki stop onerilir.
 
+## "YARIN UMUT" Hayal-Katmani Kaldirildi (v31.6) — kalite > miktar
+
+Kullanici: "Yarina umut olanlari gosterme altta; gercekten umutluysak/yapacaksak goster."
+Hedef: `⚡ YARIN UMUT` rozetli aspirasyonel filler tier'i (panel'i tomorrowPotential-agirlikli
+"yarin +%4-5" isimleriyle N'e sisiren padding). Iki kaynak vardi, ikisi de kaldirildi:
+- **Backend** `useAIAdvisor` "ACIL YEDEK" bloğu (`if (picks.length < 5)` → picks'i 5'e
+  sisiren 2-tier emergency padder, `_emergencyPick: true`) — TAMAMEN silindi (~115 satir).
+- **Display** `deriveDisplayPicks` topPicks-dali filler'i (scanResults'tan buyTarget'a kadar
+  doldurup `_emergencyPick` etiketleyen blok) — silindi.
+- **UI**: `AIAdvisorPanel` "YARIN UMUT" bandi + `⚡ YARIN UMUT` rozeti kaldirildi.
+- **Yeni davranis**: panel yalniz GERCEK pickleri gosterir (rejim kapisindan gecen score>=58
+  adaylar) + gerekiyorsa TEK garantili `⭐ GUNUN EN IYISI` (ensureBestOfDay, v31.5).
+  "Hicbir zaman hep-SAT" garantisi artik display filler'da degil, UPSTREAM'de
+  (ensureBestOfDay dispatch oncesi gercek bir AL enjekte eder). Miktar kaliteyi takip eder:
+  2 gercek AL → 2 gosterilir, 6'ya sisirilmez.
+- `_emergencyPick` alani tamamen olu → kaldirildi; persist'e `_bestOfDay` eklendi.
+- Test: displayPicks filler testleri "padding yok" olarak yeniden yazildi; suite 402 pass.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

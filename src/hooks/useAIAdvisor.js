@@ -2000,121 +2000,13 @@ export function useAIAdvisor(portfolio) {
       // Tavan/bearish filtrelerini BYPASS et, ⚠ "⚡ YARIN UMUT" rozetiyle göster
       // v26: picks boş ise DAIMA emergency fallback çalıştır
       // v27: TOP 5 garantisi — picks 5'ten azsa eksikleri emergency ile doldur
-      if (picks.length < 5) {
-        const existingSyms3 = new Set(picks.map(p => p.symbol));
-        const need = 5 - picks.length;
-
-        // TIER 1: daha makul hacim + volatilite
-        let emergencyPool = results
-          .filter(r => {
-            if (existingSyms3.has(r.symbol)) return false;
-            if ((r.avgVolumeTL || 0) < 200_000) return false; // 200K TL min (eski 500K)
-            if ((r.atrPct || 0) < 0.4) return false; // Yarın hareket edemeyecek hisseyi al (eski 0.6)
-            if (r.cls === 'sell') return false;
-            // v28: emergency de temel güvenlik kontrollerini uygular
-            if ((r.rsi || 50) > 80) return false;
-            if ((r.mfi || 50) > 80) return false;
-            if (isUnsafeForTomorrow(r)) return false;
-            // Confirmed bearish
-            if (r.supertrend?.trend === 'DOWN' && r.ichimoku?.cloudPosition === 'below' && r.obvTrend === 'distribution') return false;
-            // Active distribution
-            if (r.obvTrend === 'distribution' && (r.cmf || 0) < -0.08 && (r.rsi || 50) > 50 && r.score < 60) return false;
-            // Double bearish divergence
-            if (r.rsiDivergence === 'bearish' && r.obvDivergence === 'bearish') return false;
-            // Exhaustion: RSI>70 + MFI>65
-            if ((r.rsi || 50) > 70 && (r.mfi || 50) > 65 && (r.change || 0) > 0.5) return false;
-            return true;
-          })
-          .map(r => {
-            // Acil yedek skor: YARINDA +%4-5 YAPMA İHTİMALİ PRİMER
-            const rp = Math.max(r.todayPumpReal || 0, r.recentPump || 0);
-            const tomorrowP = calcTomorrowPotential(r);
-            // v26: tomorrowPotential %50'ye çıkartıldı (eski %30)
-            let emergScore = (r.score || 0) * 0.25 + (r.confidence || 50) * 0.25 + tomorrowP * 0.50;
-            // Bonus: trend onayı varsa
-            if (r.supertrend?.trend === 'UP') emergScore += 8;
-            if (r.obvTrend === 'accumulation') emergScore += 6;
-            if ((r.cmf || 0) > 0.10) emergScore += 5;
-            // Bonus: RSI sweet spot (35-55) = yarın başarılı trade ihtimali yüksek
-            const rsi = r.rsi || 50;
-            if (rsi >= 35 && rsi <= 55) emergScore += 7;
-            // Bonus: pump bölgesinde devam ihtimali yüksekse
-            if (rp >= 7) {
-              const cprob = calcContinuationProbability(r);
-              if (cprob && cprob >= 50) emergScore += 12;
-              else if (cprob && cprob >= 38) emergScore += 6;
-            }
-            // Bonus: mevcut buy sinyali / momentum
-            if (r.cls === 'buy') emergScore += 10;
-            // Bonus: pozitif teknik konfluens
-            const confCount = (r.obvTrend === 'accumulation' ? 1 : 0) + ((r.cmf || 0) > 0.05 ? 1 : 0) + (r.supertrend?.trend === 'UP' ? 1 : 0);
-            if (confCount >= 2) emergScore += 6;
-            return { ...r, _emergencyScore: emergScore };
-          })
-          .sort((a, b) => b._emergencyScore - a._emergencyScore);
-
-        // TIER 1 ne kadar yeterli?
-        const tier1 = emergencyPool.slice(0, need);
-        let finalEmergency = tier1;
-
-        // TIER 2: 100K+ TL hacim ise hala kiraç — son çare (hile değil, gerçek fırsat)
-        if (finalEmergency.length < need) {
-          const need2 = need - finalEmergency.length;
-          const tier2 = results
-            .filter(r => {
-              if (existingSyms3.has(r.symbol)) return false;
-              if (finalEmergency.some(e => e.symbol === r.symbol)) return false;
-              if ((r.avgVolumeTL || 0) < 100_000) return false; // 100K TL min (son çare)
-              if ((r.atrPct || 0) < 0.3) return false;
-              if (r.cls === 'sell') return false;
-              // v28: tier2 de aynı güvenlik kontrolleri
-              if ((r.rsi || 50) > 80) return false;
-              if ((r.mfi || 50) > 80) return false;
-              if (isUnsafeForTomorrow(r)) return false;
-              if (r.supertrend?.trend === 'DOWN' && r.ichimoku?.cloudPosition === 'below' && r.obvTrend === 'distribution') return false;
-              if (r.obvTrend === 'distribution' && (r.cmf || 0) < -0.08 && (r.rsi || 50) > 50 && r.score < 60) return false;
-              if (r.rsiDivergence === 'bearish' && r.obvDivergence === 'bearish') return false;
-              if ((r.rsi || 50) > 70 && (r.mfi || 50) > 65 && (r.change || 0) > 0.5) return false;
-              return true;
-            })
-            .map(r => {
-              const rp = Math.max(r.todayPumpReal || 0, r.recentPump || 0);
-              const tomorrowP = calcTomorrowPotential(r);
-              let emergScore = (r.score || 0) * 0.20 + (r.confidence || 50) * 0.20 + tomorrowP * 0.60;
-              if (r.supertrend?.trend === 'UP') emergScore += 6;
-              if (r.obvTrend === 'accumulation') emergScore += 4;
-              if ((r.cmf || 0) > 0.10) emergScore += 3;
-              const rsi = r.rsi || 50;
-              if (rsi >= 35 && rsi <= 55) emergScore += 5;
-              if (rp >= 7) {
-                const cprob = calcContinuationProbability(r);
-                if (cprob && cprob >= 50) emergScore += 8;
-              }
-              if (r.cls === 'buy') emergScore += 8;
-              return { ...r, _emergencyScore: emergScore };
-            })
-            .sort((a, b) => b._emergencyScore - a._emergencyScore)
-            .slice(0, need2);
-          finalEmergency = [...tier1, ...tier2];
-        }
-
-        const emergency = finalEmergency.map(r => normalizeStopTarget({
-          ...r,
-          tomorrowPotential: isAfterHours ? calcTomorrowPotential(r) : 0,
-          _alreadyHolding: bullishPortfolio.includes(r.symbol),
-          _scanMode: isAfterHours ? 'afterHours' : 'intraday',
-          _fallback: true,
-          _emergencyPick: true,  // ⚡ "YARIN UMUT" rozeti (not just warning)
-          _warningPick: false,   // v26: warning değil, fırsat!
-          _earlyPick: r._earlyAccumulation?.isEarly || false,
-          _earlySignals: r._earlyAccumulation?.signals || null,
-          _earlyCount: r._earlyAccumulation?.count || 0,
-          _nearBreakoutPick: r._nearBreakout?.isNear || false,
-          _nearBreakoutSignals: r._nearBreakout?.signals || null,
-          _nearBreakoutCount: r._nearBreakout?.count || 0,
-        }));
-        picks = [...picks, ...emergency];
-      }
+      // v31.6 — "⚡ YARIN UMUT" (emergency pad-to-5) tier REMOVED.
+      // Kullanici: "Yarina umut olanlari gosterme; gercekten umutluysak/yapacaksak
+      // goster." Bu tier picks<5 iken listeyi tomorrowPotential-agirlikli aspirasyonel
+      // isimlerle 5'e sisiriyordu — panelin "yarin +%4-5" hayal katmani. Artik yok:
+      // gorunurluk garantisi TEK bir GERCEK pick ile ustte saglaniyor
+      // (ensureBestOfDay → ⭐ GUNUN EN IYISI), rejim kapisi da gercek score>=58
+      // adaylari geciriyor. Miktar kaliteyi takip eder — hayalle doldurma yok.
 
       // ══════════════════════════════════════════════════════════════════════
       //  AI ENHANCEMENT v15 — Sector Diversification + Composite Confidence
@@ -2838,7 +2730,7 @@ export function useAIAdvisor(portfolio) {
               _fallback: p._fallback, _warningPick: p._warningPick,
               _earlyPick: p._earlyPick, _earlySignals: p._earlySignals, _earlyCount: p._earlyCount,
               _nearBreakoutPick: p._nearBreakoutPick, _nearBreakoutSignals: p._nearBreakoutSignals, _nearBreakoutCount: p._nearBreakoutCount,
-              _emergencyPick: p._emergencyPick,
+              _bestOfDay: p._bestOfDay, // v31.6: ⭐ garantili gunluk pick (persist)
               recentPump: p.recentPump, cumulativePump: p.cumulativePump,
               prevDayChange: p.prevDayChange, // v26 FIX 3: 2-day exhaustion icin
               todayPumpReal: p.todayPumpReal,

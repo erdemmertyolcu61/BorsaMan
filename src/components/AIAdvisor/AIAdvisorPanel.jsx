@@ -744,21 +744,10 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             );
           })()}
 
-          {/* v26: YARIN UMUT BANDI — tüm picks emergency ise */}
-          {hasPicks && displayPicks.every(p => p._emergencyPick) && (
-            <div style={{
-          padding: '6px 12px', fontSize: 11, color: '#fbbf24',
-          background: 'linear-gradient(90deg, rgba(249,115,22,0.12), rgba(234,179,8,0.06))',
-          borderTop: '1px solid rgba(249,115,22,0.3)',
-          borderBottom: '1px solid rgba(249,115,22,0.2)',
-          display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600,
-        }}>
-          <span>⚡</span>
-          <span>Bugün kaliteli AL setup'ı yok ama yarın %4-5 artma potansiyeli olan hisseler var. Sistem onları gösteriyor — risk daha yüksek, dikkatli işlem yap.</span>
-        </div>
-      )}
+          {/* v31.6: "YARIN UMUT" bandı kaldırıldı — hayal-katmanı gösterilmiyor.
+              Görünürlük garantisi tek gerçek pick ile (⭐ GÜNÜN EN İYİSİ). */}
 
-      {/* v29: Yabanci akis veri kaynagi dormant — kullaniciyi bilgilendir (sessiz degil) */}
+          {/* v29: Yabanci akis veri kaynagi dormant — kullaniciyi bilgilendir (sessiz degil) */}
       {hasPicks && getForeignFlowStatus().reason === 'no_source' && (
         <div style={{
           padding: '4px 12px', fontSize: 10, color: 'var(--t3)',
@@ -1130,16 +1119,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       🔍 ERKEN
                     </span>
                   )}
-                  {/* v25: ACIL YEDEK rozeti — kaliteli setup yok ama "en iyi alternatif" */}
-                  {p._emergencyPick && (
-                    <span style={{
-                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
-                      background: 'linear-gradient(90deg, #f97316, #eab308)',
-                      color: '#fff', letterSpacing: 0.3,
-                    }} title="Bugün kaliteli setup yok — ama bu hisse yarın %4-5 artma potansiyeli taşıyor. Sistem taramadan seçtiği en iyi seçenek.">
-                      ⚡ YARIN UMUT
-                    </span>
-                  )}
+                  {/* v31.6: "⚡ YARIN UMUT" rozeti kaldırıldı — aspirasyonel filler tier'ı yok. */}
                   {/* v25: NEAR-BREAKOUT rozeti — coil + breakout-ready (yarinki patlama) */}
                   {p._nearBreakoutPick && (
                     <span style={{

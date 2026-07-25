@@ -33,32 +33,28 @@ describe('deriveDisplayPicks', () => {
     expect(out.map(p => p.symbol)).toEqual(['OK']);
   });
 
-  it('fills up to 8 from scanResults when topPicks < 8 (BULL, no regimeRestrict)', () => {
+  it('v31.6: does NOT pad from scanResults — shows genuine topPicks only (no filler)', () => {
     const top = [pick({ symbol: 'T1', todayPumpReal: 1 })];
     const scan = Array.from({ length: 10 }, (_, i) =>
       pick({ symbol: `S${i}`, avgVolumeTL: 500_000, atrPct: 1, confidence: 50 - i }));
     const out = deriveDisplayPicks(top, scan, false);
-    expect(out.length).toBe(8);
-    expect(out[0].symbol).toBe('T1');
-    expect(out.slice(1).every(p => p._emergencyPick)).toBe(true);
+    expect(out.map(p => p.symbol)).toEqual(['T1']); // no "yarin umut" padding
+    expect(out.some(p => p._emergencyPick)).toBe(false);
   });
 
-  it('regimeRestrict=true fills only to 6 and tags fillers _counterRegime (v31.5)', () => {
-    const top = [pick({ symbol: 'T1', todayPumpReal: 1 })];
+  it('v31.6: counter-regime also shows only genuine picks, no filler', () => {
+    const top = [pick({ symbol: 'T1', todayPumpReal: 1, _counterRegime: true })];
     const scan = Array.from({ length: 10 }, (_, i) =>
       pick({ symbol: `S${i}`, avgVolumeTL: 500_000, atrPct: 1, score: 70, confidence: 70 - i }));
     const out = deriveDisplayPicks(top, scan, true);
-    expect(out.length).toBe(6); // counter-regime target (v31.5: 4 → 6), NOT 8
-    expect(out[0].symbol).toBe('T1'); // real pick first
-    expect(out.slice(1).every(p => p._counterRegime === true)).toBe(true); // fillers warned
+    expect(out.map(p => p.symbol)).toEqual(['T1']); // genuine only, not padded to 6
   });
 
-  it('regimeRestrict=true cuts sub-65 fillers (quality floor, no back door)', () => {
-    const top = [pick({ symbol: 'T1', todayPumpReal: 1 })];
-    const weakScan = Array.from({ length: 10 }, (_, i) =>
-      pick({ symbol: `W${i}`, avgVolumeTL: 500_000, atrPct: 1, score: 50 }));
-    const out = deriveDisplayPicks(top, weakScan, true);
-    expect(out.map(p => p.symbol)).toEqual(['T1']); // nothing weak sneaks in
+  it('v31.6: the guaranteed ⭐ pick (_bestOfDay) is never dropped as unsafe', () => {
+    // A best-of-day pick may have a mild pump; it must still show (upstream guarantee).
+    const top = [pick({ symbol: 'STAR', todayPumpReal: 6, _bestOfDay: true, _counterRegime: true })];
+    const out = deriveDisplayPicks(top, [], true);
+    expect(out.map(p => p.symbol)).toEqual(['STAR']);
   });
 
   it('regimeRestrict=true with empty topPicks → only quality names, capped at 6', () => {
@@ -80,18 +76,17 @@ describe('deriveDisplayPicks', () => {
     expect(out.every(p => p._fallback)).toBe(true);
   });
 
-  it('YATAY bug: 8+ sells in topPicks must NOT crowd out buys — buys still shown, first', () => {
-    // Sell-heavy sideways market: topPicks full of high-confidence sells, buys only
-    // in the scan. Regression for "YATAY rejimde AL gozukmedi".
-    const sells = Array.from({ length: 8 }, (_, i) =>
-      pick({ symbol: `SELL${i}`, cls: 'sell', confidence: 90 - i }));
-    const scan = Array.from({ length: 5 }, (_, i) =>
-      pick({ symbol: `BUY${i}`, cls: 'buy', avgVolumeTL: 2_000_000, atrPct: 1, score: 70, confidence: 60 - i }));
-    const out = deriveDisplayPicks(sells, scan, true);
-    const buys = out.filter(p => p.cls === 'buy');
-    expect(buys.length).toBeGreaterThan(0);        // AL must appear
-    expect(out[0].cls).toBe('buy');                // buys first (visible)
-    expect(buys.every(p => p._counterRegime)).toBe(true); // warned in YATAY
+  it('YATAY: buys in topPicks appear first, ahead of high-confidence sells', () => {
+    // Sell-heavy sideways market. The "never all-sells" guarantee now lives upstream
+    // (ensureBestOfDay injects a real buy into topPicks before dispatch), so here the
+    // buy is already present in topPicks; the view just orders buys first.
+    const mixed = [
+      ...Array.from({ length: 8 }, (_, i) => pick({ symbol: `SELL${i}`, cls: 'sell', confidence: 90 - i })),
+      pick({ symbol: 'STAR', cls: 'buy', _bestOfDay: true, _counterRegime: true, confidence: 55 }),
+    ];
+    const out = deriveDisplayPicks(mixed, [], true);
+    expect(out[0].cls).toBe('buy');       // buy first (visible), despite lower confidence
+    expect(out[0].symbol).toBe('STAR');
   });
 
   it('is deterministic — same inputs give same output (header/panel parity)', () => {
