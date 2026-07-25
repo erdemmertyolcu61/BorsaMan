@@ -554,6 +554,33 @@ Hedef: `⚡ YARIN UMUT` rozetli aspirasyonel filler tier'i (panel'i tomorrowPote
 - `_emergencyPick` alani tamamen olu → kaldirildi; persist'e `_bestOfDay` eklendi.
 - Test: displayPicks filler testleri "padding yok" olarak yeniden yazildi; suite 402 pass.
 
+## Tekil Analiz — "25 Yillik Uzman" Makro Zenginlestirmesi (v31.7)
+
+Kullanici: "Hisse analiz sekmesini 25 yillik finans uzmani gibi yap — petrol, dunya
+gelismeleri, guncel haberler, hisseyi etkileyecek her sey." Sorun: `buildExpertPrompt`
+MAKRO katmani (`claude.js`) sadece XU100/USDTRY/sentiment tasiyordu; `getMacroContext`
+(Brent/altin/gumus/bakir/dogalgaz/bugday/VIX/S&P500/TCMB) ve `thematicMacro` zaten VARDI
+ama tekil-analiz promptuna HIC baglanmamisti (yalniz advisor taramasinda kullaniliyordu).
+Ayrica tekil-analiz promptunda hisse-ozel HABER yoktu.
+
+- **`buildExpertPrompt` MAKRO katmani yeniden yazildi**: `_renderMacroBlock(macro, fmt)`
+  ile Kur/Faiz (USDTRY 5g + vol, TCMB + PPK gun sayaci), Kuresel risk (VIX+sinif, S&P500 5g,
+  BIST/USD 20g), Emtia (Brent/Altin/Gumus/Bakir/Dogalgaz/Bugday 5g), Makro rejim + nedenler.
+  Makro yoksa "web aramayla teyit et" notu (graceful).
+- **Hisse-ozel tematik ruzgar satiri**: `computeThematicAdjust(macro, symbol)` → "MAKRO TEMA
+  (TUPRS): Brent yukseliyor → rafineri lehine +6". Petrol artinca TUPRS, altin KOZAL vb.
+  artik tekil-analizde acikca gorunur.
+- **Guncel haber satiri**: `fetchSymbolMarketNews(symbol)` → kategori+skor+manset.
+- **Persona**: "25 yillik BIST + kuresel piyasa stratejisti; hisseyi tek basina okuma —
+  petrol/emtia, dunya borsalari, kur/faiz, jeopolitik, guncel haber hisseye etkisiyle tart."
+- **Cevap formatina `[MAKRO_ETKI]`** eklendi: petrol/emtia+dunya+kur+haber bu hisseyi BUGUN
+  nasil etkiliyor (somut).
+- **Wiring** (`ChatPanel.handleExpertCall`): askExpert oncesi `getMacroContext` + thematic +
+  news best-effort cekilir (feed down ise null'a duser, analiz kirilmaz); `market.macro` +
+  `analysis.thematic/news` olarak gecirilir. `webSearch: true` zaten acikti (guncel teyit).
+- Test: `expertPrompt.test.js` 7 senaryo (persona, makro blok, graceful fallback, tematik,
+  haber, [MAKRO_ETKI], undefined sizmasi yok); suite 409 pass.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

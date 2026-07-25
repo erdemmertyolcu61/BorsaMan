@@ -69,6 +69,38 @@ export function buildPortfolioContext(portfolio = {}) {
 }
 
 // ── Expert Prompt (7-layer analysis) ───────────────────────────────────────
+// Render the rich global / commodity macro block for the expert prompt.
+// `macro` is the getMacroContext() object (usdtry/vix/tcmb/sp500/brent/gold/…).
+// A 25-year strategist reads oil, global risk and rates alongside the chart —
+// this surfaces all of it so the model can weigh the stock in a world context.
+function _renderMacroBlock(macro, fmt) {
+  if (!macro) return '   (kuresel/emtia verisi su an yok — model web arama ile guncel durumu teyit etmeli)';
+  const lines = [];
+  const chg = (o) => o && Number.isFinite(o.change5d) ? `${o.change5d >= 0 ? '+' : ''}${o.change5d.toFixed(1)}%` : '-';
+  if (macro.usdtry) {
+    const d = macro.tcmb?.nextMeeting ? Math.ceil((new Date(macro.tcmb.nextMeeting).getTime() - Date.now()) / 86400000) : null;
+    lines.push(`   Kur/Faiz: USDTRY=${fmt(macro.usdtry.value)} (5g ${chg(macro.usdtry)}${macro.usdtry.vol20d != null ? `, vol ${macro.usdtry.vol20d.toFixed(0)}%` : ''})${macro.tcmb?.rate != null ? ` | TCMB=${macro.tcmb.rate}%${d != null && d >= 0 ? ` (PPK ${d}g sonra)` : ''}` : ''}`);
+  }
+  const risk = [];
+  if (macro.vix) risk.push(`VIX=${fmt(macro.vix.value, 1)} (${macro.vix.classification || '-'})`);
+  if (macro.sp500) risk.push(`S&P500 5g ${chg(macro.sp500)}`);
+  if (macro.bistUsd) risk.push(`BIST/USD 20g ${macro.bistUsd.change20d >= 0 ? '+' : ''}${macro.bistUsd.change20d.toFixed(1)}%`);
+  if (risk.length) lines.push(`   Kuresel risk: ${risk.join(' | ')}`);
+  const comm = [];
+  if (macro.brent) comm.push(`Brent $${fmt(macro.brent.value, 1)} (5g ${chg(macro.brent)})`);
+  if (macro.gold) comm.push(`Altin $${fmt(macro.gold.value, 0)} (5g ${chg(macro.gold)})`);
+  if (macro.silver) comm.push(`Gumus $${fmt(macro.silver.value, 1)} (5g ${chg(macro.silver)})`);
+  if (macro.copper) comm.push(`Bakir (5g ${chg(macro.copper)})`);
+  if (macro.natgas) comm.push(`Dogalgaz (5g ${chg(macro.natgas)})`);
+  if (macro.wheat) comm.push(`Bugday (5g ${chg(macro.wheat)})`);
+  if (comm.length) lines.push(`   Emtia: ${comm.join(' | ')}`);
+  if (macro.regime) {
+    const rs = Array.isArray(macro.reasons) && macro.reasons.length ? ` — ${macro.reasons.slice(0, 3).join('; ')}` : '';
+    lines.push(`   Makro rejim: ${String(macro.regime).toUpperCase()}${rs}`);
+  }
+  return lines.length ? lines.join('\n') : '   (veri yok)';
+}
+
 export function buildExpertPrompt(symbol, analysis = {}, market = {}, portfolio = null) {
   const {
     price, change, signal, cls, score, conf,
@@ -81,10 +113,11 @@ export function buildExpertPrompt(symbol, analysis = {}, market = {}, portfolio 
     fundamentals = {},
     foreignRatio, foreignChangeDay, foreignChangeWeek, foreignChangeMonth,
     foreignFlowScore, foreignFlowLabel,
+    thematic = null, news = null,
   } = analysis;
 
   const {
-    xu100 = null, usdtry = null, marketSentiment = null,
+    xu100 = null, usdtry = null, marketSentiment = null, macro = null,
   } = market;
 
   const fmt = (v, d = 2) => (v == null || !Number.isFinite(v)) ? '-' : Number(v).toFixed(d);
@@ -110,14 +143,24 @@ export function buildExpertPrompt(symbol, analysis = {}, market = {}, portfolio 
   if (mcProfitProb != null && mcProfitProb < 45 && cls === 'buy') flags.push(`Monte Carlo P(kar)=%${fmt(mcProfitProb, 0)} dusuk`);
   const flagsText = flags.length ? flags.map(f => `- ${f}`).join('\n') : '- tespit yok';
 
-  return `Sen BIST uzmani bir Wall Street stratejistisin. ${symbol} icin profesyonel, tarafsiz, olculu bir degerlendirme yap.
+  // Per-stock thematic tailwind (oil/gold/copper/FX → this symbol) + current news.
+  const thematicLine = thematic && Array.isArray(thematic.reasons) && thematic.reasons.length
+    ? `MAKRO TEMA (${symbol}): ${thematic.reasons.join(', ')} → net ${thematic.delta >= 0 ? '+' : ''}${thematic.delta} puan (emtia/kur ruzgari bu hisseye)`
+    : (macro ? `MAKRO TEMA (${symbol}): su an aktif tematik ruzgar (petrol/emtia/kur) yok` : '');
+  const newsLine = news && news.count
+    ? `GUNCEL HABER (${symbol}) [${(news.categories || []).slice(0, 3).join(',') || '-'}] skor=${news.score >= 0 ? '+' : ''}${news.score} (${news.count} haber)${news.topItem?.title ? `: "${String(news.topItem.title).slice(0, 80)}"` : ''}`
+    : '';
+
+  return `Sen 25 yillik deneyimli, BIST + kuresel piyasa stratejistisin (portfoy yoneticisi altyapili). ${symbol} icin profesyonel, tarafsiz, olculu bir degerlendirme yap. Bir tekil hisseyi ASLA tek basina okuma: petrol/emtia fiyatlari, dunya borsalari (S&P500/VIX), kur+faiz (USDTRY/TCMB), jeopolitik ve guncel haberler bu hisseyi nasil etkiler — hepsini hisse-ozelinde tart. Elinde guncel makro veri var; eksik/kritik noktalarda web aramayla en son gelismeleri (haber, emtia, jeopolitik) DOGRULA.
 
 === PIYASA REJIMI ===
 Rejim: ${regime.regime}  Bias: ${regime.bias}  XU100 Deg: ${fmt(regime.xu100Chg, 2)}%  Breadth: ${fmt(regime.breadth, 2)}  Ort.RSI: ${fmt(regime.avgRSI, 0)}
 Kural: BEAR_TREND'te AL sinyallerine agir supheyle yaklas. OVERBOUGHT'ta karli satis onerileri one cikar. OVERSOLD'da contrarian long firsatlari degerlendir.
 
 === 7-KATMANLI ANALIZ HIYERARSISI (siradan agirlikli) ===
-1) MAKRO (x1.0): XU100=${fmt(xu100)}  USDTRY=${fmt(usdtry, 4)}  Sentiment=${marketSentiment?.sentiment || '-'}
+1) MAKRO / KURESEL (x1.0): BIST XU100=${fmt(xu100)}  USDTRY=${fmt(usdtry, 4)}  Sentiment=${marketSentiment?.sentiment || '-'}
+${_renderMacroBlock(macro, fmt)}
+${thematicLine ? '   ' + thematicLine : ''}
 2) SEKTOREL (x0.9): ${sector || '-'}
 3) TEMEL (x0.8): F/K=${fmt(fundamentals.pe)} PD/DD=${fmt(fundamentals.pb)} ROE=${fmt(fundamentals.roe)}% KarTrend=${fundamentals.profitTrend || '-'} BrutMarj=${fmt(fundamentals.grossMargin)}% OpMarj=${fmt(fundamentals.opMargin)}%
 4) TEKNIK (x1.0): Fiyat=${fmt(price)} Deg=%${fmt(change)} MA20=${fmt(ma20)} MA50=${fmt(ma50)} MA200=${fmt(ma200)} RSI=${fmt(rsi, 1)} MACD=${fmt(macd, 3)}/${fmt(macdSignal, 3)} BB=${bb ? `${fmt(bb.lower)}-${fmt(bb.upper)}` : '-'} ATR=${fmt(atr)} VWAP=${fmt(vwap)}
@@ -127,7 +170,7 @@ Kural: BEAR_TREND'te AL sinyallerine agir supheyle yaklas. OVERBOUGHT'ta karli s
 
 AKILLI PARA: MFI=${fmt(mfi, 0)} OBV=${obv?.trend || '-'}
 YABANCI: Takas=%${fmt(foreignRatio)} Gunluk=${foreignChangeDay > 0 ? '+' : ''}${fmt(foreignChangeDay)} Haftalik=${foreignChangeWeek > 0 ? '+' : ''}${fmt(foreignChangeWeek)} Aylik=${foreignChangeMonth > 0 ? '+' : ''}${fmt(foreignChangeMonth)} Akis=${foreignFlowLabel || '-'}(${foreignFlowScore > 0 ? '+' : ''}${fmt(foreignFlowScore, 0)})
-SETUPLAR: ${setupList || '-'}
+${newsLine ? newsLine + '\n' : ''}SETUPLAR: ${setupList || '-'}
 MONTE CARLO: P(kar)=%${fmt(mcProfitProb, 0)}  Medyan=${fmt(mcMedian)}${portfolioBlock}
 
 === OTOMATIK TESPIT EDILEN UYARILAR ===
@@ -140,7 +183,8 @@ Her uyariyi cevabinda ACIKCA ele al. Uyari varsa confidence'i >=20 puan dusur. H
 [ONERI] AL/TUT/SAT + vade (gun/hafta/ay) + guven (DUSUK/ORTA/YUKSEK).
 [CONFIDENCE] 1-10 arasi kendi degerlendirmen. Gerekce 1 cumle.
 [OZET] En kritik 3 madde (makro/sektor/teknik hangisi belirleyici).
-[RISK] En buyuk 2 risk — somut, sayisal.
+[MAKRO_ETKI] Petrol/emtia + dunya piyasalari + kur/faiz + guncel haber bu hisseyi BUGUN nasil etkiliyor? 1-2 cumle, somut (orn: "Brent 5g +%6 → TUPRS rafineri marji lehine" veya "VIX yuksek + S&P dususte → riskli, kucuk poz"). Tematik ruzgar/haber yoksa "notr" yaz.
+[RISK] En buyuk 2 risk — somut, sayisal (makro/jeopolitik riski de dahil et).
 [AKSIYON] Giris-stop-T1-T2-T3 fiyatlari + kademeli alim plani (orn: %40 sinyalde, %40 pullback'te, %20 breakout'ta).
 [ALTERNATIF] Sinyal yanlisa kirilim seviyesi nedir, ne izlemeli?${portfolio ? '\n[PORTFOY_ETKI] Bu pozisyon mevcut portfoy ile nasil etkilesir? (konsantrasyon/korelasyon).' : ''}`;
 }

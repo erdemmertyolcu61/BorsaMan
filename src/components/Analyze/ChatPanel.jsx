@@ -469,6 +469,21 @@ export default function ChatPanel({ symbol, ind, sig, fundamentals, bilanco, log
     if (!symbol || !sig || loading) return;
     setLoading(true);
     try {
+      // 25yr-strategist enrichment: global macro (oil/gold/VIX/S&P/FX) + this
+      // stock's thematic tailwind + current news. Best-effort — a down feed must
+      // never break the analysis; each source degrades to null.
+      let macro = null, thematic = null, news = null;
+      try {
+        const [macroMod, themeMod, newsMod] = await Promise.all([
+          import('../../utils/macroContextEngine.js'),
+          import('../../utils/thematicMacro.js'),
+          import('../../utils/marketNewsEngine.js'),
+        ]);
+        macro = await macroMod.getMacroContext().catch(() => null);
+        if (macro) thematic = themeMod.computeThematicAdjust(macro, symbol);
+        news = await newsMod.fetchSymbolMarketNews(symbol).catch(() => null);
+      } catch { /* best-effort — proceed without enrichment */ }
+
       const analysis = {
         price: ind?.lastClose, change: ind?.changePct, signal: sig.signal, cls: sig.cls,
         score: Number(sig.score), conf: Number(sig.conf),
@@ -477,8 +492,16 @@ export default function ChatPanel({ symbol, ind, sig, fundamentals, bilanco, log
         ma20: ind?.lastMA20, ma50: ind?.lastMA50, ma200: ind?.lastMA200,
         entry: sig.entry, stop: sig.stop, target: sig.t1, rr: Number(sig.rr),
         targetT2: sig.t2, targetT3: sig.t3, fundamentals: fundamentals || {},
+        thematic, news,
       };
-      const result = await askExpert(symbol, analysis, advisorData?.marketSentiment || {}, { webSearch: true });
+      const ms = advisorData?.marketSentiment || {};
+      const market = {
+        ...ms,
+        marketSentiment: ms,                         // prompt reads market.marketSentiment?.sentiment
+        usdtry: ms.usdtry ?? macro?.usdtry?.value ?? null,
+        macro: macro || ms.macro || null,            // full global/commodity block
+      };
+      const result = await askExpert(symbol, analysis, market, { webSearch: true });
       const time = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
       let text, isErr = false, isOff = false;
       if (result.error) {
