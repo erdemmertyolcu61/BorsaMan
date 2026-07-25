@@ -2437,6 +2437,54 @@ export function useAIAdvisor(portfolio) {
         return 0;
       };
 
+      // ── v31.8 HABER SEÇİME GİRSİN (pre-selection news pass) ──────────────────
+      // Onceden haber SADECE final-10'a (secimden SONRA) enjekte ediliyordu →
+      // #15'teki kataliz hisse asla top-10'a cikamiyordu; genSignal/tomorrowPotential'in
+      // haber bonuslari da tarama sirasinda newsScore=null oldugu icin olu kaliyordu.
+      // fetchMarketNews ayni RSS akislarini universe boyutundan BAGIMSIZ cektigi icin
+      // genis aday havuzuna haber cekmek ~bedava. Burada tum adaylara haberi enjekte
+      // edip confidence'a kataliz DELTASI katiyoruz → asagidaki final sort kataliz
+      // hisseleri top-10'a tasiyabilir. newsIndex hoist edildi (dispatch + [1] reuse).
+      let newsIndex = null;
+      try {
+        const newsUniverse = picks.map(p => p.symbol);
+        if (newsUniverse.length) {
+          const preNews = await Promise.race([
+            fetchMarketNews({ universe: newsUniverse, maxPerSource: 25 }),
+            new Promise(res => setTimeout(() => res(null), 10_000)),
+          ]).catch(() => null);
+          if (preNews) {
+            newsIndex = indexBySymbol(preNews);
+            const CATALYST = ['insider_buy', 'buyback', 'fund_inflow', 'contract'];
+            for (const r of picks) {
+              const e = newsIndex[r.symbol];
+              if (!e?.count) continue;
+              r.newsScore = e.score;
+              r.newsCount = e.count;
+              r.newsCategories = e.categories;
+              r.newsHeadline = e.topItem?.title || '';
+              r.newsHighImpact = e.highImpact;
+              // Confidence haber DELTASI — enhancePick newsScore=0 bazini almisti, ustune ekle.
+              let d = (e.score || 0) * 1.5;
+              const cats = e.categories || [];
+              if (cats.some(c => CATALYST.includes(c))) d += 5;   // guclu kataliz
+              if (cats.includes('upgrade')) d += 3;
+              if (cats.includes('risk')) d -= 8;                  // dava/sorusturma/ceza
+              d = Math.max(-15, Math.min(15, d));
+              if (r.cls === 'sell') d = -d;                       // sell icin ters yon
+              r._newsSelectionBoost = Math.round(d);
+              r.confidence = Math.max(0, Math.min(100, (r.confidence || 50) + d));
+              if (r.confidenceBreakdown) {
+                r.confidenceBreakdown.news = (r.confidenceBreakdown.news || 0) + Math.round(d);
+              }
+              // Grade/tier yeniden hesapla (haber sonrasi)
+              r.grade = r.confidence >= 75 ? 'A' : r.confidence >= 65 ? 'B' : r.confidence >= 55 ? 'C' : 'D';
+              r.tier = r.confidence >= 75 ? 'STRONG' : r.confidence >= 65 ? 'GOOD' : r.confidence >= 55 ? 'FAIR' : 'WEAK';
+            }
+          }
+        }
+      } catch { /* haber best-effort — secim haber olmadan da devam eder */ }
+
       picks.sort((a, b) => {
         // Sells: her zaman en sona
         if (a.cls === 'sell' && b.cls !== 'sell') return 1;
@@ -2505,12 +2553,9 @@ export function useAIAdvisor(portfolio) {
       // Price refresh, news, foreign flow, insider are independent — run all at once.
       // Each has its own 12s timeout; total enrichment capped at ~12s instead of ~45s sequential.
       const enrichTimeout = 12_000;
-      // Shared across the enrichment IIFEs → carried on the scan-complete event
-      // (AlertLog/ChatPanel read detail.newsIndex). Was a bug: the [1] News block
-      // assigned a block-local `ni` while the dispatch referenced an undeclared
-      // `newsIndex` → ReferenceError swallowed by the outer catch → the whole
-      // `advisor-scan-complete` event never fired.
-      let newsIndex = null;
+      // `newsIndex` is declared + populated by the v31.8 pre-selection news pass
+      // above (news now drives selection, not just decoration). It is carried on
+      // the scan-complete event (AlertLog/ChatPanel read detail.newsIndex).
       const enrichResults = await Promise.allSettled([
         // [0] Price refresh
         _withTimeout((async () => {
@@ -2548,8 +2593,11 @@ export function useAIAdvisor(portfolio) {
           }
         })(), enrichTimeout),
 
-        // [1] News
+        // [1] News — v31.8: the pre-selection pass already fetched + injected news
+        // (and used it for selection). Only run here as a defensive fallback if that
+        // pass produced nothing (RSS was down then, up now); otherwise no-op.
         _withTimeout((async () => {
+          if (newsIndex) return; // pre-selection pass already handled news
           const universe = picks.map(p => p.symbol);
           if (!universe.length) return;
           const news = await fetchMarketNews({ universe, maxPerSource: 25 });
