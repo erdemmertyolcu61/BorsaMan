@@ -581,6 +581,37 @@ Ayrica tekil-analiz promptunda hisse-ozel HABER yoktu.
 - Test: `expertPrompt.test.js` 7 senaryo (persona, makro blok, graceful fallback, tematik,
   haber, [MAKRO_ETKI], undefined sizmasi yok); suite 409 pass.
 
+## Tarama Pipeline Kalite Yükseltmeleri (v31.8–v31.11)
+
+Advisor tarama+analiz yolunun denetimi sonrası 4 somut zayıflık kapatıldı (grounded, satır-referanslı):
+
+- **v31.8 — Haber SEÇİME giriyor**: Haber eskiden `picks.slice(0,10)`'dan SONRA çekiliyordu →
+  #15'teki kataliz hisse asla top-10'a çıkamıyordu. Artık `picks.sort` ÖNCESİ tüm aday havuzuna
+  haber çekilip (RSS aynı akışları universe boyutundan bağımsız çektiği için ~bedava) kataliz-ağırlıklı
+  confidence deltası uygulanıyor (insider/buyback/fund_inflow/contract +5, upgrade +3, risk -8,
+  ±15 clamp; sell için ters). `newsIndex` hoist edildi, enrichment [1] artık no-op fallback.
+- **v31.9 — 1y pencere + Relatif Güç**: `fetchSingle` 6mo→**1y** (hem hisse hem XU100) →
+  MA200 (~252 bar gerekiyordu, 6 ayda hep null'dı) + 60g RS ufku çalışıyor. Yeni saf
+  `relativeStrength.js` (`computeRelativeStrength`, 9 test): 20g/60g hisse getirisini XU100'e
+  kıyaslar → [-8,+8] `rsScore` composite'e girer (lider prim / geride kalan ceza; sell ters).
+  UI: `🚀 LİDER / 🐢 GERİDE` rozeti. Not: 1y payload taramayı ~2× yavaşlatır (masaüstünde kabul).
+- **v31.10 — Temel kalite kapısı**: Saf `fundamentalQualityGate` (`fundamentalEngine.js`, 8 test).
+  HARD-REJECT: D/Ö>5, cari<0.4, net marj<-25%. SOFT-CEZA: D/Ö>2, cari<0.8, net zarar, kar düşüyor
+  (max 15). SADECE veri VARSA aksiyon (eksik veri cezalandırılmaz; KCHOL cari ~0.86 asla elenmez).
+  Performans: 612'ye değil, `picks.sort` öncesi en yüksek ~18 buy adayına fetch (6s timeout,
+  best-effort). reject→listeden çıkar; UI `⚠ TEMEL -N` rozeti.
+- **v31.11 — Sektöre-duyarlı makro**: Düz `macroCtx.scoreAdjust` her pick'e eşit uygulanıyordu.
+  Saf `computeSectorMacroAdjust(macro, sector)` (`thematicMacro.js`, 8 test): (1) küresel risk
+  (VIX+S&P) × sektör risk-betası — risk-off'ta döngüsel (Holding/Otomotiv/Havayolu) baskı, defansif
+  (Telekom/Gıda) dayanıklı; (2) yüksek faiz (TCMB≥40) → GYO/İnşaat baskı, Banka/Sigorta lehine.
+  [-6,+6] clamp, `enhancePick` composite'ine `sectorMacroAdj` olarak girer + `confidenceBreakdown.sectorMacro`.
+  Hisse-özel tematik (petrol/altın/FX) katmanıyla ÇAKIŞMAZ (bu sektör düzeyi).
+
+**Denetimde kalan 1 madde**: Yabancı akış (ücretsiz TR kaynağı yok — bilinen sınır, `foreignFlow:0`).
+**Dürüst not**: bu 4 yükseltme ölçülen pick KALİTESİNİ hedefler; getiri garantisi yok. Harici veri
+(makro futures/RSS/temel) in-app tarayıcıda CORS ile yüklenmez ama masaüstü/Electron'da yüklenir —
+hepsi feed yoksa graceful null'a düşer, analiz kırılmaz. Suite 434 pass, 0 lint error.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

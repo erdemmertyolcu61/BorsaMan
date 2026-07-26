@@ -11,7 +11,7 @@ import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../utils/regimeGate.js';
 import { computeRelativeStrength } from '../utils/relativeStrength.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
-import { computeThematicAdjust, activeThemes } from '../utils/thematicMacro.js';
+import { computeThematicAdjust, activeThemes, computeSectorMacroAdjust } from '../utils/thematicMacro.js';
 import { getPaperTradeEngine } from '../utils/PaperTradeEngine.js';
 import { computeLiveEdge, getLiveEdgeStat, MIN_SAMPLE } from '../utils/liveEdge.js';
 import { classifyRegime } from '../utils/regimeEngine.js';
@@ -2161,9 +2161,17 @@ export function useAIAdvisor(portfolio) {
         // rsScore zaten [-8,+8] sınırlı; sell için ters yön (zayıf hisse = iyi sat).
         const rsAdj = isSell ? -(p.rsScore || 0) : (p.rsScore || 0);
 
+        // ── SEKTÖRE-DUYARLI MAKRO (v31.11) ──
+        // Düz makro skalar yerine sektörün risk/faiz duyarlılığı: risk-off'ta
+        // döngüsel sektör baskı, defansif dayanıklı; yüksek faizde GYO/İnşaat baskı,
+        // banka/sigorta lehine. Hisse-özel tematik katmanı ile ÇAKIŞMAZ (sektör düzeyi).
+        const sectorMacro = computeSectorMacroAdjust(macroCtx, p.sector);
+        const sectorMacroAdj = isSell ? -(sectorMacro.delta || 0) : (sectorMacro.delta || 0);
+
         let confidence = Math.round(
           techComponent + potentialComponent + sectorComponent +
-          newsComponent + entryComponent + liqComponent + healthComponent + macroAdj + rsAdj
+          newsComponent + entryComponent + liqComponent + healthComponent +
+          macroAdj + rsAdj + sectorMacroAdj
         );
 
         // TAVAN CEZASI: tavan hisselerin confidence'ini continuation prob'a gore asagi cek.
@@ -2194,6 +2202,7 @@ export function useAIAdvisor(portfolio) {
           confidence: Math.max(0, Math.min(100, confidence)),
           grade,
           tier,
+          _sectorMacroReasons: sectorMacro.reasons, // v31.11 sektörel makro gerekçe (tooltip)
           entryQuality,
           sectorStrength: sectorScore,
           liquidityScore,
@@ -2209,6 +2218,7 @@ export function useAIAdvisor(portfolio) {
             momentumHealth: Math.round(healthComponent),
             macro: Math.round(macroAdj),
             relativeStrength: Math.round(rsAdj), // XU100 liderlik primi/cezasi
+            sectorMacro: Math.round(sectorMacroAdj), // sektörel risk/faiz duyarlılığı
             foreignFlow: 0, // enrichment asamasinda guncellenir
           },
         };

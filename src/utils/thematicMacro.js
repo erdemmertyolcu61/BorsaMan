@@ -151,3 +151,64 @@ export function activeThemes(macroCtx) {
   return THEMES.filter(t => { try { return !!t.active(macroCtx); } catch { return false; } })
     .map(t => t.label);
 }
+
+// ── SECTOR-AWARE MACRO (v31.11) — pure, testable ──────────────────────────
+// The flat macroCtx.scoreAdjust hit every pick equally. But sectors don't share
+// one macro sensitivity: cyclicals (holding/auto/airline) move WITH global risk
+// appetite, defensives (telecom/food/utility) hold up when risk-off; and in TR's
+// high-rate world rate-sensitive sectors (REIT/construction) are structurally
+// pressured while banks/insurers benefit. This is SECTOR-level and dynamic —
+// complements (does not duplicate) the stock-specific commodity/FX thematic layer.
+
+// Risk-beta: >0 cyclical (hurt risk-off / helped risk-on), <0 defensive (resilient).
+const SECTOR_RISK_BETA = {
+  Holding: 1, Havayolu: 1, Otomotiv: 1, Metal: 1, Insaat: 1, Teknoloji: 1,
+  'Cam/Sanayi': 0.6, Petrokimya: 0.6, 'Beyaz Esya': 0.6, Lastik: 0.6, Kimya: 0.6,
+  'Gubre/Kimya': 0.6, Tekstil: 0.6, Banka: 0.4, GYO: 0.3, Savunma: 0, Madencilik: 0,
+  Telekom: -1, Gida: -1, Perakende: -0.6, Enerji: -0.6, Sigorta: -0.4,
+};
+// Rate sensitivity in a high-rate regime: <0 pressured, >0 benefits.
+const RATE_SENSITIVITY = {
+  GYO: -1, Insaat: -1, Holding: -0.6, Otomotiv: -0.6, Banka: 0.8, Sigorta: 0.6,
+};
+const SECTOR_ADJ_CLAMP = 6;
+
+/**
+ * Sector-level macro adjustment for a stock's sector under the current macro.
+ * @param {object|null} macro - macroContextEngine ctx (vix/sp500/tcmb)
+ * @param {string} sector - sector name (constants.js SECTORS values)
+ * @returns {{ delta: number, reasons: string[] }} delta bounded to +/-6
+ */
+export function computeSectorMacroAdjust(macro, sector) {
+  if (!macro || !sector) return { delta: 0, reasons: [] };
+  let delta = 0;
+  const reasons = [];
+
+  // 1) Global risk sentiment (VIX + S&P) × sector risk-beta.
+  const vixCls = macro.vix?.classification;
+  const spChg = macro.sp500?.change5d;
+  let risk = 0; // -1 risk-off … +1 risk-on
+  if (vixCls === 'panic' || (spChg != null && spChg < -3)) risk = -1;
+  else if (vixCls === 'elevated') risk = -0.5;
+  else if (vixCls === 'complacent' && spChg != null && spChg > 2) risk = 1;
+  const beta = SECTOR_RISK_BETA[sector] ?? 0;
+  if (risk !== 0 && beta !== 0) {
+    delta += risk * beta * 3;
+    if (risk < 0 && beta > 0) reasons.push(`Risk-off + döngüsel sektör baskısı (${sector})`);
+    else if (risk < 0 && beta < 0) reasons.push(`Defansif sektör risk-off'ta dayanıklı (${sector})`);
+    else if (risk > 0 && beta > 0) reasons.push(`Risk-on beta sektör lehine (${sector})`);
+    else reasons.push(`Risk-on'da defansif sektör geride (${sector})`);
+  }
+
+  // 2) High-rate regime: rate-sensitive sectors tilted.
+  const rate = macro.tcmb?.rate;
+  const rs = RATE_SENSITIVITY[sector];
+  if (rate != null && rate >= 40 && rs) {
+    delta += rs * 2.5;
+    if (rs < 0) reasons.push(`Yüksek faiz (%${rate}) faize-duyarlı sektöre baskı (${sector})`);
+    else reasons.push(`Yüksek faiz (%${rate}) ${sector} lehine (marj/float)`);
+  }
+
+  delta = Math.max(-SECTOR_ADJ_CLAMP, Math.min(SECTOR_ADJ_CLAMP, Math.round(delta * 10) / 10));
+  return { delta, reasons };
+}
