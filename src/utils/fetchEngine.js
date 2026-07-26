@@ -45,6 +45,16 @@ const L2_CACHE_KEY = 'bist_fetch_l2_cache_v1';
 const L2_CACHE_TTL_MS = 30 * 60 * 1000; // 30 dakika
 const L2_MAX_ENTRIES = 800;             // ~648 BIST + intraday buffers
 
+// v31.12 SCAN CACHE OPTIMIZATION — daily/weekly bars are IMMUTABLE intraday: a 1y
+// history fetched at 10:00 has the same ~251 completed bars at 14:00. Only today's
+// bar changes, and the scan refreshes THAT externally via the batch BigPara live
+// overlay (fetchSingle scan-mode never overlays itself). So the historical series
+// can be cached for a full session instead of the old 60s scan TTL — back-to-back
+// scans (mobile 20-min continuous, manual re-scans) then hit cache instead of
+// re-pulling the ~2× heavier 1y payload for all ~648 symbols. Aligned with L2 TTL so
+// a page reload's hydrated entry stays valid. Users can force-refresh via clearCache.
+const SCAN_DAILY_CACHE_TTL_MS = 30 * 60 * 1000; // 30 dakika (gün-içi tarih barları değişmez)
+
 function _hydrateL2Cache() {
   try {
     const raw = localStorage.getItem(L2_CACHE_KEY);
@@ -1435,8 +1445,15 @@ export async function fetchSingle(symbol, range, interval, scanMode = false) {
   }
   const ck = symbol + '_' + range + '_' + interval;
   const c = _cache[ck];
-  // Smart cache TTL: scan mode uses shorter (60s), full analysis uses longer (5min for historical)
-  const cacheTTL = scanMode ? 60000 : (range === 'max' || range === '5y' || range === '2y' ? 300000 : 120000);
+  const isDailyOrWeekly = interval === '1d' || interval === '1wk';
+  // Smart cache TTL. Scan mode: daily/weekly bars are immutable intraday (the batch
+  // live overlay refreshes today's bar), so cache the history a full session
+  // (SCAN_DAILY_CACHE_TTL_MS) instead of 60s → repeat scans skip the heavy 1y refetch.
+  // Intraday intervals (15m/60m) DO change → keep the short 60s. Non-scan (single
+  // analysis) keeps its longer historical TTLs.
+  const cacheTTL = scanMode
+    ? (isDailyOrWeekly ? SCAN_DAILY_CACHE_TTL_MS : 60000)
+    : (range === 'max' || range === '5y' || range === '2y' ? 300000 : 120000);
   if (c && (Date.now() - c._ts < cacheTTL)) {
     // Daily/weekly cache hits: refresh today's candle via BigPara overlay
     // so pre-open / mid-day re-opens always merge the latest live bar.
