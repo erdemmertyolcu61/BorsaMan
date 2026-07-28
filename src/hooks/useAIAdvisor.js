@@ -2865,6 +2865,7 @@ export function useAIAdvisor(portfolio) {
               _earlyPick: p._earlyPick, _earlySignals: p._earlySignals, _earlyCount: p._earlyCount,
               _nearBreakoutPick: p._nearBreakoutPick, _nearBreakoutSignals: p._nearBreakoutSignals, _nearBreakoutCount: p._nearBreakoutCount,
               _bestOfDay: p._bestOfDay, // v31.6: ⭐ garantili gunluk pick (persist)
+              _watchOnly: p._watchOnly, // v31.13: DUSUS'te ALIM DEGIL — izleme (persist)
               rsOutperf: p.rsOutperf, rsScore: p.rsScore, rsLeading: p.rsLeading, rsLagging: p.rsLagging, // v31.9 RS
               fundGrade: p.fundGrade, fundDebtToEquity: p.fundDebtToEquity, fundCurrentRatio: p.fundCurrentRatio,
               fundNetMargin: p.fundNetMargin, fundProfitTrend: p.fundProfitTrend,

@@ -77,7 +77,13 @@ export function applyRegimeGate(picks, regime, neutralMaxBuys = 6, bearMaxBuys =
     .filter(p => p.cls === 'buy' && (p.score || 0) >= minScore) // kalite tabani
     .sort((a, b) => (b.score || 0) - (a.score || 0))
     .slice(0, cap)
-    .map(p => (p._counterRegime ? p : { ...p, _counterRegime: true }));
+    // v31.13: BEAR'da AL'lar GORUNUR ama "ALIM DEGIL" — olcum DUSUS'te AL beklentisi
+    // -3.36% / %18.8 WR. Kullanici gorunurluk istedi (her gun goster), ama duşen
+    // piyasada bunu tradeable buy gibi sunmak sermaye kaybettiriyor → _watchOnly.
+    .map(p => {
+      const tagged = p._counterRegime ? p : { ...p, _counterRegime: true };
+      return regime === 'BEAR' ? { ...tagged, _watchOnly: true } : tagged;
+    });
   return [...sells, ...buys];
 }
 
@@ -106,6 +112,8 @@ export function ensureBestOfDay(gatedPicks, candidates, regime) {
   const tagged = {
     ...best, _bestOfDay: true,
     ...(regime !== 'BULL' ? { _counterRegime: true } : {}),
+    // v31.13: DUSUS'te garantili pick de ALIM DEGIL — izleme (olcum negatif).
+    ...(regime === 'BEAR' ? { _watchOnly: true } : {}),
   };
   return [tagged, ...picks];
 }

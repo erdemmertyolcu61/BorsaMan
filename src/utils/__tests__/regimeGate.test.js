@@ -116,6 +116,16 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(applyRegimeGate(null, 'BEAR')).toEqual([]);
   });
 
+  it('v31.13: BEAR buys are tagged _watchOnly (visible, not buy-now); NEUTRAL are not', () => {
+    const bear = applyRegimeGate(picks, 'BEAR');
+    const bearBuys = bear.filter(p => p.cls === 'buy');
+    expect(bearBuys.length).toBeGreaterThan(0);
+    expect(bearBuys.every(p => p._watchOnly === true)).toBe(true);
+    expect(bear.find(p => p.cls === 'sell')._watchOnly).toBeUndefined(); // sells stay actionable
+    const neutral = applyRegimeGate(picks, 'NEUTRAL');
+    expect(neutral.filter(p => p.cls === 'buy').every(p => p._watchOnly)).toBe(false);
+  });
+
   it('v31.5 defaults: quality floor is 58, NEUTRAL cap 6, BEAR cap 4', () => {
     // 7 buys straddling 58; NEUTRAL default keeps up to 6 that clear the floor.
     const many = Array.from({ length: 8 }, (_, i) => ({ symbol: `B${i}`, cls: 'buy', score: 60 + i }));
@@ -166,6 +176,15 @@ describe('regimeGate.ensureBestOfDay', () => {
     const out = ensureBestOfDay([], [cand({ symbol: 'A' })], 'BULL');
     expect(out[0]._bestOfDay).toBe(true);
     expect(out[0]._counterRegime).toBeUndefined();
+    expect(out[0]._watchOnly).toBeUndefined();
+  });
+
+  it('v31.13: the guaranteed pick is _watchOnly in BEAR (not buy-now), not in NEUTRAL', () => {
+    const bear = ensureBestOfDay([], [cand({ symbol: 'A' })], 'BEAR');
+    expect(bear[0]._bestOfDay).toBe(true);
+    expect(bear[0]._watchOnly).toBe(true);
+    const neutral = ensureBestOfDay([], [cand({ symbol: 'A' })], 'NEUTRAL');
+    expect(neutral[0]._watchOnly).toBeUndefined();
   });
 
   it('returns the gate output unchanged when no eligible candidate exists', () => {

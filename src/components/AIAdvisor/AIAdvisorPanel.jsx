@@ -1021,6 +1021,21 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       {p.grade}
                     </span>
                   )}
+                  {/* v31.13: İZLE (ALIM DEĞİL) — DÜŞÜŞ rejiminde AL'lar görünür ama tradeable değil */}
+                  {p.cls !== 'sell' && p._watchOnly && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(244,63,94,0.22)', color: '#fca5a5',
+                      letterSpacing: 0.3, border: '1px solid rgba(244,63,94,0.55)',
+                    }} title={[
+                      '👁 İZLE — ALIM DEĞİL (piyasa DÜŞÜŞ trendinde)',
+                      'Ölçüm: düşüş rejiminde AL pozisyonları tarihsel -%3,4 / %18,8 kazanma.',
+                      'Bu isim izlenmek için gösteriliyor (piyasa dönerse aday) — bugün',
+                      'yeni uzun pozisyon önerilmez. Sistem düşüşte sermayeyi korur.',
+                    ].join('\n')}>
+                      👁 İZLE · ALIM DEĞİL
+                    </span>
+                  )}
                   {/* v31.5: GÜNÜN EN İYİSİ — rejim kapısı boş bıraksa bile garanti pre-pump pick */}
                   {p.cls !== 'sell' && p._bestOfDay && (
                     <span style={{

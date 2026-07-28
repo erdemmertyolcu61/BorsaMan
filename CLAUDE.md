@@ -612,6 +612,29 @@ Advisor tarama+analiz yolunun denetimi sonrası 4 somut zayıflık kapatıldı (
 (makro futures/RSS/temel) in-app tarayıcıda CORS ile yüklenmez ama masaüstü/Electron'da yüklenir —
 hepsi feed yoksa graceful null'a düşer, analiz kırılmaz. Suite 434 pass, 0 lint error.
 
+## DÜŞÜŞ'te "İZLE · ALIM DEĞİL" — sermaye koruma (v31.13)
+
+Kullanıcı geri bildirimi: "son 1 haftadaki önerdiğin hisseler hepsi ekside." Gerçek-veri
+teşhisi (canlı XU100): piyasa **DÜŞÜŞ (BEAR)** rejiminde (-%2,7 5g / -%4,1 20g / MA20 -%3,3).
+Ölçüm: DÜŞÜŞ'te AL beklentisi **-%3,36 / %18,8 WR** → düşen piyasada long'ların kaybetmesi
+bug değil, ÖLÇÜMÜN öngördüğü sonuç. Kötüleştiren: bu oturumda `ensureBestOfDay` (v31.5)
+DÜŞÜŞ'te bile GARANTİLİ günlük long üretiyor, tüm koruma kapılarını bypass ederek — düşüş
+haftasında günlük garantili kaybeden. Profit Governor (measure-first) DEFENSE için ~20-30
+kayıtlı sonuç ister → ilk kötü haftada koruyamıyor.
+
+Düzeltme (görünürlük korunur, sermaye korunur):
+- `applyRegimeGate` + `ensureBestOfDay`: **BEAR** rejiminde AL'lar `_watchOnly: true` etiketlenir
+  — panelde GÖRÜNÜR ama "tradeable buy" değil. UI: `👁 İZLE · ALIM DEĞİL` (kırmızı) rozeti +
+  tooltip (ölçüm negatif, bugün yeni uzun önerilmez). Mobil chip'te `👁` prefix.
+- `PaperTradeEngine.processScanResults`: `_watchOnly` pick'ler auto-trade'e GİRMEZ.
+- SAT'lar aktif kalır (düşüşte anlamlı). YATAY/YÜKSELİŞ değişmedi (YATAY zaten `_counterRegime`
+  uyarılı; YÜKSELİŞ serbest — ölçüm orada pozitif).
+- Test: `regimeGate.test.js` +2 (BEAR buys `_watchOnly`, guaranteed pick `_watchOnly`); suite 436 pass.
+
+**Dürüst not**: hiçbir meşru sistem düşen piyasada long giderek istikrarlı kazanamaz. Sistemin
+gerçek edge'i rejime bağımlı (sadece YÜKSELİŞ + yüksek skor pozitif). Bu değişiklik kaybı
+"düzeltmez" — DÜŞÜŞ'te sistemi kaybettiren long önermekten alıkoyar (nakit/izleme = en iyi "işlem").
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

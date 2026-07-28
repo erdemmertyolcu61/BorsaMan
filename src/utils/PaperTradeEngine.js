@@ -217,9 +217,11 @@ export class PaperTradeEngine {
     const existingSymbols = new Set(s.openTrades.map(t => t.symbol));
     console.log('[PaperTrade] State: cash=', s.cash, '| openTrades=', s.openTrades.length, '| existingSymbols=', [...existingSymbols]);
 
-    // All buy-eligible picks not already held
+    // All buy-eligible picks not already held. v31.13: skip _watchOnly picks —
+    // in a DÜŞÜŞ regime buys are surfaced for awareness but are NOT tradeable longs
+    // (measured -3.4% / 18.8% WR), so auto-trade must not open positions on them.
     const eligible = picks.filter(p =>
-      p.cls === 'buy' && !existingSymbols.has(p.symbol)
+      p.cls === 'buy' && !p._watchOnly && !existingSymbols.has(p.symbol)
     );
     console.log('[PaperTrade] Buy-eligible picks (cls=buy, not held):', eligible.length, eligible.map(p => p.symbol));
 

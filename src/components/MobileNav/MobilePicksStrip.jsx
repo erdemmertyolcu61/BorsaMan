@@ -99,16 +99,19 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
               const isSell = p.cls === 'sell';
               const counter = p._counterRegime && !isSell;
               const bestOfDay = p._bestOfDay && !isSell;
+              const watchOnly = p._watchOnly && !isSell;
               return (
                 <button
                   key={p.symbol}
                   className={`m-advisor-chip ${isSell ? 'sell' : 'buy'}`}
                   onClick={() => onAnalyze?.(p.symbol)}
-                  title={bestOfDay
+                  title={watchOnly
+                    ? 'İZLE — ALIM DEĞİL: piyasa düşüşte (ölçüm -%3,4 / %18,8 WR). İzleme amaçlı, bugün yeni uzun önerilmez.'
+                    : bestOfDay
                     ? 'Günün en iyisi — rejim kapısı boş bıraktı, pre-pump havuzundan garanti pick (yüksek risk, küçük pozisyon)'
                     : counter ? 'Rejime karşı AL — düşüş/yatay piyasada yüksek risk, küçük pozisyon' : undefined}
                 >
-                  {bestOfDay ? '⭐ ' : counter ? '⚠ ' : ''}{p.symbol} ({(p.score || 0).toFixed(1)})
+                  {watchOnly ? '👁 ' : bestOfDay ? '⭐ ' : counter ? '⚠ ' : ''}{p.symbol} ({(p.score || 0).toFixed(1)})
                 </button>
               );
             })}
