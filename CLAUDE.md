@@ -657,6 +657,19 @@ Kullanıcı 1 haftalık gözlem sonrası 3 geri bildirim verdi ("fena değiliz a
 gün-gün nokta ancak uygulama açıkken yakalanır. Açılış-tohumlama en azından her açılışta o
 günün picks'ini kaydeder. Suite 443 pass, 0 lint error.
 
+## YATAY biraz açıldı — uyarılı ama tradeable AL (v31.15)
+
+Kullanıcı: "YATAY'ı biraz aç, uyarılı ama izle-değil-AL göster." Rejim-özel taban getirildi:
+- `regimeGate.NEUTRAL_MIN_SCORE = 54` (yeni) — YATAY tabanı DÜŞÜŞ'ten (58) daha açık.
+- `applyRegimeGate`: `neutralMaxBuys` 6 → **8**; taban artık rejim-özel (açık geçilmezse
+  YATAY 54, DÜŞÜŞ 58). YATAY AL'ları `_counterRegime` (⚠ REJİME KARŞI) uyarılı ama
+  `_watchOnly` DEĞİL → tradeable AL. DÜŞÜŞ aynen korundu (58 + watch-only, v31.13).
+- `displayPicks.COUNTER_REGIME_BUY_TARGET` 6 → **8** (boş-topPicks dalı tutarlılığı).
+- Test: `regimeGate.test.js` NEUTRAL cap 8/floor 54 + BEAR<NEUTRAL taban ayrımı; suite 444 pass.
+
+**Dürüst not**: YATAY ölçümü hâlâ negatif (-%1,68) — bu değişiklik daha fazla aday GÖSTERİR
+(kullanıcı isteği), edge yaratmaz; hepsi ⚠ uyarılı, küçük pozisyon/sıkı stop önerilir.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

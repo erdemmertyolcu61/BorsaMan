@@ -57,11 +57,11 @@ describe('deriveDisplayPicks', () => {
     expect(out.map(p => p.symbol)).toEqual(['STAR']);
   });
 
-  it('regimeRestrict=true with empty topPicks → only quality names, capped at 6', () => {
+  it('regimeRestrict=true with empty topPicks → only quality names, capped at 8', () => {
     const scan = Array.from({ length: 10 }, (_, i) =>
       pick({ symbol: `S${i}`, avgVolumeTL: 2_000_000, score: 70, confidence: 70 - i }));
     const out = deriveDisplayPicks([], scan, true);
-    expect(out.length).toBe(6);
+    expect(out.length).toBe(8); // v31.15: counter-regime target 6 → 8
     expect(out.every(p => p._counterRegime === true)).toBe(true); // all warned
     // and a sub-58 scan yields nothing rather than filling with junk
     const weak = Array.from({ length: 10 }, (_, i) => pick({ symbol: `W${i}`, avgVolumeTL: 2_000_000, score: 50 }));

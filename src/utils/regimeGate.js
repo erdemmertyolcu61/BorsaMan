@@ -50,6 +50,11 @@ export function regimeLabel(regime) {
 // 58 lets the upper "early" band through (still warned via _counterRegime), while
 // the guaranteed daily pick (ensureBestOfDay) makes sure a name always shows.
 export const COUNTER_REGIME_MIN_SCORE = 58;
+// v31.15: YATAY (NEUTRAL) tabanı DÜŞÜŞ'ten (58) daha açık. Kullanıcı "YATAY'ı biraz
+// aç, uyarılı ama izle-değil-AL göster" dedi. Ölçüm YATAY'da negatif (-%1,68) ama
+// DÜŞÜŞ kadar (-%3,36) değil → daha fazla aday, hepsi ⚠ REJİME KARŞI uyarılı ama
+// _watchOnly DEĞİL (tradeable AL). DÜŞÜŞ 58 + watch-only olarak korunur.
+export const NEUTRAL_MIN_SCORE = 54;
 
 /**
  * Apply the regime buy-gate to a pick list (buy-oriented; sells pass through).
@@ -67,14 +72,17 @@ export const COUNTER_REGIME_MIN_SCORE = 58;
  * @param {number} [minScore=58] - quality floor for counter-regime buys
  * @returns {Array}
  */
-export function applyRegimeGate(picks, regime, neutralMaxBuys = 6, bearMaxBuys = 4,
-                                minScore = COUNTER_REGIME_MIN_SCORE) {
+export function applyRegimeGate(picks, regime, neutralMaxBuys = 8, bearMaxBuys = 4,
+                                minScore = null) {
   if (!Array.isArray(picks)) return [];
   if (regime === 'BULL') return picks.slice(); // copy for purity
   const cap = regime === 'BEAR' ? Math.max(0, bearMaxBuys) : Math.max(0, neutralMaxBuys);
+  // v31.15: rejim-özel taban — açık geçilmezse YATAY 54, DÜŞÜŞ 58.
+  const floor = minScore != null ? minScore
+    : (regime === 'BEAR' ? COUNTER_REGIME_MIN_SCORE : NEUTRAL_MIN_SCORE);
   const sells = picks.filter(p => p.cls === 'sell');
   const buys = picks
-    .filter(p => p.cls === 'buy' && (p.score || 0) >= minScore) // kalite tabani
+    .filter(p => p.cls === 'buy' && (p.score || 0) >= floor) // kalite tabani (rejim-özel)
     .sort((a, b) => (b.score || 0) - (a.score || 0))
     .slice(0, cap)
     // v31.13: BEAR'da AL'lar GORUNUR ama "ALIM DEGIL" — olcum DUSUS'te AL beklentisi

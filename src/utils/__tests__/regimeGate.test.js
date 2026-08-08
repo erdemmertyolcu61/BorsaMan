@@ -126,15 +126,22 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(neutral.filter(p => p.cls === 'buy').every(p => p._watchOnly)).toBe(false);
   });
 
-  it('v31.5 defaults: quality floor is 58, NEUTRAL cap 6, BEAR cap 4', () => {
-    // 7 buys straddling 58; NEUTRAL default keeps up to 6 that clear the floor.
+  it('v31.15 defaults: NEUTRAL floor 54 / cap 8, BEAR floor 58 / cap 4', () => {
     const many = Array.from({ length: 8 }, (_, i) => ({ symbol: `B${i}`, cls: 'buy', score: 60 + i }));
-    many.push({ symbol: 'LOW', cls: 'buy', score: 50 }); // below 58 → cut
+    many.push({ symbol: 'LOW', cls: 'buy', score: 50 }); // below both floors → cut
     const neutral = applyRegimeGate(many, 'NEUTRAL');
-    expect(neutral.filter(p => p.cls === 'buy')).toHaveLength(6);
+    expect(neutral.filter(p => p.cls === 'buy')).toHaveLength(8); // opened up 6 → 8
     expect(neutral.some(p => p.symbol === 'LOW')).toBe(false);
+    // YATAY: warned AL, NOT watch-only (tradeable buy per user request)
+    expect(neutral.filter(p => p.cls === 'buy').every(p => p._counterRegime && !p._watchOnly)).toBe(true);
     const bear = applyRegimeGate(many, 'BEAR');
     expect(bear.filter(p => p.cls === 'buy')).toHaveLength(4);
+  });
+
+  it('v31.15: NEUTRAL floor (54) is looser than BEAR (58)', () => {
+    const p = [{ symbol: 'M', cls: 'buy', score: 55 }]; // 54 <= 55 < 58
+    expect(applyRegimeGate(p, 'NEUTRAL').map(x => x.symbol)).toEqual(['M']); // passes YATAY
+    expect(applyRegimeGate(p, 'BEAR').map(x => x.symbol)).toEqual([]);       // cut in DÜŞÜŞ
   });
 });
 
