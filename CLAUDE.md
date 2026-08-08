@@ -635,6 +635,28 @@ Düzeltme (görünürlük korunur, sermaye korunur):
 gerçek edge'i rejime bağımlı (sadece YÜKSELİŞ + yüksek skor pozitif). Bu değişiklik kaybı
 "düzeltmez" — DÜŞÜŞ'te sistemi kaybettiren long önermekten alıkoyar (nakit/izleme = en iyi "işlem").
 
+## Gün-Gün Takip + Mobil Kalıcılık + Uyarı Sadeleştirme (v31.14)
+
+Kullanıcı 1 haftalık gözlem sonrası 3 geri bildirim verdi ("fena değiliz ama..."):
+- **Çok uyarılı**: `_watchOnly` (👁 İZLE) zaten güçlü uyarıyken `_counterRegime` (⚠ REJİME KARŞI)
+  da gösteriliyordu → çift uyarı gürültüsü. `AIAdvisorPanel`: `_counterRegime` rozeti
+  `!p._watchOnly` iken gösterilir (BEAR'da tek net uyarı kalır). Gate GEVŞETİLMEDİ — BEAR
+  koruması (v31.13) geçen hafta işe yaradı; sadece görsel gürültü azaltıldı.
+- **Mobilde veriler tutulmuyor**: Kayıt YALNIZ canlı `advisor-scan-complete`'te oluyordu;
+  mobilde uygulama tarama saatlerinde (09:55/18:15) açık olmadığından hiçbir şey birikmiyordu.
+  `App.jsx` **açılış-tohumlama** efekti: mount'ta `bist_last_ai_picks`'ten BUGÜN taranmış
+  (`_scanTs`) + bugün henüz kayıtlı olmayan picks'i Sinyal Takibi'ne bir kez kaydeder
+  (advisor kaynağı dedup yapmadığı için gün-bazlı guard bayat/çift kaydı önler).
+- **Gün-gün arttı/azaldı kaydı**: Saf `signalPerfHistory.js` (`appendDailyPerf`/`summarizeDailyPerf`,
+  9 test). `useSignalTracker.checkSignals` her 10dk'da aktif sinyalin o günkü giriş-göreli
+  (yön düzeltmeli) getirisini `dailyPerf[]`'e işler (aynı gün nokta güncellenir, yeni günde
+  eklenir, 30 gün cap). `SignalsTab`'a **GÜN-GÜN** kolonu + `DailySpark` mini-bar sparkline.
+  d1/d3/d5/d7 checkpoint'leri korundu; bu onların üstüne per-gün seri ekler.
+
+**Sınır (dürüst)**: mobil kalıcılık, uygulama açık olduğunda çalışır — arka planda sunucu yok,
+gün-gün nokta ancak uygulama açıkken yakalanır. Açılış-tohumlama en azından her açılışta o
+günün picks'ini kaydeder. Suite 443 pass, 0 lint error.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

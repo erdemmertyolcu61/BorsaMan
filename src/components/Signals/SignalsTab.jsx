@@ -16,6 +16,33 @@ function DayChip({ value }) {
   return <span style={{ fontSize: 9, color: c, fontWeight: 600 }}>{value > 0 ? '+' : ''}{value.toFixed(1)}%</span>;
 }
 
+// v31.14: gün-gün getiri mini-sparkline — her nokta bir günün giriş-göreli getirisi.
+// Kullanıcı "hisseleri gün gün arttı azaldı" görebilsin diye kompakt bar-strip.
+function DailySpark({ data }) {
+  const arr = Array.isArray(data) ? data.filter(p => p && Number.isFinite(p.pct)) : [];
+  if (!arr.length) return <span style={{ fontSize: 9, color: 'var(--t3)' }}>—</span>;
+  const max = Math.max(1, ...arr.map(p => Math.abs(p.pct)));
+  const latest = arr[arr.length - 1].pct;
+  return (
+    <span title={arr.map(p => `${p.d}: ${p.pct > 0 ? '+' : ''}${p.pct}%`).join('\n')}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 1, height: 14 }}>
+        {arr.slice(-14).map((p, i) => {
+          const h = Math.max(2, Math.round((Math.abs(p.pct) / max) * 12));
+          return <span key={i} style={{
+            width: 3, height: h, borderRadius: 1,
+            background: p.pct > 0 ? 'var(--green)' : p.pct < 0 ? 'var(--red)' : 'var(--t3)',
+            opacity: 0.35 + 0.65 * (i + 1) / Math.min(arr.length, 14),
+          }} />;
+        })}
+      </span>
+      <span style={{ fontSize: 8, fontWeight: 700, color: latest > 0 ? 'var(--green)' : latest < 0 ? 'var(--red)' : 'var(--t3)' }}>
+        {latest > 0 ? '+' : ''}{latest.toFixed(1)}
+      </span>
+    </span>
+  );
+}
+
 function OutcomeBadge({ outcome }) {
   const map = {
     TARGET_HIT: { label: 'HEDEF', color: 'var(--green)' },
@@ -269,6 +296,7 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                         { key: 'd3', label: '3G', align: 'center' },
                         { key: 'd5', label: '5G', align: 'center' },
                         { key: 'd7', label: '7G', align: 'center' },
+                        { key: 'daily', label: 'GÜN-GÜN', align: 'center' },
                         { key: 'score', label: 'Skor', align: 'center' },
                         { key: 'outcome', label: 'Sonuç', align: 'center' },
                       ].map(h => (
@@ -319,6 +347,7 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d3} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d5} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d7} /></td>
+                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DailySpark data={s.dailyPerf} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center', fontSize: 10 }}>{s.score100 ? s.score100.toFixed(0) : '—'}</td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><OutcomeBadge outcome={s.outcome || 'OPEN'} /></td>
                         </tr>

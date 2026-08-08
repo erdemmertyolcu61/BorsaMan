@@ -1052,8 +1052,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       ⭐ GÜNÜN EN İYİSİ
                     </span>
                   )}
-                  {/* v29: KONVIKSIYON rozeti — backtest: Score>=75 pozitif beklenti, 65-74 yazi-tura */}
-                  {p.cls !== 'sell' && p._counterRegime && (
+                  {/* v29: REJİME KARŞI rozeti. v31.14: _watchOnly zaten daha güçlü uyarı
+                      (👁 İZLE · ALIM DEĞİL) taşıyorsa bu rozeti gösterme — çift uyarı gürültüsü. */}
+                  {p.cls !== 'sell' && p._counterRegime && !p._watchOnly && (
                     <span style={{
                       fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
                       background: 'rgba(244,63,94,0.18)', color: '#f87171',

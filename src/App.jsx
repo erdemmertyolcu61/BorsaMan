@@ -150,6 +150,41 @@ export default function App() {
     return () => window.removeEventListener('advisor-scan-complete', handler);
   }, [recordAdvisorPick]);
 
+  // ── (1b) MOBİL KALICILIK: açılışta bugünkü önbellek picks'lerini Sinyal Takibi'ne tohumla ──
+  // Kayıt yalnız CANLI advisor-scan-complete olayında oluyordu; mobilde uygulama
+  // tarama saatlerinde (09:55/18:15) açık olmadığından hiçbir şey birikmiyordu →
+  // "mobilde veriler tutulmuyor". Açılışta son picks'i (bist_last_ai_picks) bir kez
+  // kaydet. Sadece BUGÜN taranmış (_scanTs) + bugün henüz kaydedilmemiş sembolleri
+  // al (advisor kaynağı dedup yapmaz → gün-bazlı guard bayat/çift kaydı önler).
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current) return;
+    seededRef.current = true;
+    try {
+      const raw = localStorage.getItem('bist_last_ai_picks');
+      const picks = raw ? (JSON.parse(raw)?.picks || []) : [];
+      if (!picks.length) return;
+      const today = new Date().toDateString();
+      const seenToday = new Set(
+        (signalTracker.signals || [])
+          .filter(s => s.source === 'advisor' && new Date(s.timestamp).toDateString() === today)
+          .map(s => `${s.symbol}-${s.cls || 'buy'}`)
+      );
+      let seeded = 0;
+      for (const p of picks) {
+        if (!p?.symbol) continue;
+        if (!p._scanTs || new Date(p._scanTs).toDateString() !== today) continue; // sadece bugünkü
+        const key = `${p.symbol}-${p.cls || 'buy'}`;
+        if (seenToday.has(key)) continue;
+        recordAdvisorPick(p, { notify: false });
+        seenToday.add(key);
+        seeded++;
+      }
+      if (seeded) console.info(`[SignalTracker] Açılışta ${seeded} önbellek pick tohumlandı (mobil kalıcılık)`);
+    } catch { /* best-effort */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Send notifications for new AI Advisor scan results ──
   useEffect(() => {
     const handler = (e) => {

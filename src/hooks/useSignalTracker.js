@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
 import { buildCalibrationModel, setSignalCalibration } from '../utils/signalCalibration.js';
 import { setSignalReliabilityHints } from '../utils/signals.js';
+import { appendDailyPerf } from '../utils/signalPerfHistory.js';
 
 let globalNotificationHandler = null;
 
@@ -269,6 +270,7 @@ export function useSignalTracker() {
         status: 'active',
         outcome: null,
         perf: { d1: null, d3: null, d5: null, d7: null },
+        dailyPerf: [],                 // v31.14: gün-gün getiri geçmişi (checkSignals doldurur)
         lastPrice: null,
         notes: signalData.notes || signalData.reason || signalData.signal || '',
         sector: signalData.sector || '',
@@ -487,8 +489,16 @@ export function useSignalTracker() {
           }
         }
 
+        // v31.14: gün-gün performans geçmişi — kullanıcı "hisseleri gün gün arttı
+        // azaldı Sinyal Takibi'ne kaydetsin" dedi. Her takvim günü için giriş-göreli
+        // (yön düzeltmeli) getiriyi bir noktaya işle; aynı gün intraday tick'lerde
+        // günün noktası güncellenir, yeni günde yeni nokta eklenir.
+        const dayKey = new Date(now).toISOString().slice(0, 10);
+        const dailyPerf = appendDailyPerf(sig.dailyPerf, dayKey, currentReturn);
+
         updates[sig.id] = {
           perf,
+          dailyPerf,                     // v31.14: gün-gün getiri serisi
           outcome: finalOutcome,
           lastPrice: priceNow,
           currentReturn,                 // v29: anlık % getiri (her tick'te güncellenir)
