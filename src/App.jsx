@@ -110,7 +110,11 @@ export default function App() {
       sector: pick.sector,
       grade: pick.grade,
       tier: pick.tier,
-      regime: advisor.marketSentiment?.regime || null,
+      // v31.16: canlı-edge segmentasyon anahtarı — sinyal-takip kapanışları
+      // convictionTier × regime hücrelerine düşsün (kalibrasyon döngüsünü besler).
+      convictionTier: pick.convictionTier
+        || ((pick.score || 0) >= 75 ? 'sniper' : (pick.score || 0) >= 65 ? 'flagged' : 'early'),
+      regime: pick._regime || advisor.marketSentiment?.regime || null,
       liquidity: pick.liquidityScore || pick.liquidity,
       firedSignals: pick.firedSignals || [],
       mlConfidenceBoost: pick.mlConfidenceBoost,

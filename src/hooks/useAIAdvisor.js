@@ -13,7 +13,7 @@ import { computeRelativeStrength } from '../utils/relativeStrength.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { computeThematicAdjust, activeThemes, computeSectorMacroAdjust } from '../utils/thematicMacro.js';
 import { getPaperTradeEngine } from '../utils/PaperTradeEngine.js';
-import { computeLiveEdge, getLiveEdgeStat, MIN_SAMPLE } from '../utils/liveEdge.js';
+import { computeLiveEdge, getLiveEdgeStat, MIN_SAMPLE, signalsToLiveEdgeTrades } from '../utils/liveEdge.js';
 import { classifyRegime } from '../utils/regimeEngine.js';
 import { correlationCapFilter } from '../utils/portfolioOptimizer.js';
 import { netRR, TOTAL_COST_PCT } from '../utils/tradingCosts.js';
@@ -2443,10 +2443,20 @@ export function useAIAdvisor(portfolio) {
       // convictionTier × regime hücresi GÜVENİLİR (>=8 örnek) ise confidence'ı o
       // hücrenin gerçek expectancy'sine göre ±%15 ölçekle. Hücre yoksa (null) → no-op
       // (bugünkü davranış). Veri birikene kadar hiçbir şey değişmez; birikince otomatik.
+      // v31.16: iki kaynaktan besle — (1) paper-trade kapanışları (ML-AUTO açıksa),
+      // (2) sinyal-takip kapanışları (HER tarama pick'i, otomatik biriken). İkincisi
+      // döngüyü çok daha erken aktifleştirir; ikisi de aynı convictionTier × regime
+      // hücrelerine düşer. MIN_SAMPLE (8) korunur — küçük örnek hâlâ yalan söyler.
       let liveEdgeModel = null;
       try {
-        const closed = getPaperTradeEngine()?.getState?.()?.closedTrades || [];
-        if (closed.length >= MIN_SAMPLE) liveEdgeModel = computeLiveEdge(closed, { limit: 120 });
+        const paperClosed = getPaperTradeEngine()?.getState?.()?.closedTrades || [];
+        let sigClosed = [];
+        try {
+          const raw = localStorage.getItem('bist_signal_history_v2');
+          if (raw) sigClosed = signalsToLiveEdgeTrades(JSON.parse(raw));
+        } catch { sigClosed = []; }
+        const combined = [...paperClosed, ...sigClosed];
+        if (combined.length >= MIN_SAMPLE) liveEdgeModel = computeLiveEdge(combined, { limit: 200 });
       } catch { liveEdgeModel = null; }
       if (liveEdgeModel) {
         let _calibrated = 0;

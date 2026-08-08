@@ -670,6 +670,29 @@ Kullanıcı: "YATAY'ı biraz aç, uyarılı ama izle-değil-AL göster." Rejim-�
 **Dürüst not**: YATAY ölçümü hâlâ negatif (-%1,68) — bu değişiklik daha fazla aday GÖSTERİR
 (kullanıcı isteği), edge yaratmaz; hepsi ⚠ uyarılı, küçük pozisyon/sıkı stop önerilir.
 
+## Canlı-Edge Kalibrasyonu Aktifleştirildi (v31.16)
+
+Döngü v31.1'de bağlıydı ama DORMANT: yalnız `getPaperTradeEngine().closedTrades`'i okuyordu
+→ ML-AUTO açık + top-3 trade'lerin kapanması gerekiyordu, veri neredeyse hiç birikmiyordu.
+Aktifleştirme: döngüyü **sinyal-takip kapanışlarıyla** da besle — sinyal tracker HER tarama
+pick'ini (~8-10/tarama) kaydeder ve `checkSignals` outcome'larını (perf.d5 / status) doldurur;
+aynı `convictionTier × regime` kanıtı çok daha hızlı birikir.
+
+- **`signalsToLiveEdgeTrades(signals)`** (saf, `liveEdge.js`, +5 test): kapalı (veya 5-gün
+  settled) BUY sinyallerini live-edge trade şekline map eder (`pnlPct`=perf.d5, `regime`,
+  `convictionTier` — yoksa score'dan türetilir). `computeLiveEdge` snake/camel okuduğu için uyumlu.
+- **`App.jsx recordAdvisorPick`**: artık `convictionTier` (yoksa score'dan) + `regime` (`_regime`
+  öncelikli) kaydeder → sinyaller segmentlenebilir.
+- **`useAIAdvisor`**: kalibrasyon modeli iki kaynağın BİRLEŞİMİnden (`paperClosed` + `sigClosed`)
+  hesaplanır (limit 200). Hücre GÜVENİLİR (>=8) ise confidence, hücrenin gerçek expectancy'sine
+  göre ±%15 ölçeklenir; UI'da `📊 %WR` rozeti + `_liveEdge` persist.
+- **`MIN_SAMPLE = 8` KORUNDU** — küçük örnek yalan söyler; measure-first bozulmadı.
+- Doğrulama (önizleme, gerçek modül): 8 kapalı sniper×BULL sinyali → hücre reliable (n=8,
+  WR %75, expectancy +1.75) → kalibrasyon çarpanı ×1.0525. Suite 449 pass, 0 lint error.
+
+**Dürüst not**: bu döngü ölçülen expectancy'yi skorlamaya besler — pozitif hücreyi yukarı,
+negatifi aşağı çeker. Getiri garantisi değil; sistem kendi gerçek sonuçlarından öğrenir.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75

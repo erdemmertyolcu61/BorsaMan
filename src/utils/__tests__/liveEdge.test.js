@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeLiveEdge, getLiveEdgeStat, MIN_SAMPLE } from '../liveEdge.js';
+import { computeLiveEdge, getLiveEdgeStat, MIN_SAMPLE, signalsToLiveEdgeTrades } from '../liveEdge.js';
 
 // Trade factory — mirrors the localStorage closed-trade shape (camelCase),
 // plus snake_case variants where the DB path differs.
@@ -128,5 +128,48 @@ describe('getLiveEdgeStat', () => {
     const e = computeLiveEdge(Array.from({ length: MIN_SAMPLE }, () =>
       t({ convictionTier: 'sniper', entryRegime: 'BULL' })));
     expect(getLiveEdgeStat(e, 'early', 'BEAR')).toBeNull();
+  });
+});
+
+describe('signalsToLiveEdgeTrades (v31.16)', () => {
+  const sig = (o) => ({ cls: 'buy', status: 'closed', score: 80, regime: 'BULL', perf: { d5: 2 }, ...o });
+
+  it('is defensive against non-array / empty', () => {
+    expect(signalsToLiveEdgeTrades(null)).toEqual([]);
+    expect(signalsToLiveEdgeTrades([])).toEqual([]);
+  });
+
+  it('includes only settled BUY signals with a realized return', () => {
+    const out = signalsToLiveEdgeTrades([
+      sig({ symbol: 'A' }),                                   // ok
+      sig({ symbol: 'B', cls: 'sell' }),                     // sell → excluded
+      sig({ symbol: 'C', status: 'active', perf: {} }),      // not settled → excluded
+      sig({ symbol: 'D', status: 'active', perf: { d5: 3 } }), // 5d-settled → included
+      sig({ symbol: 'E', perf: {}, currentReturn: null }),   // no return → excluded
+    ]);
+    expect(out).toHaveLength(2);
+  });
+
+  it('prefers d5, maps to pnlPct, and carries regime', () => {
+    const [x] = signalsToLiveEdgeTrades([sig({ perf: { d1: 1, d3: 1.5, d5: 2.4 }, regime: 'NEUTRAL' })]);
+    expect(x.pnlPct).toBe(2.4);
+    expect(x.regime).toBe('NEUTRAL');
+  });
+
+  it('derives convictionTier from score when unrecorded, else keeps it', () => {
+    expect(signalsToLiveEdgeTrades([sig({ score: 80 })])[0].convictionTier).toBe('sniper');
+    expect(signalsToLiveEdgeTrades([sig({ score: 68 })])[0].convictionTier).toBe('flagged');
+    expect(signalsToLiveEdgeTrades([sig({ score: 50 })])[0].convictionTier).toBe('early');
+    expect(signalsToLiveEdgeTrades([sig({ score: 50, convictionTier: 'sniper' })])[0].convictionTier).toBe('sniper');
+  });
+
+  it('feeds computeLiveEdge → a full cell becomes reliable', () => {
+    const signals = Array.from({ length: MIN_SAMPLE }, (_, i) =>
+      sig({ symbol: `S${i}`, score: 80, regime: 'BULL', perf: { d5: 1 + (i % 2) } }));
+    const edge = computeLiveEdge(signalsToLiveEdgeTrades(signals), { limit: 200 });
+    const stat = getLiveEdgeStat(edge, 'sniper', 'BULL');
+    expect(stat).not.toBeNull();
+    expect(stat.n).toBe(MIN_SAMPLE);
+    expect(stat.winRate).toBe(100); // all positive d5
   });
 });

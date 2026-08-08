@@ -122,3 +122,32 @@ export function getLiveEdgeStat(edge, tier, regime) {
   if (!cell || !cell.reliable) return null;
   return cell;
 }
+
+// ── v31.16: SIGNAL-TRACKER → LIVE-EDGE ADAPTER ────────────────────────────
+// Paper-trade closes need ML-AUTO on and only cover the top-3 ML picks, so the
+// calibration stayed dormant for a long time. The signal tracker records EVERY
+// advisor pick (~8-10/scan) and settles their outcomes (perf.d5 / status), so it
+// accumulates the same convictionTier × regime evidence far faster. This maps its
+// CLOSED (or 5-day-settled) BUY signals into the live-edge trade shape. convictionTier
+// is derived from the recorded score when it predates the tag. Pure + testable.
+export function signalsToLiveEdgeTrades(signals) {
+  if (!Array.isArray(signals)) return [];
+  const out = [];
+  for (const s of signals) {
+    if (!s || s.cls !== 'buy') continue;
+    const settled = s.status === 'closed' || (s.perf && s.perf.d5 != null);
+    if (!settled) continue;
+    const pnlPct = s.perf?.d5 ?? s.perf?.d3 ?? s.perf?.d1 ?? s.currentReturn;
+    if (pnlPct == null || !Number.isFinite(pnlPct)) continue;
+    const score = Number.isFinite(s.score) ? s.score : (s.score100 || 0);
+    const convictionTier = s.convictionTier
+      || (score >= 75 ? 'sniper' : score >= 65 ? 'flagged' : 'early');
+    out.push({
+      convictionTier,
+      regime: s.regime || s._regime || null,
+      pnlPct,
+      closedAt: s.lastCheckedAt || (s.timestamp ? new Date(s.timestamp).getTime() : 0),
+    });
+  }
+  return out;
+}
