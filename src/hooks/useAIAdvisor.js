@@ -3086,6 +3086,9 @@ export function useAIAdvisor(portfolio) {
           },
         }));
         console.info(`[AI Advisor] advisor-scan-complete dispatched — ${(finalPicks || []).length} buy + ${(Array.isArray(sellPicks) ? sellPicks : []).length} sell picks → signal tracker + paper-trade`);
+        // v31.17: SADECE başarılı (dispatch olmuş) taramada "bugün tarandı" damgası —
+        // başarısız tarama günü bloklamasın (populate tekrar denesin).
+        try { localStorage.setItem('bist_last_scan_day', new Date().toDateString()); } catch { /* ignore */ }
       } catch (dispatchErr) {
         console.error('[AI Advisor] advisor-scan-complete DISPATCH FAILED — bu tarama sinyal kaydına + paper-trade\'e ulaşmayacak:', dispatchErr);
         pushLog({ type: 'err', msg: 'Sinyal dagitim hatasi: ' + (dispatchErr.message || dispatchErr) });
@@ -3139,19 +3142,35 @@ export function useAIAdvisor(portfolio) {
     const mlAutoOn = () => {
       try { return localStorage.getItem('bist_paper_ml_auto') === 'true'; } catch { return false; }
     };
-    const maybeAutoScan = () => {
-      if (!mlAutoOn()) return;                                    // sadece ML AUTO modunda
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      if (!isMarketOpen()) return;                               // sadece piyasa saatinde
-      if (runningRef.current) return;                            // tarama zaten suruyor
-      if (Date.now() - lastAutoScanRef.current < AUTO_MIN_GAP_MS) return;
-      lastAutoScanRef.current = Date.now();
-      runScan({ universe: SCAN_UNIVERSE });
+    const scannedToday = () => {
+      try { return localStorage.getItem('bist_last_scan_day') === new Date().toDateString(); } catch { return false; }
     };
-    const onVisible = () => { if (document.visibilityState === 'visible') maybeAutoScan(); };
+    // Hafta ici + piyasa acildiktan sonra (>=09:55) — populate icin taze veri penceresi.
+    const afterOpen = () => {
+      const { day, h, m } = _istanbulParts();
+      return day >= 1 && day <= 5 && (h > 9 || (h === 9 && m >= 55));
+    };
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (runningRef.current) return;
+      // (a) v31.17 GÜNDE-BİR-KEZ POPULATE — ML AUTO'dan BAĞIMSIZ. Mobilde tarama
+      // yalniz ML AUTO ile kosuyordu → ML AUTO kapaliyken Sinyal Takibi bos kaliyordu
+      // ("mobilde sinyal takibi calismiyor"). Uygulama acildiginda bugun henuz
+      // taranmadiysa BİR kez tara → o gunun pickleri Sinyal Takibi'ne kaydedilir.
+      if (!scannedToday() && afterOpen()) {
+        runScan({ universe: SCAN_UNIVERSE, afterHours: !isMarketOpen() });
+        return; // runScan finally 'bist_last_scan_day' damgalar → tekrar tetiklenmez
+      }
+      // (b) ML AUTO surekli tarama (paper-trade verisi biriksin) — sadece piyasa saatinde.
+      if (mlAutoOn() && isMarketOpen() && Date.now() - lastAutoScanRef.current >= AUTO_MIN_GAP_MS) {
+        lastAutoScanRef.current = Date.now();
+        runScan({ universe: SCAN_UNIVERSE });
+      }
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') tick(); };
     document.addEventListener('visibilitychange', onVisible);
-    const iv = setInterval(maybeAutoScan, 1000 * 60 * 5);        // on-planda her 5 dk kontrol
-    maybeAutoScan();                                             // mount/resume'da bir kez dene
+    const iv = setInterval(tick, 1000 * 60 * 5);                 // on-planda her 5 dk kontrol
+    tick();                                                      // mount/resume'da bir kez dene
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
       clearInterval(iv);

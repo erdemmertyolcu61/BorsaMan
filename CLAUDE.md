@@ -693,6 +693,31 @@ aynı `convictionTier × regime` kanıtı çok daha hızlı birikir.
 **Dürüst not**: bu döngü ölçülen expectancy'yi skorlamaya besler — pozitif hücreyi yukarı,
 negatifi aşağı çeker. Getiri garantisi değil; sistem kendi gerçek sonuçlarından öğrenir.
 
+## Mobilde Sinyal Takibi: günde-bir-kez populate (v31.17)
+
+Kullanıcı: "mobilde sinyal takibi çalışmalı." Kök neden: mobil sürekli-tarama YALNIZ ML AUTO
+açıkken kosuyordu (`useAIAdvisor` mobil efekti); ML AUTO kapalıyken mobilde hiç tarama
+olmuyor → hiç pick kaydedilmiyor → Sinyal Takibi boş. v31.14 açılış-tohumlaması yalnız BUGÜN
+taranmış cache picks'i kaydeder, ama tarama hiç kosmadıysa kaydedecek bir şey yok.
+
+Düzeltme: **ML AUTO'dan BAĞIMSIZ günde-bir-kez populate**. Mobil efektin `tick()`'i, uygulama
+görünürken + hafta içi + saat >= 09:55 (İstanbul) + o gün henüz taranmadıysa (`bist_last_scan_day`)
+BİR kez `runScan` tetikler → o günün pickleri Sinyal Takibi'ne kaydedilir. `bist_last_scan_day`
+damgası SADECE başarılı dispatch'te yazılır (başarısız tarama günü bloklamaz; populate tekrar
+dener). ML AUTO sürekli-tarama dalı aynen korundu. Damga tüm scan yollarını kapsar (09:55/18:15
+oto-tarama + ML AUTO + manuel), o yüzden çift tetikleme olmaz.
+
+**Sınır (dürüst)**: hâlâ istemci-taraflı — populate ancak uygulama açıkken çalışır (arka planda
+sunucu yok). Ama artık mobilde uygulamayı bir kez açmak (piyasa saatinde) o günü kaydeder;
+gün-gün perf (v31.14) ve d1/d5 checkpoint'leri uygulama açık kaldıkça dolar. Not: bu populate
+DESKTOP'ta da geçerli (geç açılışta o günü kaydeder) — günde bir ağır tarama, cache (v31.12) hafifletir.
+
+## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
+Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
+-%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.
+Sistem artık (v31.16) kendi sonuçlarından kalibre oluyor + Sinyal Takibi (v31.14/v31.17) günlük/
+haftalık getiriyi ŞEFFAF gösteriyor — ama getiri GARANTİSİ vaat edilmez, edilemez.
+
 ## Son Yapilanlar (2026-07 — v31)
 
 > **DÜRÜST BEKLENTİ NOTU:** Sistemin edge'i rejime bağımlıdır — ölçüm: sadece YUKSELIS + score≥75
