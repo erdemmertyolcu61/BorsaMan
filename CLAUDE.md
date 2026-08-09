@@ -1327,3 +1327,37 @@ transferi sonrası TSPOR %6 arttı gibi hisse-özel olay haberlerini de tara".
   kaçıyordu — tüm kategorileri iyileştirir). Scan'in CATALYST listesine `catalyst_event` eklendi
   (v31.8 haber-seçim +5 boost). Tekil analiz (v31.7) ve tarama (v31.8) otomatik faydalanır.
 - Test: `tradePlan.test.js` (7) + `marketNewsEngine.test.js` (+2: transfer, diyakritik); suite 458 pass, 0 lint error.
+
+## Haber Tüm Evrende + Mobil L2 Kota Sağlamlaştırma (v31.19)
+
+Kullanıcı: "Haberleri tüm hisseler için yap, ayrıca mobilde düzgün çalışsın."
+
+**(1) Haber artık TÜM taranan hisselerde** (v31.8'de yalnız aday havuzuna çekiliyordu):
+`fetchMarketNews` aynı RSS akışlarını universe boyutundan BAĞIMSIZ çeker — `universe`
+yalnız sembol ÇIKARIMINI filtreler. Bu yüzden 612 sembollük whitelist ~bedava ve çıkarımı
+DAHA doğru yapar (blacklist sezgisi yerine bilinen-ticker eşleşmesi). Artık haber alanları
+(`newsScore/newsCount/newsCategories/newsHeadline/newsHighImpact`) `results`'taki HER hisseye
+enjekte edilir; aday havuzuna ayrıca confidence kataliz deltası uygulanır (seçimi etkiler).
+`picks` map ile YENİ nesneler ürettiği için ikisi ayrı doldurulur. Log: "Haber taraması: N
+hissede güncel haber bulundu (tüm evren)".
+
+**(2) L2 cache kota sağlamlaştırma (mobil).** ÖLÇÜLDÜ: 1y penceresiyle (v31.9) bir sembol
+~29.5KB → 612 sembol ≈ **17.2MB** tek blob. Eskiden tüm cache tek seferde yazılıyor, hata
+`catch {}` ile SESSİZCE yutuluyordu. Mobil tarayıcılarda (iOS Safari / Android WebView /
+Capacitor) localStorage sınırı tipik ~5MB → yazma başarısız → **L2 hiç kalıcı olmuyor** →
+her açılışta 612 sembol sıfırdan. Düzeltme (`_scheduleL2Persist`):
+- **Kompakt serileştirme**: fiyatlar 4 ondalığa yuvarlanır (Yahoo'nun 17 haneli double'ları
+  yerine) → ölçülen 29.5KB → **26.6KB**/sembol.
+- **Bayt bütçesi**: mobil/Capacitor/PWA **1.2MB**, masaüstü **3.5MB**; en TAZE girdiler
+  (`_ts` sırası) bütçeye kadar yazılır.
+- **Kota-farkında yeniden deneme**: hata alırsa girdi sayısını yarılayıp 3 kez dener.
+- **Sessiz kalmaz**: kırpma/başarısızlık bir kez console'a bildirilir.
+
+**Dürüstlük düzeltmesi**: Bu masaüstü Chrome önizlemesinde 17MB'lık tek yazma **hata
+vermedi** (bu ortamın kotası cömert). Yani kota çöküşü **mobil-özel** — kullanıcının
+"mobilde düzgün çalışmıyor" raporuyla tutarlı; masaüstünde reprodüksiyon yapılamadı.
+**Bilinçli takas**: masaüstünde artık ~131 sembol kalıcı (öncesinde 612'ye kadar), ama
+her mutasyonda 17MB JSON serileştirme jank'i de ortadan kalkar; oturum-içi 30dk bellek
+cache (v31.12) zaten tarama içini kapsar, L2 yalnız yeniden-yükleme sıcak başlangıcıdır.
+Doğrulandı: 6 sembol kalıcı (160.8KB), fiyatlar 4 ondalık, forming bayrağı yok.
+Suite 458 pass, 0 lint error.

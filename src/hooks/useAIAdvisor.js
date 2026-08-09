@@ -2492,15 +2492,41 @@ export function useAIAdvisor(portfolio) {
       // hisseleri top-10'a tasiyabilir. newsIndex hoist edildi (dispatch + [1] reuse).
       let newsIndex = null;
       try {
-        const newsUniverse = picks.map(p => p.symbol);
-        if (newsUniverse.length) {
+        // v31.19: haber artık TÜM taranan hisseler için çekilir (sadece aday havuzu
+        // değil). fetchMarketNews aynı RSS akışlarını universe boyutundan BAĞIMSIZ
+        // çeker — universe yalnız sembol ÇIKARIMINI filtreler. Yani 612 sembollük
+        // whitelist ~bedava, üstelik çıkarımı DAHA doğru yapar (blacklist sezgisi
+        // yerine bilinen-ticker eşleşmesi). Böylece her hisse haber taşır.
+        const allSymbols = [...new Set([
+          ...(Array.isArray(results) ? results.map(r => r?.symbol) : []),
+          ...picks.map(p => p.symbol),
+        ].filter(Boolean))];
+        if (allSymbols.length) {
           const preNews = await Promise.race([
-            fetchMarketNews({ universe: newsUniverse, maxPerSource: 25 }),
+            fetchMarketNews({ universe: allSymbols, maxPerSource: 25 }),
             new Promise(res => setTimeout(() => res(null), 10_000)),
           ]).catch(() => null);
           if (preNews) {
             newsIndex = indexBySymbol(preNews);
             const CATALYST = ['insider_buy', 'buyback', 'fund_inflow', 'contract', 'catalyst_event'];
+            // (a) TÜM taranan hisselere haber alanlarını enjekte et — `picks` map ile
+            // YENİ nesneler ürettiği için results'a yazmak picks'e yansımaz; ikisi de
+            // ayrı dolduruluyor. Böylece UI/dispatch her hissenin haberini görebilir.
+            let _newsTagged = 0;
+            for (const r of (Array.isArray(results) ? results : [])) {
+              const e = r && newsIndex[r.symbol];
+              if (!e?.count) continue;
+              r.newsScore = e.score;
+              r.newsCount = e.count;
+              r.newsCategories = e.categories;
+              r.newsHeadline = e.topItem?.title || '';
+              r.newsHighImpact = e.highImpact;
+              _newsTagged++;
+            }
+            if (_newsTagged) {
+              pushLog({ type: 'info', msg: `Haber taraması: ${_newsTagged} hissede güncel haber bulundu (tüm evren)` });
+            }
+            // (b) Aday havuzuna ayrıca confidence kataliz deltası uygula (seçimi etkiler).
             for (const r of picks) {
               const e = newsIndex[r.symbol];
               if (!e?.count) continue;

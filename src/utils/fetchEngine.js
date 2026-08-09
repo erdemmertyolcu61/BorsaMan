@@ -80,6 +80,30 @@ function _hydrateL2Cache() {
   } catch { /* corrupt cache → ignore */ }
 }
 
+// v31.19 QUOTA-AWARE L2 PERSIST — ÖLÇÜLDÜ: 1y penceresiyle (v31.9) bir sembol
+// ~29.5KB; 612 sembol => ~17MB. localStorage'ın sert sınırı ~5MB. Eskiden TÜM cache
+// tek blob halinde yazılıyordu → QuotaExceededError → `catch {}` içinde SESSİZCE
+// yutuluyordu → L2 hiç kalıcı olmuyordu (özellikle mobilde: her açılışta 612 sembol
+// sıfırdan). Çözüm: (1) sayıları yuvarlayarak kompakt serileştir, (2) BAYT BÜTÇESİ
+// ile en taze girdileri yaz, (3) quota hatasında küçülterek yeniden dene, (4) sessiz
+// kalma — bir kez uyar. Kısmi cache, hiç cache olmamasından çok daha iyidir.
+const _isSmallStore = (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || ''))
+  || _isCapacitor || _isPWA;
+const L2_BYTE_BUDGET = _isSmallStore ? 1_200_000 : 3_500_000; // ~1.2MB mobil / ~3.5MB masaüstü
+let _l2QuotaWarned = false;
+
+// Round floats so the blob isn't bloated by Yahoo's 17-digit doubles.
+function _compactBar(b) {
+  if (!b || typeof b !== 'object') return b;
+  const r = (v, d = 4) => (typeof v === 'number' && Number.isFinite(v) ? +v.toFixed(d) : v);
+  const { _isForming, ...rest } = b; // forming bars are session-live only
+  return {
+    ...rest,
+    open: r(rest.open), high: r(rest.high), low: r(rest.low), close: r(rest.close),
+    volume: typeof rest.volume === 'number' ? Math.round(rest.volume) : rest.volume,
+  };
+}
+
 let _l2WriteScheduled = false;
 function _scheduleL2Persist() {
   if (_l2WriteScheduled) return;
@@ -94,20 +118,43 @@ function _scheduleL2Persist() {
         entries.sort((a, b) => (b[1]._ts || 0) - (a[1]._ts || 0));
         for (const [k] of entries.slice(L2_MAX_ENTRIES)) delete _cache[k];
       }
-      // Strip _isForming bars before persisting: forming bars are session-live only.
-      // If saved with _isForming=true, they come back as hollow candles on next load.
-      const cacheCopy = {};
-      for (const [k, v] of Object.entries(_cache)) {
-        if (!v || !Array.isArray(v.prices)) { cacheCopy[k] = v; continue; }
-        const cleanPrices = v.prices.map(b => {
-          if (!b || !b._isForming) return b;
-          const { _isForming, ...rest } = b;  
-          return rest;
-        });
-        cacheCopy[k] = { ...v, prices: cleanPrices };
+      // Newest-first so the byte budget keeps the freshest symbols.
+      const ordered = Object.entries(_cache).sort((a, b) => (b[1]._ts || 0) - (a[1]._ts || 0));
+      const build = (limit) => {
+        const copy = {};
+        let bytes = 0;
+        let n = 0;
+        for (const [k, v] of ordered) {
+          if (n >= limit) break;
+          const entry = (v && Array.isArray(v.prices))
+            ? { ...v, prices: v.prices.map(_compactBar) }
+            : v;
+          const size = JSON.stringify(entry).length + k.length + 4;
+          if (bytes + size > L2_BYTE_BUDGET) break;  // bütçe doldu — dur
+          copy[k] = entry; bytes += size; n++;
+        }
+        return { copy, n };
+      };
+
+      let limit = ordered.length;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { copy, n } = build(limit);
+        try {
+          localStorage.setItem(L2_CACHE_KEY, JSON.stringify(copy));
+          if (n < ordered.length && !_l2QuotaWarned) {
+            _l2QuotaWarned = true;
+            console.info(`[fetchEngine] L2 cache bayt bütçesiyle kırpıldı: ${n}/${ordered.length} sembol kalıcı (limit ${(L2_BYTE_BUDGET / 1e6).toFixed(1)}MB).`);
+          }
+          return;
+        } catch {
+          limit = Math.max(1, Math.floor((n || limit) / 2)); // quota → küçült, yeniden dene
+        }
       }
-      localStorage.setItem(L2_CACHE_KEY, JSON.stringify(cacheCopy));
-    } catch { /* quota or unavailable */ }
+      if (!_l2QuotaWarned) {
+        _l2QuotaWarned = true;
+        console.warn('[fetchEngine] L2 cache localStorage kotasına sığmadı — kalıcı önbellek devre dışı (oturum-içi bellek cache çalışmaya devam eder).');
+      }
+    } catch { /* unavailable */ }
   }, 2000);
 }
 
