@@ -119,6 +119,13 @@ const CATEGORY_RULES = [
   { cat: 'sector_bull', label: 'Sektorel Yukselis',
     pat: /(sektor.*pozitif|sektor.*rekor|sektor.*yukselis|hisselerinde\s+rali)/i,
     weight: 2 },
+  // CATALYST EVENT — hisseye ÖZEL pozitif olay (finansal kategorilere girmeyen).
+  // Kullanici istegi: "Salah transferi sonrasi TSPOR %6 artti" gibi olay-haberleri
+  // yakala (spor kulubu transferi, ortaklik/sponsorluk, satin alma/birlesme, yeni
+  // yatirim/kapasite/urun, endekse dahil, lisans/patent, rekor ciro/ihracat).
+  { cat: 'catalyst_event', label: 'Kataliz Olay',
+    pat: /(transfer|imza\s+att|kadrosuna\s+kat|yildiz\s+oyuncu|yildiz\s+transfer|sozlesme\s+uzat|is\s?birligi|stratejik\s+ortak|sponsorluk|sponsor\s+anlas|satin\s+ald|devral|birlesme|hisse\s+devral|yeni\s+yatirim|kapasite\s+artir|fabrika\s+ac|tesis\s+ac|yeni\s+urun|lansman|endekse\s+dahil|endekse\s+gir|lisans\s+ald|ruhsat\s+ald|patent\s+ald|rekor\s+ciro|rekor\s+satis|ihracat\s+rekor)/i,
+    weight: 4 },
 ];
 
 // Strip Turkish diacritics + lowercase for tolerant matching
@@ -163,7 +170,11 @@ export function extractSymbols(text, universe = null) {
 // ──────────────────────────────────────────────────────────────
 export function classifyNewsItem(item) {
   const text = `${item.title || ''} ${item.summary || ''}`;
-  const lc = text.toLocaleLowerCase('tr-TR');
+  // v31.18: diyakritikleri sıyırıp eşleştir — kurallar ASCII (sozlesme/imza) yazılı
+  // ama haber metni Türkçe (sözleşme/imzâ). Önce toLocaleLowerCase('tr-TR') edilen
+  // metin ASCII kuralla EŞLEŞMİYORDU → kategoriler sessizce kaçıyordu. _normalize
+  // ikisini de aynı zemine çeker (ı→i, ş→s, ...), böylece kurallar gerçekten ateşlenir.
+  const lc = _normalize(text);
   const categories = [];
   let sentiment = 0;
   for (const rule of CATEGORY_RULES) {

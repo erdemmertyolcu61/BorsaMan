@@ -1306,3 +1306,24 @@ Rules:
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
 - For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
 - After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
+
+## İşlem Yönetim Planı + Kataliz-Olay Haberleri (v31.18)
+
+Kullanıcı iki şey istedi: (1) "hedef/stop + hisseyi nasıl tutacağımı tam belirle", (2) "Salah
+transferi sonrası TSPOR %6 arttı gibi hisse-özel olay haberlerini de tara".
+
+- **`tradePlan.js`** (saf, 7 test): `buildTradePlan(sig)` → deterministik yönetim planı:
+  KADEMELİ ALIM (%40 giriş / %30 geri çekiliş = entry−0.5ATR / %30 kırılım = entry+0.5ATR),
+  STOP YÖNETİMİ (başlangıç stop → +%3 breakeven → +%5 üstü %50 kilit + trailing; useLivePrices
+  sabitleriyle birebir), KADEMELİ KÂR ALMA (T1 %40 / T2 %30 / T3 veya trailing %30),
+  geçersizleşme (stop altı günlük kapanış), tutma ufku. Sell için yön-simetrik.
+  `AnalyzeTab` İşlem Kurulumu kutusunda "📋 İŞLEM YÖNETİM PLANI" olarak render (gerçek KCHOL
+  verisiyle doğrulandı).
+- **`marketNewsEngine` kataliz-olay kategorisi**: yeni `catalyst_event` (weight +4) — transfer/
+  imza/kadroya katma, ortaklık/sponsorluk, satın alma/birleşme, yeni yatırım/kapasite/ürün,
+  endekse dahil, lisans/patent, rekor ciro/ihracat. TSPOR/Salah tarzı olaylar artık yakalanıp
+  puanlanıyor. Ayrıca `classifyNewsItem` artık `_normalize` ile eşleştiriyor → ASCII kurallar
+  (sozlesme/imza) Türkçe metinle (sözleşme/imzâ) EŞLEŞİYOR (önceden diyakritik yüzünden sessizce
+  kaçıyordu — tüm kategorileri iyileştirir). Scan'in CATALYST listesine `catalyst_event` eklendi
+  (v31.8 haber-seçim +5 boost). Tekil analiz (v31.7) ve tarama (v31.8) otomatik faydalanır.
+- Test: `tradePlan.test.js` (7) + `marketNewsEngine.test.js` (+2: transfer, diyakritik); suite 458 pass, 0 lint error.

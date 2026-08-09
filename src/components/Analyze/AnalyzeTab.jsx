@@ -3,6 +3,7 @@ import { fetchData, fetchFundamentals, fetchBigParaBatchPrices } from '../../uti
 import { calcPosition, getUnifiedAnalysis } from '../../utils/signals.js';
 import { getUnifiedDecision } from '../../utils/unifiedDecision.js';
 import { analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
+import { buildTradePlan } from '../../utils/tradePlan.js';
 import { fetchIsYatirimFinancials } from '../../utils/isyatirimEngine.js';
 import { fetchKAPDisclosures, calcKAPSentiment } from '../../utils/kapEngine.js';
 import { runMonteCarloAsync } from '../../utils/monteCarlo.js';
@@ -557,6 +558,43 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
               {gInd?.chandelier?.longStop && <div className="tr-row"><span className="tr-l">Chandelier Stop</span><span className="tr-v" style={{ color: 'var(--orange)' }}>{(gInd.chandelier.longStop || 0).toFixed(2)} TL</span></div>}
               <div className="tr-row"><span className="tr-l">Tutma Süresi</span><span className="tr-v" style={{ color: 'var(--purple)' }}>{gSig.holdText || '—'}</span></div>
               {gInd?.adx != null && <div className="tr-row"><span className="tr-l">Piyasa Modu</span><span className="tr-v" style={{ color: gInd.adx > 25 ? 'var(--green)' : 'var(--yellow)' }}>{gInd.adx > 25 ? 'TREND (ADX ' + (gInd.adx || 0).toFixed(0) + ')' : 'YATAY (ADX ' + (gInd.adx || 0).toFixed(0) + ')'}</span></div>}
+
+              {/* v31.18: İŞLEM YÖNETİM PLANI — kademeli alım + stop yönetimi + kâr alma */}
+              {(() => {
+                const plan = buildTradePlan(gSig);
+                if (!plan) return null;
+                const fmt = (v) => v == null ? 'trailing' : `${v.toFixed(2)} TL`;
+                const Section = ({ title, color, items }) => (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 9, fontWeight: 800, color, letterSpacing: 0.4, marginBottom: 4 }}>{title}</div>
+                    {items.map((it, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 9.5, lineHeight: 1.5, color: 'var(--t2)' }}>
+                        <span style={{ color, fontWeight: 700, minWidth: 46 }}>{it.tag}</span>
+                        <span>{it.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+                return (
+                  <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--cyan)', marginBottom: 2 }}>📋 İŞLEM YÖNETİM PLANI</div>
+                    <Section title="① KADEMELİ ALIM" color="var(--green)" items={plan.entrySteps.map(s => ({
+                      tag: `%${s.fraction}`, text: `${fmt(s.at)} — ${s.note}`,
+                    }))} />
+                    <Section title="② STOP YÖNETİMİ" color="var(--orange)" items={plan.stopSteps.map(s => ({
+                      tag: s.trigger ? `${s.trigger.toFixed(2)}` : 'başta', text: s.note,
+                    }))} />
+                    <Section title="③ KADEMELİ KÂR ALMA" color="var(--green)" items={plan.exitSteps.map(s => ({
+                      tag: `%${s.fraction}`, text: `${fmt(s.at)} — ${s.note}`,
+                    }))} />
+                    <div style={{ marginTop: 6, fontSize: 9, color: 'var(--t3)', lineHeight: 1.5 }}>
+                      <b style={{ color: 'var(--red)' }}>Geçersizleşme:</b> {plan.invalidation.toFixed(2)} TL günlük kapanış {plan.isBuy ? 'altında' : 'üstünde'} → setup bozuldu, çık.
+                      {plan.holdHorizon ? <> · <b style={{ color: 'var(--purple)' }}>Ufuk:</b> {plan.holdHorizon}</> : null}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Long-term investment view */}
               {gSig.longTermView && (
                 <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 5, background: 'var(--bg0)', borderLeft: '3px solid ' + gSig.longTermView.color }}>

@@ -124,6 +124,26 @@ describe('classifyNewsItem', () => {
     expect(r.sentiment).toBeLessThanOrEqual(10);
     expect(r.sentiment).toBeGreaterThanOrEqual(-10);
   });
+
+  it('v31.18: catches a company catalyst event (transfer) as positive', () => {
+    const r = classifyNewsItem({
+      title: 'Trabzonspor yildiz oyuncuyu transfer etti, imza atti',
+      summary: 'Kadrosuna yeni transfer',
+      date: new Date().toISOString(),
+    });
+    expect(r.categories.map(c => c.cat)).toContain('catalyst_event');
+    expect(r.sentiment).toBeGreaterThan(0);
+  });
+
+  it('v31.18: matches Turkish diacritics via normalization (sözleşme/işbirliği)', () => {
+    const r = classifyNewsItem({
+      title: 'Şirket stratejik ortaklık ve işbirliği anlaşması imzaladı',
+      summary: 'Yeni yatırım ve kapasite artırımı',
+      date: new Date().toISOString(),
+    });
+    // diacritic text must now fire the catalyst rule (previously silently missed)
+    expect(r.categories.map(c => c.cat)).toContain('catalyst_event');
+  });
 });
 
 describe('indexBySymbol', () => {

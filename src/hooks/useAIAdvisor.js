@@ -2500,7 +2500,7 @@ export function useAIAdvisor(portfolio) {
           ]).catch(() => null);
           if (preNews) {
             newsIndex = indexBySymbol(preNews);
-            const CATALYST = ['insider_buy', 'buyback', 'fund_inflow', 'contract'];
+            const CATALYST = ['insider_buy', 'buyback', 'fund_inflow', 'contract', 'catalyst_event'];
             for (const r of picks) {
               const e = newsIndex[r.symbol];
               if (!e?.count) continue;
