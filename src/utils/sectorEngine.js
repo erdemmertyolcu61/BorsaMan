@@ -134,3 +134,25 @@ export function calcSectorRS(sectorData, indexPrices, lookback = 20) {
   const rsRatio = benchReturn !== 0 ? avgSectorReturn / Math.abs(benchReturn) : avgSectorReturn > 0 ? 1.5 : 0.5;
   return Math.min(100, Math.max(0, Math.round(50 + (rsRatio - 1) * 50)));
 }
+
+// ── SECTOR TILT NORMALIZATION (v31.20) — pure, testable ───────────────────
+// BUG (measured): useAIAdvisor's enhancePick fed a RAW sector score into
+//   sectorComponent = (50 + sectorScore * 8) * 0.10
+// while that formula is designed for a small tilt in the -3..+3 range (giving a
+// ~2.6-7.4 component, i.e. the intended ~10% weight). The map was filled with
+// `avgScore` (~40-60) — and both `avgScore` and `strength` are 0-100-style
+// centered-at-50 scales — so the component came out at 37-53: roughly 7x its
+// design weight, dominating the composite. Real scan evidence: GOZDE (score 46,
+// cls='neutral') scored confidence 97/grade A on a sector component of 42, ranking
+// ABOVE SOKM (score 62.6, a genuine buy) which got 5. Confidence stopped measuring
+// setup quality and started measuring "is my sector in the map".
+//
+// This converts any centered-at-50 sector metric into the intended small tilt.
+// Works for avgScore (~40-60) and strength (0-100) alike; unknown → 0 (neutral).
+export const SECTOR_TILT_CLAMP = 3;
+
+export function normalizeSectorTilt(rawSectorScore) {
+  if (rawSectorScore == null || !Number.isFinite(rawSectorScore)) return 0;
+  const tilt = (rawSectorScore - 50) / 3.5;   // 50 = neutral centre
+  return Math.max(-SECTOR_TILT_CLAMP, Math.min(SECTOR_TILT_CLAMP, +tilt.toFixed(2)));
+}

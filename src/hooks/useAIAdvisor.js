@@ -4,7 +4,8 @@ import { analyzeComprehensiveFinancials, fundamentalQualityGate } from '../utils
 import { genSignal, extractFiredSignals } from '../utils/signals.js';
 import { calcAll } from '../utils/indicators.js';
 import { getStockList, SECTORS } from '../utils/constants.js';
-import { calcSectorMetrics, rankSectors } from '../utils/sectorEngine.js';
+import { calcSectorMetrics, rankSectors, normalizeSectorTilt } from '../utils/sectorEngine.js';
+import { gradeFromConfidence, tierFromConfidence } from '../utils/confidenceGrade.js';
 import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
@@ -2054,7 +2055,12 @@ export function useAIAdvisor(portfolio) {
       // Compute composite confidence + entry quality for each pick
       const enhancePick = (p) => {
         const baseScore = p.score || 50;
-        const sectorScore = sectorStrengthMap[p.sector] || 0; // -3 to +3 typical
+        // v31.20 BUG FIX: sectorStrengthMap holds avgScore (~40-60, centred at 50),
+        // but the sectorComponent formula below expects a small -3..+3 TILT. Feeding
+        // the raw value made the sector component ~7x its design weight (37-53 instead
+        // of 2.6-7.4), so "which sector am I in" outweighed the actual setup quality.
+        // normalizeSectorTilt re-centres any 50-based metric into the intended tilt.
+        const sectorScore = normalizeSectorTilt(sectorStrengthMap[p.sector]); // -3..+3
         const newsBoost = (p.newsScore || 0) * 1.2;
         const isSell = p.cls === 'sell';
 
@@ -2190,12 +2196,10 @@ export function useAIAdvisor(portfolio) {
         if (p._stagnantPick) confidence = Math.max(5, confidence - 8);
 
         // Confidence grade: A (>= 75), B (>= 65), C (>= 55), D (< 55)
-        const grade = confidence >= 75 ? 'A' : confidence >= 65 ? 'B' : confidence >= 55 ? 'C' : 'D';
+        const grade = gradeFromConfidence(confidence);
 
         // Skor seviyesi (UI'da "STRONG/GOOD/WEAK" rozeti icin)
-        const tier = confidence >= 75 ? 'STRONG'
-          : confidence >= 65 ? 'GOOD'
-          : confidence >= 55 ? 'FAIR' : 'WEAK';
+        const tier = tierFromConfidence(confidence);
 
         return {
           ...p,
@@ -2466,8 +2470,8 @@ export function useAIAdvisor(portfolio) {
           if (!stat) continue; // örnek yok → dokunma
           const factor = Math.max(0.85, Math.min(1.15, 1 + (stat.expectancy / 100) * 3));
           p.confidence = Math.max(0, Math.min(100, Math.round((p.confidence || 50) * factor)));
-          p.grade = p.confidence >= 75 ? 'A' : p.confidence >= 65 ? 'B' : p.confidence >= 55 ? 'C' : 'D';
-          p.tier = p.confidence >= 75 ? 'STRONG' : p.confidence >= 65 ? 'GOOD' : p.confidence >= 55 ? 'FAIR' : 'WEAK';
+          p.grade = gradeFromConfidence(p.confidence);
+          p.tier = tierFromConfidence(p.confidence);
           p._liveEdge = { winRate: stat.winRate, expectancy: stat.expectancy, n: stat.n };
           _calibrated++;
         }
@@ -2549,8 +2553,8 @@ export function useAIAdvisor(portfolio) {
                 r.confidenceBreakdown.news = (r.confidenceBreakdown.news || 0) + Math.round(d);
               }
               // Grade/tier yeniden hesapla (haber sonrasi)
-              r.grade = r.confidence >= 75 ? 'A' : r.confidence >= 65 ? 'B' : r.confidence >= 55 ? 'C' : 'D';
-              r.tier = r.confidence >= 75 ? 'STRONG' : r.confidence >= 65 ? 'GOOD' : r.confidence >= 55 ? 'FAIR' : 'WEAK';
+              r.grade = gradeFromConfidence(r.confidence);
+              r.tier = tierFromConfidence(r.confidence);
             }
           }
         }
@@ -2595,8 +2599,8 @@ export function useAIAdvisor(portfolio) {
                 p._fundPenalty = gate.penalty;
                 p.confidence = Math.max(0, Math.min(100, (p.confidence || 50) - gate.penalty));
                 if (p.confidenceBreakdown) p.confidenceBreakdown.fundamental = -gate.penalty;
-                p.grade = p.confidence >= 75 ? 'A' : p.confidence >= 65 ? 'B' : p.confidence >= 55 ? 'C' : 'D';
-                p.tier = p.confidence >= 75 ? 'STRONG' : p.confidence >= 65 ? 'GOOD' : p.confidence >= 55 ? 'FAIR' : 'WEAK';
+                p.grade = gradeFromConfidence(p.confidence);
+                p.tier = tierFromConfidence(p.confidence);
               }
             } catch { /* per-symbol best-effort */ }
           }));

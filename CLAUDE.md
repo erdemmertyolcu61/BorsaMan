@@ -1361,3 +1361,46 @@ her mutasyonda 17MB JSON serileştirme jank'i de ortadan kalkar; oturum-içi 30d
 cache (v31.12) zaten tarama içini kapsar, L2 yalnız yeniden-yükleme sıcak başlangıcıdır.
 Doğrulandı: 6 sembol kalıcı (160.8KB), fiyatlar 4 ondalık, forming bayrağı yok.
 Suite 458 pass, 0 lint error.
+
+## Sektör Birim-Uyuşmazlığı Bug'ı + Grade Yeniden Kalibrasyonu (v31.20)
+
+Kullanıcı: "çok fazla detay ekledik, sistem belki bu stresten hisse bulamıyor." Hipotez
+ÖLÇÜLDÜ (gerçek tarama, 111 sonuç) — huni:
+
+| Aşama | Kalan |
+|---|---|
+| Taranan | 111 |
+| SAT olmayan | 96 |
+| cls/skor kapısı (≥45) | 46 |
+| ATR + likidite + **yapısal guard'lar** | **46 (SIFIR eleme)** |
+| skor ≥ 54 | 19 |
+
+**Bulgu**: Korkulan "aşırı detay" guard'ları (confirmed-bearish, distribution-trap,
+exhaustion, weak-rally) hiçbir hisseyi elemedi. Sorun filtre SAYISI değildi.
+
+**Gerçek bug — birim uyuşmazlığı**: `sectorStrengthMap[s.sector] = s.avgScore` (~40-60,
+50 merkezli) ama `enhancePick` bunu `-3..+3` TILT bekleyen formüle veriyordu:
+`sectorComponent = (50 + sectorScore*8) * 0.10`. Tasarım: 2.6-7.4 (≈%10 ağırlık).
+Gerçek: **37-53** → tasarımın ~7 katı, composite'i eziyordu. Kanıt (canlı tarama):
+GOZDE (skor 46, cls='neutral') sektör bileşeni 42 ile **confidence 97 / grade A** aldı ve
+SOKM'u (skor 62.6, gerçek AL, bileşen 5) geçti. Confidence "kurulum ne kadar iyi"yi değil
+"sektörüm haritada mı"yı ölçüyordu.
+
+**Düzeltme**:
+- `sectorEngine.normalizeSectorTilt(raw)` (saf, 6 test): 50-merkezli herhangi bir metriği
+  (`avgScore` ~40-60 veya `strength` 0-100) tasarlanan ±3 tilt'e indirger. Doğrulandı:
+  GOZDE 42→4.1 (conf 97→59), TUPRS 47→5.6 (conf 89→48); haritada olmayanlar 5→2.6.
+- **Grade yeniden kalibrasyonu**: şişme kalkınca tüm confidence'lar düştü; eski 75/65/55
+  eşikleri neredeyse her şeyi D yapıp paneli boşaltırdı (kullanıcının şikayetinin tersi).
+  Yeni `confidenceGrade.js` (saf, 4 test) TEK KAYNAK: **A≥68 / B≥58 / C≥48**. Eşikler
+  `useAIAdvisor` içinde **5 yerde kopyalanmıştı** → 8 çağrı tek fonksiyona bağlandı.
+
+**Dürüst sınır**: yeni eşikler KÜÇÜK canlı örnekle (kısmi 111-sembollük taramadan 5 pick)
++ composite tasarım maksimumlarıyla kalibre edildi; büyük-örnek optimumu değil. Bilinçli
+olarak biraz geçirgen — asıl kalite barı rejim kapısının skor tabanı olarak duruyor.
+Veri biriktikçe yeniden ayarlanmalı.
+
+**Ölçüm hatası düzeltmesi**: İlk analizimde "confidence≥55 olan 0" diye rapor ettim; bu
+YANLIŞTI — `results` girdilerinde `enhancePick` hiç çalışmaz, confidence her zaman 0'dır.
+Doğru ölçüm `topPicks` üzerinden yapıldı ve gerçek bug'ı ortaya çıkardı.
+Suite 468 pass, 0 lint error.
