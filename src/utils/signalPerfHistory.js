@@ -44,3 +44,60 @@ export function summarizeDailyPerf(dailyPerf) {
   }
   return { days: arr.length, latest: arr[arr.length - 1].pct, best, worst, upDays, downDays };
 }
+
+// ── BACKFILL FROM HISTORICAL BARS (v31.21) ────────────────────────────────
+// appendDailyPerf only captures a point while the app is OPEN. A signal recorded
+// 3 days ago therefore had an empty history — but the user wants to see each day's
+// change for it. Daily closes are already available from the price engine, so the
+// series can be reconstructed exactly: for every trading day at/after the entry,
+// the direction-adjusted return of that day's CLOSE vs the entry price.
+
+const dayKeyOf = (d) => {
+  const dt = d instanceof Date ? d : new Date(d);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString().slice(0, 10);
+};
+
+/**
+ * Rebuild the day-by-day series for a signal from its symbol's daily bars.
+ * @param {object} signal - { entryPrice|price, timestamp, cls }
+ * @param {Array<{date:any, close:number}>} bars - daily bars, oldest → newest
+ * @param {number} [maxDays=30]
+ * @returns {Array<{d:string,pct:number}>}
+ */
+export function backfillDailyPerf(signal, bars, maxDays = 30) {
+  const entry = signal?.entryPrice ?? signal?.price;
+  if (!entry || !(entry > 0) || !Array.isArray(bars) || !bars.length) return [];
+  const startKey = dayKeyOf(signal?.timestamp);
+  if (!startKey) return [];
+  const dir = signal?.cls === 'sell' ? -1 : 1;
+  const out = [];
+  for (const b of bars) {
+    const k = dayKeyOf(b?.date);
+    if (!k || k < startKey) continue;                       // before the signal
+    const close = b?.close;
+    if (!Number.isFinite(close) || close <= 0) continue;
+    out.push({ d: k, pct: Math.round(((close - entry) / entry) * 100 * dir * 100) / 100 });
+  }
+  return out.slice(-maxDays);
+}
+
+/**
+ * Merge a backfilled series with the live-captured one.
+ * Backfill supplies missing past days (using official closes); any day already
+ * captured live is kept ONLY for the most recent day (today's intraday value),
+ * because a completed day's close is the more accurate record.
+ */
+export function mergeDailyPerf(existing, backfilled, maxDays = 30) {
+  const cur = Array.isArray(existing) ? existing.filter(p => p && typeof p.d === 'string') : [];
+  const back = Array.isArray(backfilled) ? backfilled.filter(p => p && typeof p.d === 'string') : [];
+  if (!back.length) return cur.slice(-maxDays);
+  const byDay = new Map();
+  for (const p of back) byDay.set(p.d, p);                  // closes first
+  const latestLive = cur.length ? cur[cur.length - 1] : null;
+  for (const p of cur) if (!byDay.has(p.d)) byDay.set(p.d, p); // keep live-only days
+  if (latestLive) {
+    const latestBackKey = back[back.length - 1].d;
+    if (latestLive.d >= latestBackKey) byDay.set(latestLive.d, latestLive); // today = live
+  }
+  return [...byDay.values()].sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0)).slice(-maxDays);
+}

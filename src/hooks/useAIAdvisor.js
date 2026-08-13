@@ -850,14 +850,14 @@ export function useAIAdvisor(portfolio) {
       const withSymTimeout = (fn, ms = symTimeoutMs) =>
         Promise.race([fn(), new Promise(r => setTimeout(() => r(null), ms))]);
 
-      // Chunk-based scanning (matches original .exe behavior)
-      for (let i = 0; i < symbols.length; i += SCAN_CONCURRENCY) {
-        const chunk = symbols.slice(i, i + SCAN_CONCURRENCY);
-        const chunkResults = await Promise.all(chunk.map(async (sym) => {
+      // v31.21: per-symbol islem HOIST edildi — yeniden-deneme gecisi ayni mantigi
+      // tekrar kullanabilsin diye. `failedSyms` veri donmeyen sembolleri toplar.
+      const failedSyms = new Set();
+      const processSymbol = async (sym, tmoMs = symTimeoutMs) => {
           try {
             // v31.9: 6mo → 1y. 6 ay ~126 bar → MA200 hesaplanamiyordu (hep null);
             // 1y ~252 bar ile MA200 + uzun trend yapisi + 60g RS ufku calisir.
-            const data = await withSymTimeout(() => fetchSingle(sym, '1y', '1d', true));
+            const data = await withSymTimeout(() => fetchSingle(sym, '1y', '1d', true), tmoMs);
             if (data && data.prices && data.prices.length >= 20) {
               // ── BATCH OVERLAY ──
               // Per-sembol applyLiveOverlay() yerine batch'ten gelen canli fiyati uygula.
@@ -1159,13 +1159,63 @@ export function useAIAdvisor(portfolio) {
           } catch (e) {
             // swallow individual fetch errors
           }
+          failedSyms.add(sym);   // veri gelmedi → yeniden-deneme listesine
           return null;
-        }));
+      };
+
+      // Chunk-based scanning (matches original .exe behavior)
+      for (let i = 0; i < symbols.length; i += SCAN_CONCURRENCY) {
+        const chunk = symbols.slice(i, i + SCAN_CONCURRENCY);
+        const chunkResults = await Promise.all(chunk.map(s => processSymbol(s)));
         chunkResults.forEach(r => { if (r) results.push(r); });
         done = Math.min(i + SCAN_CONCURRENCY, symbols.length);
         setScanProgress({ done, total: symbols.length });
         if (i + SCAN_CONCURRENCY < symbols.length) await sleep(CHUNK_DELAY_MS);
       }
+
+      // ── v31.21 YENIDEN-DENEME GECISI — "tum hisseleri tarayabilmeliyiz" ──
+      // Ilk gecişte timeout/proxy-hatasi yuzunden veri donmeyen semboller sessizce
+      // dusuyordu (olculdu: bir taramada 612'den yalniz 111 sonuc). Kullanici tarama
+      // SURESININ onemli olmadigini belirtti → basarisizlari DAHA UZUN timeout ve
+      // DAHA DUSUK eszamanlilikla (rate-limit/circuit-breaker rahatlasin) tekrar dene.
+      if (failedSyms.size) {
+        // SINIRLI retry: ilk surumde sinir yoktu ve olculdu — cok sembol basarisiz
+        // olunca gecis 15+ dakika suruyordu (uzun timeout x dusuk eszamanlilik).
+        // Artik UC sert sinir var: sembol tavani, duvar-saati butcesi ve daha kisa
+        // per-sembol timeout. Butce dolarsa kalanlar DURUSTCE raporlanir, sessizce
+        // dusurulmez — kapsama gorunur kalir.
+        const RETRY_MAX_SYMBOLS = 200;
+        const RETRY_BUDGET_MS = 90_000;
+        const RETRY_CONCURRENCY = Math.max(6, Math.floor(SCAN_CONCURRENCY / 2));
+        const RETRY_TIMEOUT_MS = Math.round(symTimeoutMs * 1.5);
+        const allFailed = [...failedSyms];
+        const retryList = allFailed.slice(0, RETRY_MAX_SYMBOLS);
+        const skippedUpfront = allFailed.length - retryList.length;
+        failedSyms.clear();
+        pushLog({ type: 'info', msg: `Yeniden deneme: ${allFailed.length} sembol veri dondurmedi → ${retryList.length} tanesi tekrar deneniyor (en fazla ${RETRY_BUDGET_MS / 1000}s)` });
+        await sleep(800);   // circuit-breaker/proxy nefes alsin
+        const retryStart = Date.now();
+        let budgetHit = false;
+        for (let i = 0; i < retryList.length; i += RETRY_CONCURRENCY) {
+          if (Date.now() - retryStart > RETRY_BUDGET_MS) { budgetHit = true; break; }
+          const chunk = retryList.slice(i, i + RETRY_CONCURRENCY);
+          const rr = await Promise.all(chunk.map(s => processSymbol(s, RETRY_TIMEOUT_MS)));
+          rr.forEach(r => { if (r) results.push(r); });
+          setScanProgress({ done: symbols.length, total: symbols.length });
+          if (i + RETRY_CONCURRENCY < retryList.length) await sleep(CHUNK_DELAY_MS);
+        }
+        const recovered = results.length - (symbols.length - allFailed.length);
+        const stillMissing = symbols.length - results.length;
+        pushLog({
+          type: stillMissing ? 'warn' : 'info',
+          msg: `Kapsama: ${results.length}/${symbols.length} sembol (yeniden denemede +${Math.max(0, recovered)} kurtarildi`
+            + `${stillMissing ? `, ${stillMissing} veri vermiyor` : ''}`
+            + `${budgetHit ? ' — sure butcesi doldu' : ''}${skippedUpfront ? `, ${skippedUpfront} tavan disi` : ''})`,
+        });
+      } else {
+        pushLog({ type: 'info', msg: `Kapsama: ${results.length}/${symbols.length} sembol tarandi (tam)` });
+      }
+      console.info(`[AI Advisor] Kapsama: ${results.length}/${symbols.length} (basarisiz: ${failedSyms.size})`);
 
       // ── Market sentiment ──
       const buys = results.filter(r => r.cls === 'buy').length;

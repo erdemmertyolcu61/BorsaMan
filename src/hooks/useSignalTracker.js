@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
 import { buildCalibrationModel, setSignalCalibration } from '../utils/signalCalibration.js';
 import { setSignalReliabilityHints } from '../utils/signals.js';
-import { appendDailyPerf } from '../utils/signalPerfHistory.js';
+import { appendDailyPerf, backfillDailyPerf, mergeDailyPerf } from '../utils/signalPerfHistory.js';
+import { fetchSingle } from '../utils/fetchEngine.js';
 
 let globalNotificationHandler = null;
 
@@ -520,6 +521,42 @@ export function useSignalTracker() {
     checkSignals();
     checkTimerRef.current = setInterval(checkSignals, 10 * 60 * 1000);
     return () => { if (checkTimerRef.current) clearInterval(checkTimerRef.current); };
+  }, [signals.length]);
+
+  // ── v31.21: GEÇMİŞ GÜN-GÜN DOLDURMA (backfill) ──────────────────────────
+  // appendDailyPerf sadece uygulama AÇIKKEN nokta yakalar → 3 gün önce kaydedilen
+  // bir sinyalin gün-gün geçmişi boş kalıyordu. Kullanıcı o günlerin değişimini
+  // görmek istiyor. Günlük kapanışlar zaten fiyat motorunda var: eksik günü olan
+  // aktif sinyaller için tarihsel barlardan seriyi BİR KEZ yeniden kur.
+  const backfilledRef = useRef(new Set());
+  useEffect(() => {
+    const run = async () => {
+      const needs = signals.filter(s => {
+        if (!s || s.status !== 'active' || !s.symbol) return false;
+        if (backfilledRef.current.has(s.id)) return false;
+        const ageDays = Math.floor((Date.now() - new Date(s.timestamp).getTime()) / TRADING_DAY_MS);
+        if (ageDays < 1) return false;                                  // aynı gün → geçmiş yok
+        const have = Array.isArray(s.dailyPerf) ? s.dailyPerf.length : 0;
+        return have <= ageDays;                                         // eksik gün var
+      }).slice(0, 12);                                                  // tur başına en fazla 12 sembol
+      if (!needs.length) return;
+
+      const updates = {};
+      for (const s of needs) {
+        backfilledRef.current.add(s.id);                                // tekrar denemeyi engelle
+        try {
+          const data = await fetchSingle(s.symbol, '3mo', '1d', true);
+          const bars = data?.prices;
+          if (!Array.isArray(bars) || !bars.length) continue;
+          const merged = mergeDailyPerf(s.dailyPerf, backfillDailyPerf(s, bars));
+          if (merged.length) updates[s.id] = { dailyPerf: merged };
+        } catch { /* best-effort — doldurma başarısız olursa canlı yakalama sürer */ }
+      }
+      if (Object.keys(updates).length) {
+        setSignals(prev => prev.map(x => (updates[x.id] ? { ...x, ...updates[x.id] } : x)));
+      }
+    };
+    run();
   }, [signals.length]);
 
   const stats = (() => calcStats(signals))();

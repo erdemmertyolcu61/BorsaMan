@@ -1404,3 +1404,38 @@ Veri biriktikçe yeniden ayarlanmalı.
 YANLIŞTI — `results` girdilerinde `enhancePick` hiç çalışmaz, confidence her zaman 0'dır.
 Doğru ölçüm `topPicks` üzerinden yapıldı ve gerçek bug'ı ortaya çıkardı.
 Suite 468 pass, 0 lint error.
+
+## Tam Kapsama (sınırlı retry) + Geçmiş Gün-Gün Doldurma (v31.21)
+
+Kullanıcı: (1) "tüm hisseleri tarayabilmeliyiz", (2) "3 gün önce AL denilen hissenin her
+günkü değişimini görebilmeliyim", (3) "mobil tarama süresi önemli değil".
+
+**(1) Tam kapsama.** ÖLÇÜLDÜ: bir taramada 612 sembolden yalnız **111** sonuç döndü —
+timeout/proxy hatası alan semboller sessizce düşüyordu. Per-sembol işleme `processSymbol`
+olarak HOIST edildi (yeniden kullanılabilsin) ve başarısızlar `failedSyms`'e toplanıp
+**yeniden-deneme geçişinde** daha uzun timeout'la tekrar deneniyor. Kapsama artık her
+taramada raporlanıyor ("Kapsama: N/612 sembol").
+
+**Sınırlar (ilk sürümde YOKTU — düzeltildi):** sınırsız retry ölçüldüğünde **15+ dakika**
+sürüyordu (uzun timeout × düşük eşzamanlılık). Üç sert sınır kondu: `RETRY_MAX_SYMBOLS=200`,
+`RETRY_BUDGET_MS=90_000` (duvar saati), timeout `symTimeoutMs × 1.5` (önce ×3 idi),
+eşzamanlılık `SCAN_CONCURRENCY/2`. Bütçe dolarsa kalanlar **dürüstçe raporlanır**
+("süre bütçesi doldu"), sessizce düşürülmez.
+
+**(2) Geçmiş gün-gün doldurma.** `appendDailyPerf` yalnız uygulama AÇIKKEN nokta yakalıyordu
+→ 3 gün önceki sinyalin geçmişi boştu. Yeni saf fonksiyonlar (`signalPerfHistory.js`, +7 test):
+- `backfillDailyPerf(signal, bars)`: günlük KAPANIŞLARDAN, girişten itibaren her işlem günü
+  için yön-düzeltmeli getiriyi yeniden kurar.
+- `mergeDailyPerf(live, backfill)`: geçmiş günlerde resmî kapanış kazanır, BUGÜN canlı nokta
+  kazanır.
+`useSignalTracker`: eksik günü olan aktif sinyaller için (tur başına en fazla 12 sembol,
+sinyal başına BİR kez) `fetchSingle(sym,'3mo','1d')` ile doldurur. Sinyal Takibi'ndeki
+GÜN-GÜN kolonu artık geçmişi de gösterir.
+
+**(3)** Mobil tarama süresi optimizasyonu (rolling-pool, ölçülen 132s→78s) kullanıcı
+"önemli değil" dediği için YAPILMADI — bilinçli kapsam dışı.
+
+**Doğrulama sınırı (dürüst)**: ana geçişin 612/612 tamamlandığı canlı olarak görüldü, ancak
+sınırlı retry'ın kaç sembol kurtardığı önizlemede uçtan uca ölçülemedi (ilk sınırsız sürüm
+15+ dk sürüp doğrulamayı bloklamıştı). Saf fonksiyonlar 475 testle kilitli; kapsama sayısı
+her taramada log'a yazıldığı için gerçek uygulamada görünür olacak.
