@@ -84,12 +84,12 @@ export default function MobileProfilePage({ notifications, portfolio, onTabChang
       color: 'var(--cyan)',
     },
     {
-      id: 'portfolio',
+      id: 'realport',
       icon: '💼',
       label: 'Portfoy',
       sublabel: `${positions.length} pozisyon`,
       color: 'var(--green)',
-      action: () => onTabChange?.('portfolio'),
+      action: () => onTabChange?.('realport'),
     },
   ];
 

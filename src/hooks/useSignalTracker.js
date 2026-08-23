@@ -1,8 +1,12 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
 import { buildCalibrationModel, setSignalCalibration } from '../utils/signalCalibration.js';
 import { setSignalReliabilityHints } from '../utils/signals.js';
-import { appendDailyPerf, backfillDailyPerf, mergeDailyPerf } from '../utils/signalPerfHistory.js';
+import {
+  appendDailyPerf, backfillDailyPerf, mergeDailyPerf, normalizeDailyPerf,
+  istanbulDayKey, lastSettledTradingDay, selectBackfillTargets,
+  aggregatePathQuality, derivePerfCheckpoints,
+} from '../utils/signalPerfHistory.js';
 import { fetchSingle } from '../utils/fetchEngine.js';
 
 let globalNotificationHandler = null;
@@ -24,6 +28,9 @@ function loadFromStorage() {
     return list.map(s => ({
       ...s,
       timestamp: s.timestamp ? new Date(s.timestamp) : new Date(),
+      // v31.22: heal ordering/duplicates from the old UTC day key at READ time.
+      // No value is rewritten, so this cannot corrupt data.
+      dailyPerf: normalizeDailyPerf(s.dailyPerf),
     }));
   } catch { return []; }
 }
@@ -74,11 +81,22 @@ function calcStats(signals) {
 
   const sampleWeight = Math.min(1, total / 30);
   const expectancy = Math.max(-10, Math.min(10, avgD5));
-  const reliability = Math.max(0, Math.min(100, Math.round(
+  // v31.22: the original formula is preserved BYTE-FOR-BYTE as the base, then a
+  // bounded path term is added on top. Path quality distinguishes "walked
+  // steadily to +3%" from "sank to -12% then closed +3%" — same endpoint, very
+  // different trade. Cap is +/-6 (smaller than the smallest existing term) and
+  // it scales with sample count, so with no path data this is an exact no-op.
+  const reliabilityBase = Math.max(0, Math.min(100, Math.round(
     (winRate * 0.5) +
     (sampleWeight * 20) +
     ((expectancy + 10) / 20) * 30
   )));
+  const pathStats = aggregatePathQuality(signals);
+  const pathConf = Math.min(1, pathStats.n / 20);              // full weight at 20 series
+  const pathAdj = Math.round(
+    Math.max(-1, Math.min(1, pathStats.avgPathScore || 0)) * 6 * pathConf
+  );
+  const reliability = Math.max(0, Math.min(100, reliabilityBase + pathAdj));
 
   const allReturns = closed.map(s => s.perf?.d5 ?? s.perf?.d3 ?? s.perf?.d1 ?? 0).filter(v => v != null && v !== 0);
   const avgReturn = allReturns.length ? allReturns.reduce((a, v) => a + v, 0) / allReturns.length : 0;
@@ -179,6 +197,9 @@ function calcStats(signals) {
     minReturn,
     profitFactor,
     reliability,
+    reliabilityBase,
+    pathAdj,
+    pathStats,
     winStreak,
     loseStreak,
     bySource,
@@ -192,6 +213,13 @@ export function useSignalTracker() {
   const [signals, setSignals] = useState(() => loadFromStorage());
   const checkTimerRef = useRef(null);
   const checkCountRef = useRef(0);
+  // v31.22: effects below run on a long-lived interval and MUST NOT close over a
+  // stale `signals` snapshot — the settlement sweep writes dailyPerf without
+  // changing signals.length, so a [signals.length] dep would leave the poller
+  // holding pre-sweep data and overwrite the freshly filled series on the next
+  // tick. All reads go through this ref instead.
+  const signalsRef = useRef(signals);
+  useEffect(() => { signalsRef.current = signals; }, [signals]);
 
   useEffect(() => {
     persist(signals);
@@ -331,7 +359,10 @@ export function useSignalTracker() {
   }, [signals]);
 
   const exportCSV = useCallback(() => {
-    const headers = ['Tarih', 'Sembol', 'Sınıf', 'Kaynak', 'Giriş', 'Son Fiyat', 'Hedef', 'Stop', 'R/R', 'Skor', '1G%', '3G%', '5G%', '7G%', 'Sonuç', 'Durum'];
+    const headers = ['Tarih', 'Sembol', 'Sınıf', 'Kaynak', 'Giriş', 'Son Fiyat', 'Hedef', 'Stop', 'R/R', 'Skor', '1G%', '3G%', '5G%', '7G%', '1G*', '3G*', '5G*', '7G*', 'Sonuç', 'Durum'];
+    // *-suffixed columns are the CLOSE-derived checkpoints (v31.22 phase 1).
+    // Nothing consumes them yet — they exist so the delta against the live
+    // latches can be eyeballed before any reader is switched over.
     const rows = signals.map(s => [
       new Date(s.timestamp).toLocaleDateString('tr-TR'),
       s.symbol,
@@ -347,6 +378,10 @@ export function useSignalTracker() {
       s.perf?.d3?.toFixed(2) ?? '',
       s.perf?.d5?.toFixed(2) ?? '',
       s.perf?.d7?.toFixed(2) ?? '',
+      s.perfDaily?.d1?.toFixed(2) ?? '',
+      s.perfDaily?.d3?.toFixed(2) ?? '',
+      s.perfDaily?.d5?.toFixed(2) ?? '',
+      s.perfDaily?.d7?.toFixed(2) ?? '',
       s.outcome || '',
       s.status || '',
     ]);
@@ -401,7 +436,7 @@ export function useSignalTracker() {
   useEffect(() => {
     const checkSignals = async () => {
       const now = Date.now();
-      const activeSignals = signals.filter(s => s.status === 'active');
+      const activeSignals = signalsRef.current.filter(s => s.status === 'active');
       if (!activeSignals.length) return;
 
       const symbols = [...new Set(activeSignals.map(s => s.symbol))];
@@ -494,12 +529,15 @@ export function useSignalTracker() {
         // azaldı Sinyal Takibi'ne kaydetsin" dedi. Her takvim günü için giriş-göreli
         // (yön düzeltmeli) getiriyi bir noktaya işle; aynı gün intraday tick'lerde
         // günün noktası güncellenir, yeni günde yeni nokta eklenir.
-        const dayKey = new Date(now).toISOString().slice(0, 10);
-        const dailyPerf = appendDailyPerf(sig.dailyPerf, dayKey, currentReturn);
+        // v31.22: the day key is Istanbul-local (was UTC, which rolled the key
+        // over at 03:00 TRT). The point itself is written INSIDE the functional
+        // updater below so it reads the CURRENT series, not this closure's copy.
+        const dayKey = istanbulDayKey(now);
 
         updates[sig.id] = {
           perf,
-          dailyPerf,                     // v31.14: gün-gün getiri serisi
+          _dayKey: dayKey,
+          _todayPct: currentReturn,
           outcome: finalOutcome,
           lastPrice: priceNow,
           currentReturn,                 // v29: anlık % getiri (her tick'te güncellenir)
@@ -512,7 +550,17 @@ export function useSignalTracker() {
       }
 
       if (Object.keys(updates).length) {
-        setSignals(prev => prev.map(s => updates[s.id] ? { ...s, ...updates[s.id] } : s));
+        setSignals(prev => prev.map(s => {
+          const u = updates[s.id];
+          if (!u) return s;
+          const { _dayKey, _todayPct, ...rest } = u;
+          const next = { ...s, ...rest, dailyPerf: appendDailyPerf(s.dailyPerf, _dayKey, _todayPct) };
+          // Stamp the close day once, so post-close tracking knows when it ended.
+          if (next.status === 'closed' && s.status !== 'closed' && !next.closedAt) {
+            next.closedAt = new Date().toISOString();
+          }
+          return next;
+        }));
       }
 
       checkCountRef.current++;
@@ -521,51 +569,98 @@ export function useSignalTracker() {
     checkSignals();
     checkTimerRef.current = setInterval(checkSignals, 10 * 60 * 1000);
     return () => { if (checkTimerRef.current) clearInterval(checkTimerRef.current); };
-  }, [signals.length]);
+  }, []);
 
-  // ── v31.21: GEÇMİŞ GÜN-GÜN DOLDURMA (backfill) ──────────────────────────
-  // appendDailyPerf sadece uygulama AÇIKKEN nokta yakalar → 3 gün önce kaydedilen
-  // bir sinyalin gün-gün geçmişi boş kalıyordu. Kullanıcı o günlerin değişimini
-  // görmek istiyor. Günlük kapanışlar zaten fiyat motorunda var: eksik günü olan
-  // aktif sinyaller için tarihsel barlardan seriyi BİR KEZ yeniden kur.
-  const backfilledRef = useRef(new Set());
+  // ── v31.22: GUN-SONU YERLESIM TARAMASI (settlement sweep) ────────────────
+  // Daily record-keeping cannot rely on the app being open at 18:10 — this is a
+  // client-side app with no server. So the live 10-min point is only a
+  // provisional "today" marker, and the SETTLED record always comes from the
+  // official daily close, which stays retrievable indefinitely.
+  //
+  // Each signal carries `dailyPerfSettledThrough` (last day filled from a close)
+  // and `dailyPerfTries`. A signal is due whenever that marker is behind
+  // lastSettledTradingDay(). The sweep therefore survives reloads and long
+  // closures, and continues for 30 days AFTER a signal closes, which is what
+  // makes "stopped out, but did it recover?" measurable.
+  const sweepRunningRef = useRef(false);
   useEffect(() => {
-    const run = async () => {
-      const needs = signals.filter(s => {
-        if (!s || s.status !== 'active' || !s.symbol) return false;
-        if (backfilledRef.current.has(s.id)) return false;
-        const ageDays = Math.floor((Date.now() - new Date(s.timestamp).getTime()) / TRADING_DAY_MS);
-        if (ageDays < 1) return false;                                  // aynı gün → geçmiş yok
-        const have = Array.isArray(s.dailyPerf) ? s.dailyPerf.length : 0;
-        return have <= ageDays;                                         // eksik gün var
-      }).slice(0, 12);                                                  // tur başına en fazla 12 sembol
-      if (!needs.length) return;
+    let cancelled = false;
+    let timer = null;
 
+    const pass = async () => {
+      if (sweepRunningRef.current || cancelled) return;
+      const { targets, symbols } = selectBackfillTargets(signalsRef.current, Date.now());
+      if (!symbols.length) return;
+
+      sweepRunningRef.current = true;
       const updates = {};
-      for (const s of needs) {
-        backfilledRef.current.add(s.id);                                // tekrar denemeyi engelle
-        try {
-          const data = await fetchSingle(s.symbol, '3mo', '1d', true);
-          const bars = data?.prices;
-          if (!Array.isArray(bars) || !bars.length) continue;
-          const merged = mergeDailyPerf(s.dailyPerf, backfillDailyPerf(s, bars));
-          if (merged.length) updates[s.id] = { dailyPerf: merged };
-        } catch { /* best-effort — doldurma başarısız olursa canlı yakalama sürer */ }
+      try {
+        const settledDay = lastSettledTradingDay(Date.now());
+        for (const sym of symbols) {
+          if (cancelled) break;
+          let bars = null;
+          try {
+            // scanMode=true -> session-long daily cache + in-flight dedup, so
+            // repeated passes cost nothing for symbols already fetched.
+            const data = await fetchSingle(sym, '3mo', '1d', true);
+            bars = data?.prices;
+          } catch { /* best-effort */ }
+
+          for (const sig of targets.filter(t => t.symbol === sym)) {
+            if (!Array.isArray(bars) || !bars.length) {
+              updates[sig.id] = { dailyPerfTries: (sig.dailyPerfTries || 0) + 1 };
+              continue;
+            }
+            const merged = mergeDailyPerf(sig.dailyPerf, backfillDailyPerf(sig, bars));
+            updates[sig.id] = {
+              dailyPerf: merged,
+              // Phase 1: reconstructed checkpoints go to a SHADOW field. The
+              // live d1/d3/d5/d7 latches are wrong whenever the app was closed
+              // (all four take the same late price), and d5 drives the
+              // calibration multiplier — so the switch-over is a separate,
+              // reviewable commit. Nothing reads perfDaily yet except the CSV.
+              perfDaily: { ...derivePerfCheckpoints(merged), src: 'backfill' },
+              dailyPerfSettledThrough: merged.length ? merged[merged.length - 1].d : settledDay,
+              dailyPerfTries: 0,
+            };
+          }
+        }
+      } finally {
+        sweepRunningRef.current = false;
       }
-      if (Object.keys(updates).length) {
+
+      if (!cancelled && Object.keys(updates).length) {
         setSignals(prev => prev.map(x => (updates[x.id] ? { ...x, ...updates[x.id] } : x)));
       }
+      // Drain any remaining backlog without needing a reload.
+      if (!cancelled && selectBackfillTargets(signalsRef.current, Date.now()).symbols.length) {
+        timer = setTimeout(pass, 20_000);
+      }
     };
-    run();
-  }, [signals.length]);
 
-  const stats = (() => calcStats(signals))();
+    const onWake = () => { if (document.visibilityState === 'visible') pass(); };
+    pass();
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    const tick = setInterval(pass, 15 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      clearInterval(tick);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+    };
+  }, []);
+
+  // v31.22: both were recomputed on EVERY render (calcStats three times over).
+  // aggregatePathQuality made that materially heavier, so memoize on signals.
+  const stats = useMemo(() => calcStats(signals), [signals]);
 
   // Expose the live calibration model snapshot for diagnostic UI
-  const calibrationModel = (() => {
+  const calibrationModel = useMemo(() => {
     try { return buildCalibrationModel(signals); }
     catch { return null; }
-  })();
+  }, [signals]);
 
   return {
     signals,

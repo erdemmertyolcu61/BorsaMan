@@ -5,6 +5,7 @@ import {
   indexBySymbol,
   formatNewsForPrompt,
   _hasHighImpact,
+  extractSymbolsByName,
 } from '../marketNewsEngine.js';
 
 describe('_hasHighImpact (news fast-path trigger)', () => {
@@ -193,5 +194,37 @@ describe('formatNewsForPrompt', () => {
 
   it('returns empty string when no entry', () => {
     expect(formatNewsForPrompt({}, 'XXX')).toBe('');
+  });
+});
+
+
+describe('extractSymbolsByName (v31.22)', () => {
+  const UNI = ['TSPOR', 'FENER', 'THYAO', 'TUPRS', 'KCHOL', 'GARAN'];
+
+  it('maps the real TSPOR/Salah headline that ticker matching could never see', () => {
+    // Verbatim from a live feed during verification.
+    expect(extractSymbolsByName("Trabzonspor Basaksehir'i Salah'la gecti", UNI)).toEqual(['TSPOR']);
+  });
+
+  it('is diacritic-insensitive', () => {
+    expect(extractSymbolsByName('Fenerbahce ve Fenerbahçe', UNI)).toEqual(['FENER']);
+    expect(extractSymbolsByName('Tüpraş rafineri yatırımı', UNI)).toEqual(['TUPRS']);
+  });
+
+  it('respects the universe filter', () => {
+    expect(extractSymbolsByName('Trabzonspor kazandi', ['THYAO'])).toEqual([]);
+    expect(extractSymbolsByName('Trabzonspor kazandi', null)).toEqual(['TSPOR']);
+  });
+
+  it('is word-boundary anchored, so a name cannot fire inside another word', () => {
+    expect(extractSymbolsByName('thyaografi', UNI)).toEqual([]);
+    expect(extractSymbolsByName('THY bugun ucus iptal etti', UNI)).toEqual(['THYAO']);
+  });
+
+  it('finds several distinct issuers in one item and is defensive', () => {
+    const out = extractSymbolsByName('Koc Holding ve Garanti BBVA anlasti', UNI);
+    expect(out.sort()).toEqual(['GARAN', 'KCHOL']);
+    expect(extractSymbolsByName('', UNI)).toEqual([]);
+    expect(extractSymbolsByName(null, UNI)).toEqual([]);
   });
 });

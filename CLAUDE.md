@@ -57,7 +57,8 @@ graphify explain <node>        # Bir node + komsulari aciklama
 - **Backend**: `proxy/` — Vercel Serverless CORS proxy (10 domain whitelist + `/api/claude`)
 - **Python kopru**: `bist_bridge.py` — borsa-mcp server'i ile TradingAgents arasingi
 - **Terminal estetigi**: Koyu tema (#0a0e17), JetBrains Mono + Space Grotesk
-- **4 ana sekme**: Tekil Analiz, Strateji/Backtest, Intraday Trade, Portfoy
+- **Sekmeler (v31.22)**: Tekil Analiz (varsayilan), Intraday Trade, Sinyal Takibi, Paper Trading,
+  Gercek Portfoy, Istihbarat. Pano ve sanal Portfoy sekmeleri kaldirildi (portfoy state'i headless durur).
 - **Sabit paneller**: AIAdvisorPanel (sol), AIAdvisorDetailPanel (alt, collapsible), SignalsTab (Sinyal Takibi — 4 alt-sekme)
 
 ## Teknik Ozellikler (v8)
@@ -711,6 +712,111 @@ oto-tarama + ML AUTO + manuel), o yüzden çift tetikleme olmaz.
 sunucu yok). Ama artık mobilde uygulamayı bir kez açmak (piyasa saatinde) o günü kaydeder;
 gün-gün perf (v31.14) ve d1/d5 checkpoint'leri uygulama açık kaldıkça dolar. Not: bu populate
 DESKTOP'ta da geçerli (geç açılışta o günü kaydeder) — günde bir ağır tarama, cache (v31.12) hafifletir.
+
+## Sekme Sadeleştirme + Gün-Gün Güvenilirlik + Veri Katmanı Onarımı (v31.22)
+
+Kullanıcı: (1) PANO ve (sanal) PORTFÖY sekmelerini kaldır, (2) sinyaller gün gün kaydolsun,
+her gün sonunda değişimleri işlensin, **sistem güvenilirliği artsın**, (3) "paralı API gerekiyor
+mu?", (4) "mobilde en iyi şekilde çalışmalı".
+
+### A — Sekme kaldırma
+`DashboardTab` / `PortfolioTab` / `TradeJournal` / `PerformanceAnalytics` silindi. Açılış sekmesi
+`useAppState` içinde `dashboard` → **`analyze`** (yapılmasa uygulama boş ekranla açardı).
+Portföy state'i **headless** korundu — risk uyarıları, trailing stop, otomatik stop/hedef kapanışı,
+pozisyon boyutlandırma aynen çalışıyor. Sekmeyle birlikte ölecek 3 özellik
+`RealPortfolio/PortfolioExtras.jsx`'e taşındı ve Gerçek Portföy'e mount edildi:
+izleme listesi CRUD (`useLivePrices` fiyat alarmlarını besler), elle pozisyon kapatma,
+`BrokerSettings` (AnalyzeTab emir akışı bunu okuyor).
+
+### B — Gün-gün kayıt + güvenilirlik (`signalPerfHistory.js`, `useSignalTracker.js`)
+**Önce iki gerçek bug:**
+- **Bayat closure**: `checkSignals` efekti `[signals.length]` bağımlıydı; doldurma yalnız
+  `dailyPerf` yazdığı için uzunluk değişmiyor → efekt yenilenmiyor → 10dk'lık tick taze
+  doldurulmuş 30 günlük seriyi **eziyordu**. `appendDailyPerf` artık `setSignals(prev => ...)`
+  updater'ının İÇİNDE; tüm efektler `signalsRef` üzerinden okuyor.
+- **`appendDailyPerf` yalnız son elemana karşı dedup** yapıyordu → sırasız seride aynı gün
+  çoğalıyordu. Artık herhangi bir güne karşı dedup + okuma anında `normalizeDailyPerf`.
+
+**İstanbul gün anahtarı**: `toISOString()` (UTC) anahtarı **03:00 TRT**'de dönüyordu → 00:00-03:00
+arası yakalanan nokta bir ÖNCEKİ güne yazılıyordu. `istanbulDayKey()` geldi. (BIST saatlerindeki
+noktalar zaten doğruydu, bar tarihleri iki yorumda da aynı güne düşüyor → göç ucuz ve yıkıcı değil.)
+
+**Gün sonu kaydı = alarm değil, kapanıştan yeniden kurma.** İstemci-taraflı uygulamada 18:10
+alarmı güvenilmez; günlük KAPANIŞ ise her zaman geri çekilebilir. Canlı 10dk noktası artık geçici
+"bugün" işareti; kesin kayıt kapanıştan gelir. Sinyal başına `dailyPerfSettledThrough` +
+`dailyPerfTries` kalıcı alanları; `lastSettledTradingDay()` geride kalan sinyalleri seçer.
+Tarama mount + `visibilitychange` + `focus` + 15dk tick ile tetiklenir, backlog varken 20s arayla
+kendini yeniden kurar. Oturuma bağlı `backfilledRef` silindi (yeniden yüklemede sıfırlanıyor,
+12'den fazla sinyalde tıkanıyordu) — kalıcılık artık diskte.
+
+**Kapandıktan sonra 30 gün takip**: `selectBackfillTargets` penceresi `status` değil **girişten
+30 gün**; sembole göre dedup (aynı sembolün 3 sinyali = 1 fetch), `limit` sembol sayısına uygulanır.
+3. günde stop olan sinyalin 4-30. günleri de kaydedilir → "stop yedim, sonra toparladı mı?" ölçülebilir.
+
+**Güvenilirlik zenginleştirme**: mevcut formül **birebir korunup** `reliabilityBase` oldu; üstüne
+sınırlı bir YOL terimi eklendi. `scoreSignalPath` [-1,+1] (<5 nokta → `null`): aynı bitişe sahip
+"istikrarlı yükseldi" serisi, "-%12'ye çakılıp toparladı" serisinden yüksek puan alır.
+`pathAdj = clamp(avgPathScore) * 6 * min(1, n/20)` — ±6 (mevcut en küçük terimden küçük),
+**n=0'da tam no-op**. `aggregatePathQuality.stopQuality` stop sonrası toparlayan oranını verir.
+**Doğrulanmış sınır:** `reliability` canlı skorlamaya GİRMİYOR (`signals.js` yalnız
+`winRate`/`sampleSize`/`bySignalType` okuyor) — bu katman gösterim seviyesinde kalır.
+
+**`perf.d1/d3/d5/d7` — İKİ FAZLI, bilinçli**: mandallar tek atımlı ve yalnız uygulama açıkken
+çalışıyor; uygulama bir hafta kapalıysa dördü de 7. günün fiyatını alıyor. Bozuk `d5`,
+`signalCalibration` üzerinden `score100`'e 0.55-1.30 çarpanı olarak giriyor. Faz 1: kapanıştan
+türetilen checkpoint'ler **gölge alana** (`perfDaily`) yazılır, yalnız CSV'de `1G*/3G*/5G*/7G*`
+kolonları olarak görünür. Faz 2 (AYRI commit): okuyucular çevrilir. `perf` asla yerinde ezilmez.
+Not: türetilenler **işlem günü** indeksli (mevcutlar takvim günü) — daha doğru ama bir değişiklik.
+
+`calcStats` + `buildCalibrationModel` her render'da (3 kez) çalışıyordu → `useMemo([signals])`.
+
+### C — Veri katmanı: paralı API GEREKMİYORDU, kod bozuktu
+**RSS haber hattı yapısal olarak ÖLÜYDÜ ve bu ÖLÇÜLDÜ.** İki blokaj:
+1. `fetchEngine` HTML koruması `t.startsWith('<')` ile başlayan her yanıtı atıyordu; RSS `<?xml`
+   ile başlıyor → **başarılı yanıtlar çöpe gidiyordu**. `_isMarkupFeed()` muafiyeti eklendi.
+2. RSS alan adlarının hiçbiri proxy beyaz listesinde yoktu (403). İki proxy dosyasına da eklendi.
+
+**Kanıt (canlı fetch):** BloombergHT 200/20 item, Dunya 200/25, BorsaninGundemi 200/25,
+Sabah 200/10 → **80 haber**. Eski koruma hepsini DROP ediyordu, yenisi hepsini KEEP ediyor.
+**BigPara ve Mynet feed'leri 404** (ölçüldü) → registry'den kaldırıldı.
+
+**Şirket adı → ticker eşleme (yeni).** Hat canlandıktan sonra sembol eşleşmesi hâlâ **SIFIR**dı:
+Türkçe haber tickerı değil ŞİRKET ADINI yazıyor. Doğrulama sırasında yakalanan gerçek manşet
+"Trabzonspor Başakşehir'i Salah'la geçti" — kullanıcının v31.18'de istediği TSPOR vakasının ta
+kendisi — eski regex ile asla görünemezdi. `NAME_ALIASES` + `extractSymbolsByName()` (diyakritik
+duyarsız, kelime sınırı çapalı, universe filtreli) eklendi → aynı 80 haberde **11 eşleşme**.
+**Dürüst kapsam: KISMİ liste** (612 sembolün hepsi değil); listede olmayan ad eski ticker
+eşleşmesine düşer, yani eşleşme ekleyebilir ama asla kaldıramaz.
+
+Diğer: kök `api/proxy.js` `proxy/api/proxy.js` ile eşitlendi (`biquote.io`, `fc.yahoo.com`,
+`www.bigpara.com.tr`, `bigpara_yabanci`, BigPara `X-Requested-With` — bu header olmadan 401,
+capacitor origin'leri). RSS URL'leri artık `news` header profiliyle gidiyor (bigpara JSON
+header'larını miras almasın). Her iki `vercel.json`'a `"regions": ["fra1"]` (fonksiyonlar
+ABD-Doğu'da koşuyordu → her BIST isteğinde Atlantik aşırı gidiş-dönüş). `ProxySettings`'e
+**TCMB EVDS anahtarı alanı** (`foreignFlowEngine` anahtarı zaten okuyordu, girecek yer yoktu).
+TCMB statik yedeği artık süresi geçmiş PPK tarihini `null`'lar + `staleSince` taşır (eskiden
+bayat faizi güncelmiş gibi sunuyordu). Ölü kod: `fetchForeksHistorical` + `parseForeks`
+(domain ölü) + `getmidas.com` fallback'i (hiçbir beyaz listede yok, daima 403).
+
+**Paralı API — dürüst cevap:** Ücretsiz düzeltilebilenler C ile çözüldü. Ücretsiz-ama-kayıtlı:
+TCMB EVDS (piyasa geneli yabancı akış + gerçek politika faizi). **Gerçekten paralı olan yalnız
+ikisi:** hisse-bazlı yabancı takas oranı (tüm ücretsiz TR kaynakları ölü) ve gerçek-zamanlı BIST
+(şu an 15-30 dk gecikmeli). Vercel Pro ayrı bir eksen (Hobby ~12 eşzamanlılık tavanı) — yukarıdaki
+hiçbir maddeyi çözmez.
+
+### Mobil (ölçülerek)
+`MobileNav`: sekme kaldırma sonrası overflow sayfası TEK öğeye düşmüştü → "Daha" modalı tamamen
+kaldırıldı, 6 sekmenin hepsi doğrudan bar'da (375px ve 320px'te ölçüldü: taşma yok, etiket
+kırpılmıyor). Ölçüm: input'lar zaten 16px/44px (iOS odak-zoom'u yok), hiçbir sekmede yatay taşma
+yok, body alt boşluğu (72px) nav'ı (59px) geçiyor. Kalan gerçek eksik: satır-içi stille 24-28px
+kalan panel butonları → mobil CSS'te `min-height: 40px` (tablo hücresinde 34px).
+
+**Test/kapı**: suite 506 pass (36 dosya), 0 lint error (78 warning, ratchet 90), build temiz.
+`signalCalibration.test.js` ve `signals.test.js` **oynamadı** → değişiklik canlı skorlamaya sızmadı.
+
+**Doğrulama sınırı (dürüst)**: RSS onarımı Node'dan gerçek feed'lere karşı kanıtlandı, ancak
+in-app önizleme tarayıcısı harici istekleri engellediği için tam tarayıcı-içi uçtan uca akış
+orada koşturulamadı; C3 bölge değişikliği ancak **deploy sonrası** ölçülebilir.
 
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ

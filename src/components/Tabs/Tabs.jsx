@@ -1,12 +1,10 @@
 export default function Tabs({ activeTab, onTabChange }) {
   const tabs = [
-    { id: 'dashboard', label: '📊 Pano' },
     { id: 'intel',    label: '🌍 İstihbarat' },
     { id: 'analyze',  label: '◉ Tekil Analiz' },
     { id: 'trades',   label: '★ Günlük İntraday Trade' },
     { id: 'signals',  label: '◈ Sinyal Takibi' },
     { id: 'paper',    label: '📄 Paper Trading' },
-    { id: 'portfolio',label: '◆ Portföy' },
     { id: 'realport', label: '💼 Gerçek Portföy' },
   ];
   return (

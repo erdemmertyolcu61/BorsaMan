@@ -47,7 +47,7 @@ function ReasonsGroup({ label, items, color, bg }) {
   );
 }
 
-export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGSig, log, setBadge, addToPortfolio, portfolio, goToPortfolio, brokerConfig, advisorData, intradayScan }) {
+export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGSig, log, setBadge, addToPortfolio, portfolio, brokerConfig, advisorData, intradayScan }) {
   const [symbol, setSymbol] = useState('THYAO');
   // Strict cleanup: engine resets on every symbol change, no OB/FVG bleed across assets.
   const smcEngine = useSMCEngine(symbol);

@@ -568,6 +568,18 @@ async function tryDirectNoCache(url, ms = 10000) {
   } catch { return null; }
 }
 
+// v31.22: RSS/XML EXEMPTION FROM THE HTML GUARD.
+// The guard below rejects any body starting with '<' as an error page. RSS feeds
+// begin with '<?xml' / '<rss' / '<feed', so EVERY successful news fetch was being
+// thrown away — which is why fetchMarketNews returned an empty array in every
+// environment and the news-driven selection layer never actually ran.
+function _isMarkupFeed(url, text) {
+  const u = String(url || '').toLowerCase();
+  if (u.includes('.xml') || u.includes('/rss') || u.includes('rss?') || u.includes('feed')) return true;
+  const head = String(text || '').slice(0, 200).trimStart().toLowerCase();
+  return head.startsWith('<?xml') || head.startsWith('<rss') || head.startsWith('<feed');
+}
+
 export async function tryProxy(url, ms = 10000) {
   try {
     const r = await quickFetch(url, ms);
@@ -578,7 +590,8 @@ export async function tryProxy(url, ms = 10000) {
     
     // Bypass HTML guard for KAP (because KAP natively returns HTML)
     const isKap = url.includes('kap.org.tr') || url.includes('/api/kap');
-    if (!isKap && (t.includes('<!DOCTYPE') || t.includes('<html') || t.includes('<head>') || t.includes('<body>') || t.startsWith('<'))) {
+    const isFeed = _isMarkupFeed(url, t);
+    if (!isKap && !isFeed && (t.includes('<!DOCTYPE') || t.includes('<html') || t.includes('<head>') || t.includes('<body>') || t.startsWith('<'))) {
       return null;
     }
     if (ct.indexOf('json') >= 0) {
@@ -625,7 +638,8 @@ async function _electronDirectFetch(targetUrl, ms = ELECTRON_FAST_MS) {
       // Check for HTML error pages
       const t = res.text;
       const isKap = targetUrl.includes('kap.org.tr') || targetUrl.includes('/api/kap');
-      if (!isKap && (t.startsWith('<') || t.includes('<!DOCTYPE') || t.includes('<html'))) {
+      const isFeed = _isMarkupFeed(targetUrl, t);
+      if (!isKap && !isFeed && (t.startsWith('<') || t.includes('<!DOCTYPE') || t.includes('<html'))) {
         _recordFailure('electron-direct');
         return null;
       }
@@ -709,7 +723,7 @@ function _buildRacers(targetUrl, ms) {
   }
 
   // Public CORS proxies — son çare (sıkça rate-limited)
-  // 7 farklı sağlayıcı paralel: birinin çalışma şansı yüksek, ayrıca yükü dağıtır.
+  // Iki saglayici paralel yarisir (once 7 idi; calismayanlar kaldirildi).
   const publicProxies = [
     { label: 'corsproxy.io',   url: 'https://corsproxy.io/?' + encodeURIComponent(targetUrl) },
     { label: 'codetabs',       url: 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl) },
@@ -919,18 +933,6 @@ export async function fetchBigParaList() {
         successSource = 'proxies';
         recordSourceSuccess('bigpara', 8000);
       }
-    } catch (e) {
-      lastError = e;
-      recordSourceFailure('bigpara');
-    }
-  }
-
-  // If still no text, try alternative endpoints
-  if (!text) {
-    try {
-      // Try Midas as fallback
-      const midasUrl = 'https://www.getmidas.com/wp-json/midas-api/v1/midas_table_data';
-      text = await getDataViaProxies(midasUrl, 15000);
     } catch (e) {
       lastError = e;
       recordSourceFailure('bigpara');
@@ -1238,39 +1240,6 @@ export function parseIsYatirim(text) {
 }
 
 // ==========================================
-// DATA SOURCE: Foreks/ParaGaranti (historical OHLCV)
-// ==========================================
-
-async function fetchForeksHistorical(symbol, range, interval) {
-  const period = interval === '60m' || interval === '1h' ? 60 : 1440;
-  let last;
-  if (period === 60) {
-    // Hourly bars
-    last = range === '5d' ? 40 : range === '1mo' ? 160 : range === '3mo' ? 480 : 960;
-  } else {
-    // Daily bars
-    last = range === '5d' ? 5 : range === '1mo' ? 22 : range === '3mo' ? 66 :
-           range === '6mo' ? 132 : range === '1y' ? 252 : range === '2y' ? 504 :
-           range === '5y' ? 1260 : 2520;
-  }
-
-  const params = `userName=undefined&name=${symbol}&exchange=BIST&market=N&group=E&last=${last}&period=${period}&intraPeriod=null&isLast=false`;
-  const localUrl = '/api/foreks/historical-data?' + params;
-  const remoteUrl = 'https://web-paragaranti-pubsub.foreks.com/web-services/historical-data?' + params;
-
-  let text = null;
-  if (isLocalDev()) {
-    text = await tryDirect(localUrl, 10000);
-  }
-  if (!text) {
-    text = await getDataViaProxies(remoteUrl, 12000);
-  }
-  if (!text) return null;
-
-  return parseForeks(text);
-}
-
-// ==========================================
 // PARSERS
 // ==========================================
 
@@ -1297,28 +1266,6 @@ export function parseYahoo(text) {
     }
     return prices.length >= 10 ? prices : null;
   } catch (e) { logError('parse', 'Yahoo chart parse failed', e, { severity: 'warn' }); return null; }
-}
-
-export function parseForeks(text) {
-  try {
-    const t = typeof text === 'string' ? text : '';
-    if (!t || t.length < 20) return null;
-    if (t.includes('<!DOCTYPE') || t.includes('<html') || t.includes('<head>') || t.includes('<body>') || t.startsWith('<')) {
-      console.warn('[Foreks] HTML response detected, not JSON:', t.slice(0, 120));
-      return null;
-    }
-    const data = JSON.parse(t);
-    if (!data || !data.length || data.length < 10) return null;
-    const prices = [];
-    for (const d of data) {
-      if (!d.c || d.c <= 0) continue;
-      let o = d.o || d.c, h = d.h || d.c, l = d.l || d.c, c = d.c;
-      h = Math.max(h, o, c); l = Math.min(l, o, c);
-      if (h < l) continue;
-      prices.push({ date: new Date(d.d), open: o, high: h, low: l, close: c, volume: d.v || 0 });
-    }
-    return prices.length >= 10 ? prices : null;
-  } catch (e) { logError('parse', 'Foreks response parse failed', e, { severity: 'warn' }); return null; }
 }
 
 // ==========================================

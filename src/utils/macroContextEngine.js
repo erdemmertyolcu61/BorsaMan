@@ -23,12 +23,30 @@ let _inflight = null;    // dedupe parallel calls
 // ── TCMB statik fallback (API erisilemezse) ────────────────────────
 // Son bilinen PPK kararlari. Gercek veri cekilemezse bunu donar +
 // `isStale: true` flag ile UI rozetinde uyari.
-const TCMB_FALLBACK = {
+// v31.22: these values are a LAST-KNOWN snapshot, not live data. They were
+// silently presented as fact once their date passed (the PPK counter simply
+// disappeared and the rate kept being quoted). Two honesty fixes:
+//   - an EXPIRED meeting date is nulled out rather than counted down from,
+//   - `staleSince` lets consumers say HOW old the number is instead of implying
+//     it is current. The real fix is a live source: with a TCMB EVDS key
+//     (Ayarlar -> EVDS) the engine fetches the actual policy rate and this
+//     fallback is never used.
+const TCMB_FALLBACK_RAW = {
   rate: 50.0,
   lastDecision: '2026-04-17',
   nextMeeting: '2026-05-15',  // PPK takvimi (TCMB.gov.tr)
   isStale: true,
 };
+
+function _tcmbFallback() {
+  const expired = !TCMB_FALLBACK_RAW.nextMeeting
+    || new Date(TCMB_FALLBACK_RAW.nextMeeting).getTime() < Date.now();
+  return {
+    ...TCMB_FALLBACK_RAW,
+    nextMeeting: expired ? null : TCMB_FALLBACK_RAW.nextMeeting,
+    staleSince: TCMB_FALLBACK_RAW.lastDecision,
+  };
+}
 
 // ── Yahoo chart parse helper ───────────────────────────────────────
 function parseYahooSeries(text) {
@@ -159,7 +177,7 @@ async function fetchTCMB() {
       if (obj?.rate != null && obj?.nextMeeting) return { ...obj, isStale: false };
     }
   } catch {}
-  return { ...TCMB_FALLBACK };
+  return _tcmbFallback();
 }
 
 // ── Regime classification + scoreAdjust ────────────────────────────
@@ -236,7 +254,7 @@ export async function getMacroContext({ forceFresh = false } = {}) {
       const [usdtry, vix, tcmb, sp500, brent, gold, silver, copper, natgas, wheat] = await Promise.all([
         fetchUSDTRY().catch(() => null),
         fetchVIX().catch(() => null),
-        fetchTCMB().catch(() => ({ ...TCMB_FALLBACK })),
+        fetchTCMB().catch(() => _tcmbFallback()),
         fetchSP500().catch(() => null),
         fetchBrent().catch(() => null),
         fetchGold().catch(() => null),
@@ -306,6 +324,6 @@ export function buildMacroPromptLine(ctx) {
 export const __test__ = {
   computeRegime,
   parseYahooSeries,
-  TCMB_FALLBACK,
+  TCMB_FALLBACK: TCMB_FALLBACK_RAW,
   resetCache: () => { _cache = null; _inflight = null; },
 };

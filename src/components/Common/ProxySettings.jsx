@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { PROXY_BASE_URL, setProxyBaseUrl, getProxyStats } from '../../utils/fetchEngine.js';
 import { getApiKey, setApiKey } from '../../utils/claude.js';
 import { getGeminiApiKey, setGeminiApiKey } from '../../utils/gemini.js';
+import { getEvdsApiKey, setEvdsApiKey } from '../../utils/foreignFlowEngine.js';
 
 export default function ProxySettings() {
   const [url, setUrl] = useState(PROXY_BASE_URL || '');
   const [claudeKey, setClaudeKey] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
+  const [evdsKey, setEvdsKey] = useState('');
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -15,12 +17,14 @@ export default function ProxySettings() {
   useEffect(() => {
     setClaudeKey(getApiKey());
     setGeminiKey(getGeminiApiKey());
+    setEvdsKey(getEvdsApiKey());
   }, []);
 
   const save = () => {
     setProxyBaseUrl(url.trim());
     setApiKey(claudeKey.trim());
     setGeminiApiKey(geminiKey.trim());
+    setEvdsApiKey(evdsKey.trim());
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -86,6 +90,34 @@ export default function ProxySettings() {
           onChange={e => setGeminiKey(e.target.value)}
           onBlur={save}
           placeholder="AIzaSy..."
+          style={{ flex: 1, fontSize: 10, padding: 7 }}
+        />
+      </div>
+
+      {/* v31.22: TCMB EVDS anahtari - foreignFlowEngine bu anahtari zaten okuyordu
+          ama girecek bir alan yoktu, bu yuzden piyasa geneli yabanci akisi hep
+          null donuyordu. Anahtar ucretsiz (evds2.tcmb.gov.tr kaydi gerektirir). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 14 }}>🏦</span>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
+          TCMB EVDS Anahtari (Yabanci Akis + Politika Faizi)
+        </span>
+      </div>
+
+      <div style={{ fontSize: 9, color: 'var(--t3)', lineHeight: 1.5, marginBottom: 6 }}>
+        Ucretsiz: evds2.tcmb.gov.tr adresinden kayit olup &quot;API Anahtari&quot; alin. Anahtarsiz
+        piyasa geneli yabanci akisi ve guncel TCMB politika faizi cekilemez (statik yedek kullanilir).
+        Hisse-bazli yabanci takas orani icin ucretsiz kaynak yok - o ayri bir mesele.
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 16 }}>
+        <input
+          className="inp"
+          type="password"
+          value={evdsKey}
+          onChange={e => setEvdsKey(e.target.value)}
+          onBlur={save}
+          placeholder="EVDS API anahtari"
           style={{ flex: 1, fontSize: 10, padding: 7 }}
         />
       </div>

@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { maxDrawdownPct, consistencyRatio } from '../../utils/signalPerfHistory.js';
 
 function StatCard({ label, value, color = 'var(--t1)', sub, subColor }) {
   return (
@@ -123,6 +124,15 @@ export default function SignalsTab({ tracker, onAnalyze }) {
             aVal = a.perf?.d5 ?? -999;
             bVal = b.perf?.d5 ?? -999;
             break;
+          case 'daily': {
+            const last = (x) => {
+              const arr = Array.isArray(x.dailyPerf) ? x.dailyPerf.filter(q => q && Number.isFinite(q.pct)) : [];
+              return arr.length ? arr[arr.length - 1].pct : -999;
+            };
+            aVal = last(a);
+            bVal = last(b);
+            break;
+          }
           case 'symbol':
             aVal = a.symbol;
             bVal = b.symbol;
@@ -239,7 +249,24 @@ export default function SignalsTab({ tracker, onAnalyze }) {
               </div>
               <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 6 }}>
                 Win-rate × 0.5 + örneklem × 0.2 + ortalama getiri × 0.3
+                {' '}<span style={{ color: 'var(--t2)' }}>= {stats?.reliabilityBase ?? reliability}</span>
               </div>
+              {/* v31.22: gün-gün seriden gelen YOL kalitesi terimi. Ayni bitise sahip
+                  "istikrarli yukseldi" serisi, "cakilip toparladi" serisinden yuksek puan
+                  alir. Sinirli (+/-6) ve ornek sayisiyla olceklenir; veri yoksa tam no-op. */}
+              {stats?.pathStats?.n > 0 && (
+                <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 4 }}>
+                  Yol kalitesi:{' '}
+                  <span style={{ color: (stats.pathAdj || 0) > 0 ? 'var(--green)' : (stats.pathAdj || 0) < 0 ? 'var(--red)' : 'var(--t2)', fontWeight: 700 }}>
+                    {(stats.pathAdj || 0) > 0 ? '+' : ''}{stats.pathAdj || 0}
+                  </span>
+                  {' '}({stats.pathStats.n} seri, ort. max düşüş {stats.pathStats.avgMaxDD}%)
+                  {stats.pathStats.stopQuality?.ratio != null && (
+                    <span> · stop sonrası toparlayan: {Math.round(stats.pathStats.stopQuality.ratio * 100)}%
+                      {' '}({stats.pathStats.stopQuality.recovered}/{stats.pathStats.stopQuality.stopped})</span>
+                  )}
+                </div>
+              )}
             </div>
             {/* Performance */}
             <div style={{ background: 'var(--bg2)', padding: 14, borderRadius: 8 }}>

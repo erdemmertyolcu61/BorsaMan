@@ -49,10 +49,11 @@ function _cacheSet(k, data) {
 // RSS source registry — eklenip cikarilabilir.
 // Her kaynak: { name, url, weight } — weight kategori sentiment carpani.
 // ──────────────────────────────────────────────────────────────
+// v31.22: MEASURED, not assumed. All six original feeds were probed directly:
+//   BorsaninGundemi 200 (25 item), BloombergHT 200 (20), Dunya 200 (25), Sabah 200 (10)
+//   BigPara 404, Mynet 404  -> both removed; they only cost a request.
 export const DEFAULT_NEWS_SOURCES = [
   { name: 'BorsaninGundemi', url: 'https://www.borsaningundemi.com/rss', weight: 1.0 },
-  { name: 'BigPara',          url: 'https://www.bigpara.com/rss/borsa-haberleri.xml', weight: 1.0 },
-  { name: 'MynetFinans',      url: 'https://www.mynet.com/rss/finans.xml', weight: 0.8 },
   { name: 'BloombergHT',      url: 'https://www.bloomberght.com/rss', weight: 1.1 },
   { name: 'Dunya',            url: 'https://www.dunya.com/rss?dunya/borsa-finans', weight: 0.9 },
   { name: 'Sabah',            url: 'https://www.sabah.com.tr/rss/ekonomi.xml', weight: 0.7 },
@@ -166,6 +167,68 @@ export function extractSymbols(text, universe = null) {
 }
 
 // ──────────────────────────────────────────────────────────────
+// COMPANY-NAME -> TICKER ALIASES (v31.22)
+//
+// MEASURED PROBLEM: with the RSS pipeline revived (80 live items), symbol
+// matching still returned ZERO. Turkish news writes the COMPANY NAME, never the
+// ticker: a real headline pulled during verification was
+//   "Trabzonspor Basaksehir'i Salah'la gecti"
+// — which is exactly the TSPOR case the user asked for, and extractSymbols
+// (uppercase-ticker regex only) could never see it.
+//
+// HONEST SCOPE: this is a PARTIAL map of widely-named issuers, not all 612
+// symbols. Names absent here simply fall back to ticker matching, exactly as
+// before — so it can add matches but never remove them. Extend as gaps appear.
+// Keys are diacritic-stripped lowercase; matching is word-boundary anchored so
+// "is bankasi" cannot fire inside an unrelated word.
+export const NAME_ALIASES = {
+  // Sports clubs — high-volatility, headline-driven (the TSPOR/Salah case)
+  'trabzonspor': 'TSPOR', 'fenerbahce': 'FENER', 'galatasaray': 'GSRAY', 'besiktas': 'BJKAS',
+  // Banks
+  'is bankasi': 'ISCTR', 'isbank': 'ISCTR', 'garanti bbva': 'GARAN', 'garanti bankasi': 'GARAN',
+  'akbank': 'AKBNK', 'yapi kredi': 'YKBNK', 'vakifbank': 'VAKBN', 'halkbank': 'HALKB',
+  'qnb': 'QNBTR', 'tskb': 'TSKB', 'albaraka': 'ALBRK',
+  // Aviation / transport
+  'turk hava yollari': 'THYAO', 'thy': 'THYAO', 'turkish airlines': 'THYAO',
+  'pegasus': 'PGSUS', 'tav havalimanlari': 'TAVHL', 'celebi': 'CLEBI',
+  // Energy / refining
+  'tupras': 'TUPRS', 'petkim': 'PETKM', 'aygaz': 'AYGAZ', 'enerjisa': 'ENJSA',
+  'zorlu enerji': 'ZOREN', 'ak enerji': 'AKENR', 'odas': 'ODAS',
+  // Industry / defence
+  'aselsan': 'ASELS', 'otokar': 'OTKAR', 'tusas': 'TUSAS', 'katmerciler': 'KATMR',
+  'ford otosan': 'FROTO', 'tofas': 'TOASO', 'arcelik': 'ARCLK', 'vestel': 'VESTL',
+  'eregli demir': 'EREGL', 'erdemir': 'EREGL', 'kardemir': 'KRDMD', 'sisecam': 'SISE',
+  // Holdings
+  'koc holding': 'KCHOL', 'sabanci': 'SAHOL', 'sabanci holding': 'SAHOL',
+  'alarko': 'ALARK', 'dogan holding': 'DOHOL', 'agesa': 'AGESA', 'enka': 'ENKAI',
+  // Telecom / tech / retail
+  'turkcell': 'TCELL', 'turk telekom': 'TTKOM',   'bim': 'BIMAS', 'migros': 'MGROS', 'sok marketler': 'SOKM',
+  // Cement / construction / mining
+  'akcansa': 'AKCNS', 'cimsa': 'CIMSA', 'oyak cimento': 'OYAKC',
+  'koza altin': 'KOZAL', 'koza anadolu': 'KOZAA', 'eldorado': 'KOZAL',
+};
+
+const ALIAS_KEYS = Object.keys(NAME_ALIASES);
+
+/**
+ * Map company names appearing in free text to BIST tickers.
+ * Diacritic-insensitive, word-boundary anchored, universe-filtered when given.
+ */
+export function extractSymbolsByName(text, universe = null) {
+  if (!text) return [];
+  const t = _normalize(String(text));
+  const found = new Set();
+  for (const key of ALIAS_KEYS) {
+    const re = new RegExp(`(^|[^a-z0-9])${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z0-9]|$)`);
+    if (!re.test(t)) continue;
+    const sym = NAME_ALIASES[key];
+    if (universe && Array.isArray(universe) && !universe.includes(sym)) continue;
+    found.add(sym);
+  }
+  return [...found];
+}
+
+// ──────────────────────────────────────────────────────────────
 // Classify a news item — returns {categories, sentiment, impact}
 // ──────────────────────────────────────────────────────────────
 export function classifyNewsItem(item) {
@@ -213,7 +276,12 @@ export async function fetchMarketNews({ sources = DEFAULT_NEWS_SOURCES, maxPerSo
 
   const enriched = flat.map(it => {
     const klass = classifyNewsItem(it);
-    const symbols = extractSymbols(`${it.title} ${it.summary}`, universe);
+    const blob = `${it.title} ${it.summary}`;
+    // v31.22: tickers AND company names — Turkish feeds print the name, not the code.
+    const symbols = [...new Set([
+      ...extractSymbols(blob, universe),
+      ...extractSymbolsByName(blob, universe),
+    ])];
     return { ...it, ...klass, symbols };
   }).filter(it => it.title);
 

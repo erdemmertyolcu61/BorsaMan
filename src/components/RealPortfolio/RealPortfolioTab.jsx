@@ -9,6 +9,8 @@
 import { useState } from 'react';
 import { useRealPortfolio } from '../../hooks/useRealPortfolio.js';
 import { positionMetrics, summarizeGroup, allocationPct } from '../../utils/realPortfolio.js';
+import { WatchlistPanel, VirtualPositionsPanel } from './PortfolioExtras.jsx';
+import BrokerSettings from '../Portfolio/BrokerSettings.jsx';
 
 const money = (v, cur) => {
   const n = new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(v || 0));
@@ -68,7 +70,7 @@ function GroupBlock({ title, positions, currency }) {
   );
 }
 
-export default function RealPortfolioTab() {
+export default function RealPortfolioTab({ portfolio, updatePortfolio, brokerConfig, setBrokerConfig, livePrice, watchlist, setWatchlist }) {
   const { positions, setPositions, refresh, loading, lastUpdate, usdTry, totals, alerts } = useRealPortfolio();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -189,6 +191,10 @@ export default function RealPortfolioTab() {
 
       <GroupBlock title="🇺🇸 ABD" positions={us} currency="USD" />
       <GroupBlock title="🇹🇷 BIST" positions={bist} currency="TRY" />
+
+      <VirtualPositionsPanel portfolio={portfolio} updatePortfolio={updatePortfolio} />
+      <WatchlistPanel watchlist={watchlist} setWatchlist={setWatchlist} livePrice={livePrice} />
+      <BrokerSettings brokerConfig={brokerConfig} setBrokerConfig={setBrokerConfig} />
     </div>
   );
 }

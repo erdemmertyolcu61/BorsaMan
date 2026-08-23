@@ -12,7 +12,6 @@ import { runFreshRegimeReset } from './utils/resetStorage.js';
 import PremiumHeader from './components/Layout/PremiumHeader.jsx';
 import AnalyzeTab from './components/Analyze/AnalyzeTab.jsx';
 import TradesTab from './components/Trades/TradesTab.jsx';
-import PortfolioTab from './components/Portfolio/PortfolioTab.jsx';
 import SignalsTab from './components/Signals/SignalsTab.jsx';
 import PaperTradingPanel from './components/PaperTrading/PaperTradingPanel.jsx';
 import AIAdvisorPanel, { AIAdvisorDetailPanel } from './components/AIAdvisor/AIAdvisorPanel.jsx';
@@ -22,7 +21,6 @@ import MobilePicksStrip from './components/MobileNav/MobilePicksStrip.jsx';
 import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
 import RealPortfolioTab from './components/RealPortfolio/RealPortfolioTab.jsx';
 import MarketIntelPanel from './components/MarketIntel/MarketIntelPanel.jsx';
-import DashboardTab from './components/Dashboard/DashboardTab.jsx';
 
 export default function App() {
   const state = useAppState();
@@ -312,19 +310,6 @@ export default function App() {
 
       <Tabs activeTab={state.activeTab} onTabChange={state.setActiveTab} />
 
-      <div className={`tab-content ${state.activeTab === 'dashboard' ? 'active' : ''}`}>
-        <DashboardTab
-          portfolio={state.portfolio}
-          advisor={advisor}
-          signalTracker={signalTracker}
-          forwardJournal={forwardJournal}
-          livePrice={livePrice}
-          alertLog={alertLog}
-          onAnalyze={handleAIAnalyze}
-          onTabChange={state.setActiveTab}
-        />
-      </div>
-
       <div className={`tab-content ${state.activeTab === 'intel' ? 'active' : ''}`}>
         <MarketIntelPanel />
       </div>
@@ -338,7 +323,6 @@ export default function App() {
           addToPortfolio={state.addToPortfolio}
           portfolio={state.portfolio}
           brokerConfig={state.brokerConfig}
-          goToPortfolio={() => state.setActiveTab('portfolio')}
           advisorData={advisor}
           intradayScan={intradayScan}
         />
@@ -354,21 +338,16 @@ export default function App() {
         />
       </div>
 
-      <div className={`tab-content ${state.activeTab === 'portfolio' ? 'active' : ''}`}>
-        <PortfolioTab
+      <div className={`tab-content ${state.activeTab === 'realport' ? 'active' : ''}`}>
+        <RealPortfolioTab
           portfolio={state.portfolio}
           updatePortfolio={state.updatePortfolio}
           brokerConfig={state.brokerConfig}
           setBrokerConfig={state.setBrokerConfig}
           livePrice={livePrice}
-          alertLog={alertLog}
           watchlist={watchlist}
           setWatchlist={setWatchlist}
         />
-      </div>
-
-      <div className={`tab-content ${state.activeTab === 'realport' ? 'active' : ''}`}>
-        <RealPortfolioTab />
       </div>
 
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>

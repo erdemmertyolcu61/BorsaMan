@@ -408,3 +408,28 @@ body{padding-bottom:calc(var(--advisor-panel-height,0px) + 12px)}
   .mobile-pick-sym { font-size: 12px !important; }
   .center .chart-wrap { height: 240px !important; min-height: 240px !important; }
 }
+
+
+/* ── v31.22: mobil dokunma hedefleri ───────────────────────────────
+   MEASURED at 375px: inputs were already 16px/44px (no iOS zoom-on-focus, no
+   overflow on any tab), but several panel buttons are styled INLINE at 24-28px
+   tall — well under the ~44px touch guideline, so they were easy to mis-tap.
+   Inline styles win over classes, hence !important, and min-height (not height)
+   so nothing that is already large shrinks. Table-cell buttons get a slightly
+   smaller floor so dense rows stay readable. */
+@media (max-width: 768px) {
+  .tab-content button,
+  .trade-box button {
+    min-height: 40px !important;
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+  .tab-content td button,
+  .trade-box td button {
+    min-height: 34px !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+  /* Wrap tightly-packed control rows instead of squeezing them */
+  .trade-box .inp { min-width: 0; }
+}

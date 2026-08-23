@@ -31,11 +31,20 @@ const ALLOWED_DOMAINS = [
   'www.kap.org.tr',
   'biquote.io',
   'fc.yahoo.com',
+  // v31.22: RSS news feeds. Without these the proxy returned 403 for every news
+  // request, which (together with the HTML guard in fetchEngine) is why the
+  // news-driven selection layer never received a single item.
+  'www.borsaningundemi.com',
+  'www.bigpara.com',
+  'www.mynet.com',
+  'www.bloomberght.com',
+  'www.dunya.com',
+  'www.sabah.com.tr',
 ];
 
 const ALLOWED_SOURCES = new Set([
   'yahoo', 'yahoo_fund', 'bigpara', 'bigpara_list', 'bigpara_yabanci',
-  'isyatirim', 'isyatirim_fin', 'isyatirim_yabanci', 'foreks', 'tcmb_evds', 'default',
+  'isyatirim', 'isyatirim_fin', 'isyatirim_yabanci', 'foreks', 'tcmb_evds', 'news', 'default',
 ]);
 
 const ALLOWED_ORIGINS = [
@@ -58,6 +67,13 @@ function getCorsOrigin(req) {
 
 // Source-specific headers for better success rate
 const SOURCE_HEADERS = {
+  // v31.22: RSS feeds must NOT inherit the JSON/AJAX headers below — the bigpara
+  // branch in particular would send Accept: application/json for an XML feed.
+  news: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+    'Accept-Language': 'tr-TR,tr;q=0.9',
+  },
   yahoo: {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
     'Accept': 'application/json',
@@ -244,7 +260,11 @@ export default async function handler(req, res) {
     }
     // Auto-detect source type from URL if not specified
     if (sourceType === 'default') {
-      if (parsed.hostname.includes('yahoo')) sourceType = 'yahoo';
+      // v31.22: RSS check comes FIRST — www.bigpara.com/rss/... would otherwise
+      // be classified as the bigpara JSON API and get the wrong headers.
+      const path = parsed.pathname.toLowerCase() + parsed.search.toLowerCase();
+      if (path.includes('/rss') || path.endsWith('.xml') || path.includes('rss?')) sourceType = 'news';
+      else if (parsed.hostname.includes('yahoo')) sourceType = 'yahoo';
       else if (parsed.hostname.includes('bigpara')) sourceType = 'bigpara';
       else if (parsed.hostname.includes('isyatirim')) sourceType = 'isyatirim';
       else if (parsed.hostname.includes('foreks')) sourceType = 'foreks';
