@@ -868,6 +868,75 @@ Ayrıca ölçülüp temiz çıkanlar (değişiklik gerekmedi): input'lar zaten 1
 odak-zoom'u yok), 6 sekmenin hiçbirinde yatay taşma yok (375px ve 320px), body alt boşluğu
 (72px) mobil nav'ı (59px) geçiyor, konsol hatası yok.
 
+## Temiz Başlangıç + Günlük TOP-10 Yükselen Potansiyeli (v31.24)
+
+Kullanıcı: (1) paper trading ve sinyal skorlarını sıfırla, "eksiksiz ve hatasız sıfırdan
+başlayalım", (2) tarama "günlük top 10 BIST hissesine girme potansiyeli" olanları da bulsun
+(mevcut davranışa **ek olarak**).
+
+### A — Sıfırlama TAM hale getirildi (`resetStorage.js`)
+Eski sürüm 6 localStorage anahtarı + SQLite paper tablolarını siliyordu. Üç sızıntı vardı:
+- **Bilinmeyen anahtarlar**: `bist_ml_signals_v2`, `bist_forward_journal_v1`,
+  `bist_ai_pick_memory`, `bist_last_scan_day`, `bist_paper_ml_auto`, `bist_portfolio` duruyordu.
+  Anahtar listesi 13'e çıkarıldı.
+- **Bellekteki öğrenilmiş model**: `signalCalibration` ve `signals.js` reliability hint'leri
+  modül kapsamında yaşıyor; localStorage temizliği bunlara DOKUNMUYOR. Sayfa yeniden yüklenene
+  kadar eski win-rate'ler canlı skoru etkilemeye devam ediyordu. Yeni
+  `clearSignalReliabilityHints()` (`signals.js`) + `clearSignalCalibration()` çağrılıyor.
+  (`setSignalReliabilityHints` `Object.assign` ile MERGE ediyor — bu yüzden ayrı bir temizleyici şart.)
+- **Korunacaklar ayrıştırılmadı**: artık dosyada açıkça listeli. Silinen: sinyal geçmişi +
+  gün-gün seriler, paper trading (standart + ML), ML sinyal deposu, forward-test kaydı,
+  önbellekli tarama çıktısı, JARVIS hafızası, sanal portföy, gün damgası.
+  **Korunan**: gerçek portföy, izleme listesi, API anahtarları (Claude/Gemini/EVDS),
+  aracı kurum ve proxy ayarları, bildirim tercihleri, fiyat/haber önbellekleri.
+
+**Ölçülen gerçek bug — reset render'dan SONRA çalışıyordu.** Sıfırlama bir `App` efektindeydi.
+Test sırasında bozuk bir takip kaydı ilk render'ı çökertti (`Cannot read properties of undefined`)
+→ **uygulama beyaz ekran** → onu temizleyecek reset hiç çalışamadı. Artık iki parçalı:
+`runFreshRegimeResetSync()` **`main.jsx`'te, render'dan ÖNCE** localStorage'ı temizler (epoch'u
+damgalamaz); `runFreshRegimeReset()` App'te bellek + SQLite kısmını bitirip epoch'u damgalar.
+Arada çökerse sync temizlik idempotent olduğu için zararsız tekrar eder. Bozuk kayıt artık
+ölümcül değil, kendi kendini onarıyor.
+
+`RESET_EPOCH = '2026-08-24'` → her cihaz açılışta bir kez temiz başlar.
+`SignalsTab`'daki "Sıfırla" butonu **"Tümünü Sıfırla"** oldu: eskiden yalnız React state'indeki
+diziyi boşaltıyordu (paper defterleri, ML deposu ve öğrenilmiş model duruyordu); artık aynı tam
+sıfırlamayı çalıştırıp ne silindiğini/nelerin korunduğunu onay ve sonuç diyaloğunda söylüyor.
+
+**Doğrulandı (canlı)**: 9 takip anahtarı + bozuk portföy kaydı yüklendi → açılışta uygulama
+**çöküyordu**; düzeltmeden sonra uygulama açılıyor, 9 anahtarın hepsi temizleniyor, 4 ayar/gerçek
+veri anahtarı (EVDS anahtarı dahil, değeri bozulmadan) korunuyor, epoch damgalanıyor.
+
+### B — `topGainerPotential.js` (saf, 16 test)
+"İyi kurulum" ile "büyük günlük hareket" AYNI ŞEY DEĞİL: bir blue-chip ders kitabı kurulumu olup
+asla +%7 gün yapmayabilir. Bu yüzden ayrı bir boyut eklendi — **ampirik önce, yorum sonra**:
+1. **Taban oran**: `bigMoveBaseRate(prices)` — bu hissenin KENDİ geçmişinde >= %6 kapanan gün
+   sıklığı (250 bar). Dürüst çıpa: bir yıl boyunca hiç büyük hareket yapmamış hisseyi hiçbir
+   gösterge ikna edemez. Örneklem < 40 gün ise ATR'den türetilen ihtiyatlı bir önsel kullanılır.
+2. **Koşul çarpanları**: TTM sıkışma bırakma ×1.6 / aktif ×1.3, Wyckoff Spring ×1.25, OBV birikim+
+   CMF ×1.3, hacim ateşlemesi ×1.3, kataliz haber ×1.5; OBV dağıtım ×0.6, aşırı alım ×0.65,
+   zaten tavan ×0.45, kümülatif yorgunluk ×0.55, düşük likidite ×0.75.
+3. **Sert kapı**: ATR% < 1.5 → 0 (o aralıkta %6 mekanik olarak imkânsız).
+4. **Tavan**: `PROB_CAP = 0.45`. Belirli bir hisse için ">%45 ihtimalle günün en çok kazandıranı"
+   demek dürüst olmazdı; hiçbir gösterge birliği bunu hak etmiyor.
+
+**Dürüst sınır (kodda da yazılı)**: bu, BÜYÜK YUKARI GÜN olasılığını tahmin eder — top-10'un
+baskın şartı — ama **rekabeti modellemez** (diğer 600 ismin o günkü hareketi önceden bilinemez).
+Çıktı bir sıralama yardımcısıdır, olasılık taahhüdü değil.
+
+**Bağlantı**: `processSymbol` içinde sembol başına bir kez hesaplanır (`calcPrices` orada
+kapsamda). Kompozit confidence'a **sınırlı** katkı: `topGainerConfidenceAdjust` +8/-4 —
+kullanıcı "ek olarak" dedi, mevcut 7 bileşenli kompoziti ezmemesi için. SAT picklerde uygulanmaz.
+`confidenceBreakdown.topGainer` ile tooltip'te görünür; panelde `🚀 TOP10 %N` rozeti (skor>=35),
+skor>=65'te turuncu. Tarama sonunda en iyi 10 aday **log'a açıkça yazılır** — pick listesine
+girmeseler bile görünürler. Alanlar `bist_last_ai_picks`'e persist edilir.
+
+**Profil doğrulaması** (gerçek modül, sentetik ama gerçekçi profiller): uyuşuk blue-chip 0,
+sıkışmış mid-cap 23, sıkışma+kataliz 43 (~%19,5 → rozet), zaten tavan 2, dağıtım tuzağı 5,
+dar aralık 0 (kapı). Sıralama beklendiği gibi.
+
+Suite 528 pass, 0 lint error. `signals.test.js` / `signalCalibration.test.js` oynamadı.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

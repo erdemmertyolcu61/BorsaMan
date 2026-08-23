@@ -11,6 +11,7 @@ import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../utils/regimeGate.js';
 import { computeRelativeStrength } from '../utils/relativeStrength.js';
+import { computeTopGainerPotential, topGainerConfidenceAdjust } from '../utils/topGainerPotential.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { computeThematicAdjust, activeThemes, computeSectorMacroAdjust } from '../utils/thematicMacro.js';
 import { getPaperTradeEngine } from '../utils/PaperTradeEngine.js';
@@ -1051,7 +1052,7 @@ export function useAIAdvisor(portfolio) {
               const liveRR       = riskDist > 0 ? rewardDist / riskDist : (sig.rr || 0);
               const liveRRNet    = netRR(liveEntry, liveStop || liveEntry * 0.95, liveTarget || liveEntry * 1.10);
 
-              return {
+              const out = {
                 symbol: sym,
                 sector: SECTORS[sym] || 'Diger',
                 price:  livePrice,   // BigPara anlık (tarama anındaki gerçek fiyat)
@@ -1155,6 +1156,15 @@ export function useAIAdvisor(portfolio) {
                 // maps an explicit field list), so no localStorage bloat.
                 closeSeries: calcPrices.slice(-30).map(b => +((b.close ?? 0)).toFixed(2)),
               };
+
+              // ── BIST GUNLUK TOP-10 YUKSELEN POTANSIYELI (v31.24) ──
+              // "Bu isim yarin gunun en cok kazandiranlari listesine girebilir mi?"
+              // Ayri bir soru: iyi kurulum ile buyuk gunluk hareket ayni sey degil.
+              // Ampirik taban oran (bu hissenin KENDI gecmisinde >= %6 gun sikligi)
+              // uzerine bugunku kosul carpanlari. calcPrices burada kapsamda oldugu
+              // icin sembol basina bir kez hesaplanir.
+              out._topGainer = computeTopGainerPotential(out, calcPrices);
+              return out;
             }
           } catch (e) {
             // swallow individual fetch errors
@@ -1216,6 +1226,26 @@ export function useAIAdvisor(portfolio) {
         pushLog({ type: 'info', msg: `Kapsama: ${results.length}/${symbols.length} sembol tarandi (tam)` });
       }
       console.info(`[AI Advisor] Kapsama: ${results.length}/${symbols.length} (basarisiz: ${failedSyms.size})`);
+
+      // ── v31.24: GUNLUK TOP-10 YUKSELEN ADAYLARI ────────────────────────
+      // Kullanici "top-10'a girme potansiyeli olanlari bulsun" dedi. Bu, kurulum
+      // kalitesinden AYRI bir siralama: tum evren top-gainer skoruna gore siralanip
+      // en iyi adaylar acikca raporlanir (pick listesine girmeseler bile gorunur).
+      try {
+        const tgCands = results
+          .filter(r => (r._topGainer?.score || 0) >= 35 && r.cls !== 'sell')
+          .sort((a, b) => (b._topGainer.score - a._topGainer.score))
+          .slice(0, 10);
+        if (tgCands.length) {
+          pushLog({
+            type: 'info',
+            msg: `Gunluk TOP-10 yukselen adaylari (${tgCands.length}): ` +
+              tgCands.map(r => `${r.symbol} ~%${r._topGainer.probPct}`).join(', '),
+          });
+        } else {
+          pushLog({ type: 'info', msg: 'Gunluk TOP-10 yukselen adayi bulunamadi — bugun buyuk hareket adayi yok.' });
+        }
+      } catch { /* raporlama best-effort */ }
 
       // ── Market sentiment ──
       const buys = results.filter(r => r.cls === 'buy').length;
@@ -1767,6 +1797,10 @@ export function useAIAdvisor(portfolio) {
           _earlySignals: r._earlyAccumulation?.signals || null,
           _earlyCount: r._earlyAccumulation?.count || 0,
           // v25: Near-breakout (coil + breakout-ready) — yarinki patlama tespiti
+          topGainerScore: r._topGainer?.score || 0,
+          topGainerProb: r._topGainer?.probPct || 0,
+          topGainerBaseRate: r._topGainer?.baseRatePct || 0,
+          topGainerDrivers: r._topGainer?.drivers || [],
           _nearBreakoutPick: r._nearBreakout?.isNear || false,
           _nearBreakoutSignals: r._nearBreakout?.signals || null,
           _nearBreakoutCount: r._nearBreakout?.count || 0,
@@ -1972,7 +2006,11 @@ export function useAIAdvisor(portfolio) {
             _earlyPick: r._earlyAccumulation?.isEarly || false,
             _earlySignals: r._earlyAccumulation?.signals || null,
             _earlyCount: r._earlyAccumulation?.count || 0,
-            _nearBreakoutPick: r._nearBreakout?.isNear || false,
+            topGainerScore: r._topGainer?.score || 0,
+          topGainerProb: r._topGainer?.probPct || 0,
+          topGainerBaseRate: r._topGainer?.baseRatePct || 0,
+          topGainerDrivers: r._topGainer?.drivers || [],
+          _nearBreakoutPick: r._nearBreakout?.isNear || false,
             _nearBreakoutSignals: r._nearBreakout?.signals || null,
             _nearBreakoutCount: r._nearBreakout?.count || 0,
           }));
@@ -2052,6 +2090,10 @@ export function useAIAdvisor(portfolio) {
           _earlyPick: r._earlyAccumulation?.isEarly || false,
           _earlySignals: r._earlyAccumulation?.signals || null,
           _earlyCount: r._earlyAccumulation?.count || 0,
+          topGainerScore: r._topGainer?.score || 0,
+          topGainerProb: r._topGainer?.probPct || 0,
+          topGainerBaseRate: r._topGainer?.baseRatePct || 0,
+          topGainerDrivers: r._topGainer?.drivers || [],
           _nearBreakoutPick: r._nearBreakout?.isNear || false,
           _nearBreakoutSignals: r._nearBreakout?.signals || null,
           _nearBreakoutCount: r._nearBreakout?.count || 0,
@@ -2224,10 +2266,20 @@ export function useAIAdvisor(portfolio) {
         const sectorMacro = computeSectorMacroAdjust(macroCtx, p.sector);
         const sectorMacroAdj = isSell ? -(sectorMacro.delta || 0) : (sectorMacro.delta || 0);
 
+        // ── TOP-10 GUNLUK YUKSELEN POTANSIYELI (v31.24) ──
+        // Kullanici "gunun top-10 yukselenine girme potansiyeli olanlari bul" dedi.
+        // Iyi kurulum ile buyuk gunluk hareket AYNI SEY DEGIL: bir blue-chip ders
+        // kitabi kurulumu olup asla +%7 gun yapmayabilir. Bu bilesen bunu ayri
+        // olcer. SINIRLI (+8/-4) — mevcut 7 bilesenli kompoziti ezmesin, "ek
+        // olarak" istendi. Sell picklerde uygulanmaz (uzun-taraf fikri).
+        const topGainerAdj = topGainerConfidenceAdjust(
+          { score: p.topGainerScore }, isSell
+        );
+
         let confidence = Math.round(
           techComponent + potentialComponent + sectorComponent +
           newsComponent + entryComponent + liqComponent + healthComponent +
-          macroAdj + rsAdj + sectorMacroAdj
+          macroAdj + rsAdj + sectorMacroAdj + topGainerAdj
         );
 
         // TAVAN CEZASI: tavan hisselerin confidence'ini continuation prob'a gore asagi cek.
@@ -2273,6 +2325,7 @@ export function useAIAdvisor(portfolio) {
             macro: Math.round(macroAdj),
             relativeStrength: Math.round(rsAdj), // XU100 liderlik primi/cezasi
             sectorMacro: Math.round(sectorMacroAdj), // sektörel risk/faiz duyarlılığı
+            topGainer: Math.round(topGainerAdj),      // gunluk top-10 yukselen potansiyeli
             foreignFlow: 0, // enrichment asamasinda guncellenir
           },
         };
@@ -2957,6 +3010,9 @@ export function useAIAdvisor(portfolio) {
               _bestOfDay: p._bestOfDay, // v31.6: ⭐ garantili gunluk pick (persist)
               _watchOnly: p._watchOnly, // v31.13: DUSUS'te ALIM DEGIL — izleme (persist)
               rsOutperf: p.rsOutperf, rsScore: p.rsScore, rsLeading: p.rsLeading, rsLagging: p.rsLagging, // v31.9 RS
+              // v31.24 gunluk top-10 yukselen potansiyeli (rozet + tooltip icin)
+              topGainerScore: p.topGainerScore, topGainerProb: p.topGainerProb,
+              topGainerBaseRate: p.topGainerBaseRate, topGainerDrivers: p.topGainerDrivers,
               fundGrade: p.fundGrade, fundDebtToEquity: p.fundDebtToEquity, fundCurrentRatio: p.fundCurrentRatio,
               fundNetMargin: p.fundNetMargin, fundProfitTrend: p.fundProfitTrend,
               _fundPenalty: p._fundPenalty, _fundReasons: p._fundReasons, // v31.10 temel kalite kapisi

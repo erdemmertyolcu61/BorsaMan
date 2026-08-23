@@ -2,6 +2,14 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import './styles/globals.css';
+import { runFreshRegimeResetSync } from './utils/resetStorage.js';
+
+// v31.24: run the tracking reset BEFORE the first render. It used to live in an
+// App effect, which runs AFTER render — so one malformed tracking record crashed
+// the app on load and the reset that would have cleared it never executed. The
+// in-memory and SQLite halves still finish inside App; this only guarantees no
+// stale or corrupt tracking record is ever read by the first render.
+runFreshRegimeResetSync();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { maxDrawdownPct, consistencyRatio, perfCheckpoint } from '../../utils/signalPerfHistory.js';
 import { useIsMobile } from '../../hooks/useIsMobile.js';
+import { resetTrackingData } from '../../utils/resetStorage.js';
 
 function StatCard({ label, value, color = 'var(--t1)', sub, subColor }) {
   return (
@@ -281,11 +282,32 @@ export default function SignalsTab({ tracker, onAnalyze }) {
               }}
             />
           </label>
-          <button onClick={() => { if (window.confirm('Tüm sinyal geçmişi silinsin mi?')) clearHistory(); }} style={{
+          {/* v31.24: this used to clear the in-React signal array only, leaving the
+              paper-trade books, the ML store, the forward journal and — most
+              importantly — the in-memory calibration model untouched, so the
+              "reset" system kept scoring with the old learned weights. It now
+              runs the same complete reset the app performs on an epoch bump. */}
+          <button onClick={async () => {
+            if (!window.confirm(
+              'TAM SIFIRLAMA\n\nSilinecek: sinyal gecmisi + gun-gun seriler, paper trading ' +
+              '(standart + ML), ogrenilmis kalibrasyon, forward-test kaydi, onbellekli tarama ' +
+              'sonuclari ve sanal portfoy.\n\nKORUNACAK: gercek portfoy, izleme listesi, API ' +
+              'anahtarlari, aracikurum ve proxy ayarlari.\n\nDevam edilsin mi?'
+            )) return;
+            const res = await resetTrackingData();
+            clearHistory();
+            window.alert(
+              `Sifirlama tamam.\n\n${res.cleared.length} kayit alani temizlendi.\n` +
+              `Ogrenilmis model: ${res.memoryCleared ? 'sifirlandi' : 'atlandi'}\n` +
+              `SQLite paper tablolari: ${res.sqliteCleared ? 'sifirlandi' : 'yok (web/mobil)'}` +
+              (res.failed.length ? `\nBASARISIZ: ${res.failed.join(', ')}` : '')
+            );
+            window.location.reload();
+          }} style={{
             fontSize: 9, background: 'transparent', border: '1px solid var(--red)',
             color: 'var(--red)', padding: '3px 10px', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit',
           }}>
-            Sıfırla
+            Tumunu Sifirla
           </button>
         </div>
       </div>

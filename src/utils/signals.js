@@ -27,6 +27,15 @@ export function setSignalReliabilityHints(hints) {
   if (hints && typeof hints === 'object') Object.assign(_reliabilityHints, hints);
 }
 
+/**
+ * Drop every learned hint (v31.24).
+ * Object.assign above MERGES, so a reset that only cleared localStorage left the
+ * old per-signal-type win rates biasing live scores until the page reloaded.
+ */
+export function clearSignalReliabilityHints() {
+  for (const k of Object.keys(_reliabilityHints)) delete _reliabilityHints[k];
+}
+
 // ══════════════════════════════════════════════════════════════════
 // SIGNAL ATTRIBUTION — extractFiredSignals
 // Hangi teknik/smart-money sinyalleri bu bar'da ateslendigini

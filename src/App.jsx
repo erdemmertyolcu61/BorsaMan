@@ -67,13 +67,11 @@ export default function App() {
 
   // ── One-time fresh regime reset (clears all tracking history on epoch bump) ──
   useEffect(() => {
+    // v31.24: the ad-hoc bist_tracker_reset_v3 branch below used to clear ONE key
+    // and force a reload, racing the epoch reset that had just run. Both jobs now
+    // live in runFreshRegimeReset (which also clears the in-memory calibration),
+    // and the reload is gone — nothing is loaded before this effect that needs it.
     runFreshRegimeReset();
-    // One-time reset per user request to clean the signal tracker
-    if (!localStorage.getItem('bist_tracker_reset_v3')) {
-      localStorage.removeItem('bist_signal_history_v2');
-      localStorage.setItem('bist_tracker_reset_v3', '1');
-      window.location.reload();
-    }
   }, []);
 
   // ── Shared callback: TradesTab scan results flow to all systems ──

@@ -1111,6 +1111,24 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       {p.rsLeading ? '🚀 LİDER' : '🐢 GERİDE'} {(p.rsOutperf ?? 0) >= 0 ? '+' : ''}{p.rsOutperf ?? 0}
                     </span>
                   )}
+                  {/* v31.24: GUNLUK TOP-10 YUKSELEN POTANSIYELI */}
+                  {p.cls !== 'sell' && (p.topGainerScore || 0) >= 35 && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: (p.topGainerScore >= 65) ? 'rgba(255,145,0,0.20)' : 'rgba(255,214,0,0.14)',
+                      color: (p.topGainerScore >= 65) ? '#ff9100' : '#ffd600',
+                      letterSpacing: 0.3,
+                      border: `1px solid ${(p.topGainerScore >= 65) ? 'rgba(255,145,0,0.5)' : 'rgba(255,214,0,0.4)'}`,
+                    }} title={[
+                      'GUNLUK TOP-10 YUKSELEN ADAYI',
+                      `Buyuk gun (>=%6) tahmini: ~%${p.topGainerProb ?? 0}`,
+                      `Bu hissenin kendi gecmisindeki taban oran: %${p.topGainerBaseRate ?? 0}`,
+                      (p.topGainerDrivers || []).length ? `Nedenler: ${(p.topGainerDrivers || []).join(', ')}` : '',
+                      'NOT: tahmin, garanti degil - rakip hisselerin o gunku hareketi modellenmez.',
+                    ].filter(Boolean).join('\n')}>
+                      {'\u{1F680}'} TOP10 %{p.topGainerProb ?? 0}
+                    </span>
+                  )}
                   {/* v31.10: TEMEL KALİTE — zayıf bilanço uyarısı (çöp bilançolar zaten elendi) */}
                   {p.cls !== 'sell' && (p._fundPenalty || 0) > 0 && (
                     <span style={{
