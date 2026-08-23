@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
-import { maxDrawdownPct, consistencyRatio } from '../../utils/signalPerfHistory.js';
+import { maxDrawdownPct, consistencyRatio, perfCheckpoint } from '../../utils/signalPerfHistory.js';
+import { useIsMobile } from '../../hooks/useIsMobile.js';
 
 function StatCard({ label, value, color = 'var(--t1)', sub, subColor }) {
   return (
@@ -63,6 +64,77 @@ function OutcomeBadge({ outcome }) {
   );
 }
 
+// v31.23: MOBILE CARD VIEW for the signal list.
+// MEASURED: the desktop table is 754px wide inside a 337px viewport. It scrolls
+// horizontally rather than breaking the page, but the GÜN-GÜN column — the whole
+// point of the day-by-day feature — sits off-screen until you swipe sideways.
+// Under 768px each signal becomes a card instead, with the daily series given
+// full width. Same data, same click-to-analyze; only the layout differs.
+function SignalCard({ s, onAnalyze }) {
+  const entryPrice = s.price || s.entryPrice || null;
+  const targetPrice = s.target || null;
+  const potentialPct = (entryPrice && targetPrice && entryPrice > 0)
+    ? ((targetPrice - entryPrice) / entryPrice) * 100 : null;
+  const clsColor = s.cls === 'buy' ? 'var(--green)' : s.cls === 'sell' ? 'var(--red)' : 'var(--t2)';
+  const days = [
+    ['1G', perfCheckpoint(s, 'd1')], ['3G', perfCheckpoint(s, 'd3')],
+    ['5G', perfCheckpoint(s, 'd5')], ['7G', perfCheckpoint(s, 'd7')],
+  ];
+
+  return (
+    <div
+      onClick={() => onAnalyze && onAnalyze(s.symbol)}
+      style={{
+        background: 'var(--bg2)', borderRadius: 8, padding: 12, marginBottom: 8,
+        borderLeft: `3px solid ${clsColor}`, cursor: 'pointer',
+      }}
+    >
+      {/* Row 1 — identity */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--t1)' }}>{s.symbol}</span>
+        <span style={{
+          fontSize: 9, fontWeight: 700, color: clsColor, padding: '2px 6px', borderRadius: 3,
+          background: 'var(--bg3)',
+        }}>{s.cls?.toUpperCase() || '—'}</span>
+        <OutcomeBadge outcome={s.outcome || 'OPEN'} />
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 9, color: 'var(--t3)', textAlign: 'right', lineHeight: 1.3 }}>
+          {new Date(s.timestamp).toLocaleDateString('tr-TR')}<br />
+          <span style={{ color: 'var(--cyan)' }}>
+            {new Date(s.timestamp).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        </span>
+      </div>
+
+      {/* Row 2 — the trade */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10, marginBottom: 8 }}>
+        <span style={{ color: 'var(--t3)' }}>Giriş <b style={{ color: 'var(--t1)' }}>{entryPrice ? entryPrice.toFixed(2) : '—'}</b></span>
+        <span style={{ color: 'var(--t3)' }}>Hedef <b style={{ color: 'var(--green)' }}>{targetPrice ? targetPrice.toFixed(2) : '—'}</b></span>
+        {potentialPct != null && (
+          <span style={{ color: potentialPct > 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>
+            {potentialPct > 0 ? '+' : ''}{potentialPct.toFixed(1)}%
+          </span>
+        )}
+        {s.rr ? <span style={{ color: s.rr >= 2 ? 'var(--green)' : 'var(--t2)' }}>R/R 1:{s.rr.toFixed(1)}</span> : null}
+        {s.score100 ? <span style={{ color: 'var(--t2)' }}>Skor {s.score100.toFixed(0)}</span> : null}
+      </div>
+
+      {/* Row 3 — day-by-day, the reason this view exists */}
+      <div style={{ background: 'var(--bg3)', borderRadius: 5, padding: '7px 9px' }}>
+        <div style={{ fontSize: 8, color: 'var(--t3)', marginBottom: 4, letterSpacing: 0.5 }}>GÜN-GÜN DEĞİŞİM</div>
+        <DailySpark data={s.dailyPerf} />
+        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+          {days.map(([label, v]) => (
+            <span key={label} style={{ fontSize: 9, color: 'var(--t3)' }}>
+              {label} <DayChip value={v} />
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function SignalsTab({ tracker, onAnalyze }) {
   // v29: default 'signals' (liste) — kullanicilar Sinyal Takibi'ni acinca taranan
   // hisseleri HEMEN gorsun. Onceki 'overview' sadece istatistik gosteriyordu, liste
@@ -113,16 +185,16 @@ export default function SignalsTab({ tracker, onAnalyze }) {
             bVal = b.score100 || b.score || 0;
             break;
           case 'd1':
-            aVal = a.perf?.d1 ?? -999;
-            bVal = b.perf?.d1 ?? -999;
+            aVal = perfCheckpoint(a, 'd1') ?? -999;
+            bVal = perfCheckpoint(b, 'd1') ?? -999;
             break;
           case 'd3':
-            aVal = a.perf?.d3 ?? -999;
-            bVal = b.perf?.d3 ?? -999;
+            aVal = perfCheckpoint(a, 'd3') ?? -999;
+            bVal = perfCheckpoint(b, 'd3') ?? -999;
             break;
           case 'd5':
-            aVal = a.perf?.d5 ?? -999;
-            bVal = b.perf?.d5 ?? -999;
+            aVal = perfCheckpoint(a, 'd5') ?? -999;
+            bVal = perfCheckpoint(b, 'd5') ?? -999;
             break;
           case 'daily': {
             const last = (x) => {
@@ -144,6 +216,8 @@ export default function SignalsTab({ tracker, onAnalyze }) {
         return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
       });
   }, [signals, filterSymbol, filterSrc, filterSignals, sortField, sortDir]);
+
+  const isMobile = useIsMobile();
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -301,11 +375,13 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                 <button onClick={() => setPage(totalPages - 1)} disabled={page === totalPages - 1} style={{ fontSize: 9, background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--t2)', padding: '2px 8px', borderRadius: 3, cursor: 'pointer', fontFamily: 'inherit' }}>»</button>
               </div>
             )}
-            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+            <div style={{ maxHeight: isMobile ? 'none' : 400, overflowY: isMobile ? 'visible' : 'auto' }}>
               {filtered.length === 0 ? (
                 <div style={{ textAlign: 'center', color: 'var(--t3)', padding: 30, fontSize: 11 }}>
                   Henüz sinyal yok. AI Advisor çalışınca otomatik kaydedilecek.
                 </div>
+              ) : isMobile ? (
+                paginated.map(s => <SignalCard key={s.id} s={s} onAnalyze={onAnalyze} />)
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
                   <thead>
@@ -370,10 +446,10 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                           <td style={{ padding: '4px 6px', textAlign: 'center', fontSize: 10, color: s.rr >= 2 ? 'var(--green)' : 'var(--t2)' }}>
                             {s.rr ? `1:${s.rr.toFixed(1)}` : '—'}
                           </td>
-                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d1} /></td>
-                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d3} /></td>
-                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d5} /></td>
-                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={s.perf?.d7} /></td>
+                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={perfCheckpoint(s, 'd1')} /></td>
+                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={perfCheckpoint(s, 'd3')} /></td>
+                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={perfCheckpoint(s, 'd5')} /></td>
+                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={perfCheckpoint(s, 'd7')} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><DailySpark data={s.dailyPerf} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center', fontSize: 10 }}>{s.score100 ? s.score100.toFixed(0) : '—'}</td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><OutcomeBadge outcome={s.outcome || 'OPEN'} /></td>

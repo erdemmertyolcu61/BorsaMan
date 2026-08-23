@@ -818,6 +818,56 @@ kalan panel butonları → mobil CSS'te `min-height: 40px` (tablo hücresinde 34
 in-app önizleme tarayıcısı harici istekleri engellediği için tam tarayıcı-içi uçtan uca akış
 orada koşturulamadı; C3 bölge değişikliği ancak **deploy sonrası** ölçülebilir.
 
+## d5 Okuyucuları Çevrildi + Mobil Kart Yerleşimleri (v31.23)
+
+### Faz 2 — kapanıştan türetilen checkpoint'ler artık ASIL kaynak
+v31.22'de gölge alana (`perfDaily`) yazılıyordu; artık **tüm okuyucular** onu tercih ediyor.
+Tek nokta: `perfCheckpoint(signal, key)` (`perfDaily.dN` varsa o, yoksa `perf.dN`, yoksa `null`)
+ve `realizedReturn(signal)` (d5 → d3 → d1, aynı öncelikle). Çevrilen 5 çağrı: `calcStats`
+avg/`withDN`, `allReturns`, `profitFactor`, `bySource/byClass/bySymbol` roi ve
+`signalCalibration.pushSignal`. `SignalsTab`'daki gün kolonları + sıralama da aynı kaynağa bağlandı.
+
+**Neden**: canlı mandallar tek atımlı ve yalnız uygulama açıkken çalışıyor — uygulama bir hafta
+kapalıysa d1/d3/d5/d7'nin **dördü de** 7. günün fiyatını alıyordu. Bu bozuk `d5`,
+`signalCalibration` üzerinden `score100`'e **0.55-1.30** çarpanı olarak giriyordu; yani hata
+canlı skorlamayı aktif olarak bozuyordu.
+
+**Bilinçli olarak `??` yedeği, replace değil**: taramanın henüz ulaşmadığı (veya barı olmayan)
+sinyal canlı mandalını korur — hiçbir veri kaybolmaz. Gerçek `0` veri sayılır, eksik sayılmaz
+(`Number.isFinite` kontrolü). Tüm fazı geri almak = bu tek fonksiyonu değiştirmek.
+`exportCSV` her iki kolonu (`dN` ve `dN*`) tutmaya devam ediyor → fark denetlenebilir kalıyor.
+
+**Atlanan adım (dürüst)**: v31.22 planı "CSV farkını incele, sonra çevir" diyordu; kullanıcı
+doğrudan çevrilmesini istedi, o yüzden inceleme adımı atlandı. Geri alma tek fonksiyonluk.
+
+### Mobil — ölçüme dayalı kart yerleşimleri
+Asıl mobil sorunu buton boyutu değil, **geniş tablolardı**. Ölçüm (375px):
+| Tablo | Genişlik | Kapsayıcı |
+|---|---|---|
+| Sinyal listesi | **754px** | 337px |
+| Sanal pozisyonlar | 498px | 305px |
+| Gerçek portföy grupları | 433-442px | 305px |
+Hepsi `overflow-x: auto` içinde olduğu için sayfayı kırmıyordu — ama **GÜN-GÜN sütunu**
+(kullanıcının asıl istediği özellik) ve **KAPAT** butonu ekran dışında kalıyordu.
+
+`useIsMobile` (`src/hooks/useIsMobile.js`, paylaşılan) ile <=768px'te üç yüzey de **kart**
+yerleşimine geçiyor; masaüstünde tablolar aynen duruyor (doğrulandı: 1280px'te sinyal tablosu
+12 satır, portföy 3 tablo). Sinyal kartında gün-gün serisi tam genişlikte + d1/d3/d5/d7 çipleri.
+
+**`useIsMobile` sağlamlaştırması**: ilk sürüm `window.innerWidth`'ten besleniyordu; sayfa
+compose etmezken (gizli sekme, bazı WebView'lar açılışta) bu **0** dönüyor ve `0 <= 768`
+yanlışlıkla "mobil" okunuyordu. Artık tek kaynak `matchMedia` (Safari <14 için `addListener`
+yedeği).
+
+**Ortam sınırı (dürüst)**: önizleme tarayıcısı viewport değişiminde `resize`/matchMedia `change`
+olayı YAYMIYOR (ölçüldü: 0 tetikleme), bu yüzden canlı yeniden boyutlandırma orada test
+edilemedi — iki dal da her boyutta yeniden yükleyerek doğrulandı. Gerçek cihazda ekran
+döndürme bu olayları yayar.
+
+Ayrıca ölçülüp temiz çıkanlar (değişiklik gerekmedi): input'lar zaten 16px/44px (iOS
+odak-zoom'u yok), 6 sekmenin hiçbirinde yatay taşma yok (375px ve 320px), body alt boşluğu
+(72px) mobil nav'ı (59px) geçiyor, konsol hatası yok.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

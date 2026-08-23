@@ -11,6 +11,7 @@ import { useRealPortfolio } from '../../hooks/useRealPortfolio.js';
 import { positionMetrics, summarizeGroup, allocationPct } from '../../utils/realPortfolio.js';
 import { WatchlistPanel, VirtualPositionsPanel } from './PortfolioExtras.jsx';
 import BrokerSettings from '../Portfolio/BrokerSettings.jsx';
+import { useIsMobile } from '../../hooks/useIsMobile.js';
 
 const money = (v, cur) => {
   const n = new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(v || 0));
@@ -21,8 +22,65 @@ const pct = (v) => (v >= 0 ? '+' : '') + (v || 0).toFixed(2) + '%';
 const pnlColor = (v) => (v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--t3)');
 
 function GroupBlock({ title, positions, currency }) {
+  const isMobile = useIsMobile();
   if (!positions.length) return null;
   const sum = summarizeGroup(positions);
+
+  const header = (
+    <div className="trade-title" style={{ color: 'var(--cyan)' }}>
+      {title} ({positions.length}) {'\u00b7'} {money(sum.totalValue, currency)}
+      <span style={{ marginLeft: 8, color: pnlColor(sum.totalReturn), fontWeight: 700 }}>
+        {' \u00b7 '}{money(sum.totalReturn, currency)} ({pct(sum.totalReturnPct)})
+      </span>
+    </div>
+  );
+  const missing = sum.missingTickers.length > 0 && (
+    <div style={{ fontSize: 9, color: 'var(--orange)', marginTop: 6 }}>
+      Fiyat al\u0131namad\u0131: {sum.missingTickers.join(', ')} — toplamlara dahil edilmedi.
+    </div>
+  );
+
+  // v31.23: MEASURED at 375px this 8-column table renders ~440px inside a 305px
+  // container. It scrolls, but holdings are the main thing you open this tab for
+  // on a phone, so the P&L column should not be a swipe away.
+  if (isMobile) {
+    return (
+      <div className="trade-box" style={{ marginBottom: 12 }}>
+        {header}
+        {positions.map(p => {
+          const m = positionMetrics(p);
+          return (
+            <div key={p.ticker} style={{
+              background: 'var(--bg3)', borderRadius: 6, padding: 10, marginBottom: 6,
+              borderLeft: `3px solid ${m.hasPrice ? pnlColor(m.ret) : 'var(--orange)'}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--t1)' }}>{p.ticker}</span>
+                {m.hasPrice ? (
+                  <>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: pnlColor(m.ret) }}>{pct(m.retPct)}</span>
+                    <div style={{ flex: 1 }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--t1)' }}>{money(m.value, currency)}</span>
+                  </>
+                ) : (
+                  <span style={{ fontSize: 10, color: 'var(--orange)' }}>fiyat verisi yok</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10, color: 'var(--t3)' }}>
+                <span>{p.quantity} adet</span>
+                <span>Maliyet <b style={{ color: 'var(--t2)' }}>{money(p.avgCost, currency)}</b></span>
+                {m.hasPrice && <span>G\u00fcncel <b style={{ color: 'var(--cyan)' }}>{money(p.currentPrice, currency)}</b></span>}
+                {m.hasPrice && <span>K/Z <b style={{ color: pnlColor(m.ret) }}>{money(m.ret, currency)}</b></span>}
+                {m.hasPrice && <span>A\u011f\u0131rl\u0131k <b style={{ color: 'var(--t2)' }}>{allocationPct(p, positions).toFixed(1)}%</b></span>}
+              </div>
+            </div>
+          );
+        })}
+        {missing}
+      </div>
+    );
+  }
+
   return (
     <div className="trade-box" style={{ marginBottom: 12 }}>
       <div className="trade-title" style={{ color: 'var(--cyan)' }}>

@@ -5,7 +5,7 @@ import { setSignalReliabilityHints } from '../utils/signals.js';
 import {
   appendDailyPerf, backfillDailyPerf, mergeDailyPerf, normalizeDailyPerf,
   istanbulDayKey, lastSettledTradingDay, selectBackfillTargets,
-  aggregatePathQuality, derivePerfCheckpoints,
+  aggregatePathQuality, derivePerfCheckpoints, perfCheckpoint, realizedReturn,
 } from '../utils/signalPerfHistory.js';
 import { fetchSingle } from '../utils/fetchEngine.js';
 
@@ -69,11 +69,14 @@ function calcStats(signals) {
   const total = closed.length;
   const winRate = total > 0 ? (wins / total) * 100 : 0;
 
-  const withD1 = signals.filter(s => s.perf?.d1 != null);
-  const withD3 = signals.filter(s => s.perf?.d3 != null);
-  const withD5 = signals.filter(s => s.perf?.d5 != null);
-  const withD7 = signals.filter(s => s.perf?.d7 != null);
-  const avg = (arr, key) => arr.length ? arr.reduce((a, s) => a + (s.perf[key] || 0), 0) / arr.length : 0;
+  // v31.23 phase 2: checkpoints now prefer the close-derived series. The live
+  // latches only fire while the app is open, so after any closure all four held
+  // the same late price — and d5 scales score100 by 0.55-1.30 via calibration.
+  const withD1 = signals.filter(s => perfCheckpoint(s, 'd1') != null);
+  const withD3 = signals.filter(s => perfCheckpoint(s, 'd3') != null);
+  const withD5 = signals.filter(s => perfCheckpoint(s, 'd5') != null);
+  const withD7 = signals.filter(s => perfCheckpoint(s, 'd7') != null);
+  const avg = (arr, key) => arr.length ? arr.reduce((a, s) => a + (perfCheckpoint(s, key) || 0), 0) / arr.length : 0;
   const avgD1 = avg(withD1, 'd1');
   const avgD3 = avg(withD3, 'd3');
   const avgD5 = avg(withD5, 'd5');
@@ -98,7 +101,7 @@ function calcStats(signals) {
   );
   const reliability = Math.max(0, Math.min(100, reliabilityBase + pathAdj));
 
-  const allReturns = closed.map(s => s.perf?.d5 ?? s.perf?.d3 ?? s.perf?.d1 ?? 0).filter(v => v != null && v !== 0);
+  const allReturns = closed.map(s => realizedReturn(s)).filter(v => v != null && v !== 0);
   const avgReturn = allReturns.length ? allReturns.reduce((a, v) => a + v, 0) / allReturns.length : 0;
   const maxReturn = allReturns.length ? Math.max(...allReturns) : 0;
   const minReturn = allReturns.length ? Math.min(...allReturns) : 0;
@@ -124,7 +127,7 @@ function calcStats(signals) {
   const profitFactor = (() => {
     let winsTotal = 0, lossesTotal = 0;
     for (const s of closed) {
-      const r = s.perf?.d5 ?? s.perf?.d3 ?? s.perf?.d1 ?? 0;
+      const r = realizedReturn(s);
       if (r > 0) winsTotal += r;
       else lossesTotal += Math.abs(r);
     }
@@ -142,7 +145,7 @@ function calcStats(signals) {
     const src = s.source || 'manual';
     bySource[src] = bySource[src] || { total: 0, wins: 0, totalRoi: 0 };
     bySource[src].total += 1;
-    const roi = s.perf?.d5 ?? 0;
+    const roi = perfCheckpoint(s, 'd5') ?? 0;
     const isWin = s.outcome === 'TARGET_HIT' || s.outcome === 'WIN';
     if (isWin) { bySource[src].wins += 1; bySource[src].totalRoi += roi; }
 

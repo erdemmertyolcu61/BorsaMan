@@ -1,3 +1,4 @@
+import { realizedReturn } from './signalPerfHistory.js';
 // ============================================================
 // SIGNAL CALIBRATION ENGINE
 // ------------------------------------------------------------
@@ -41,7 +42,10 @@ function mkBucket() {
 function pushSignal(bucket, sig) {
   if (!sig || sig.status !== 'closed') return;
   bucket.closed += 1;
-  const roi = safeNum(sig.perf?.d5, safeNum(sig.perf?.d3, safeNum(sig.perf?.d1, 0)));
+  // v31.23 phase 2: prefer the close-derived checkpoint. This is the number
+  // that becomes expectancy -> the 0.55-1.30 multiplier on score100, so the
+  // corrupted live latch was directly degrading live scoring.
+  const roi = safeNum(realizedReturn(sig, null), 0);
   bucket.sumRoi += roi;
   if (sig.outcome === 'TARGET_HIT' || sig.outcome === 'WIN') {
     bucket.wins += 1;

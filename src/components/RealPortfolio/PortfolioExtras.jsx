@@ -10,6 +10,7 @@
  * headless in useAppState (risk alerts, trailing stop, position sizing all still run).
  */
 import { useState } from 'react';
+import { useIsMobile } from '../../hooks/useIsMobile.js';
 
 const pnlColor = (v) => (v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--t3)');
 
@@ -101,6 +102,7 @@ export function WatchlistPanel({ watchlist = [], setWatchlist, livePrice }) {
 }
 
 export function VirtualPositionsPanel({ portfolio, updatePortfolio }) {
+  const isMobile = useIsMobile();
   const open = (portfolio?.positions || []).filter(p => p.status === 'open');
 
   const closePosition = (symbol, openedAt) => {
@@ -123,6 +125,48 @@ export function VirtualPositionsPanel({ portfolio, updatePortfolio }) {
   };
 
   if (!open.length) return null;
+
+  // v31.23: MEASURED at 375px the 8-column table is 498px wide inside a 305px
+  // container - it scrolls, but the KAPAT button (the only reason to open this
+  // panel on a phone) sits off-screen. Cards put every field in view instead.
+  if (isMobile) {
+    return (
+      <div className="trade-box" style={{ marginBottom: 12 }}>
+        <div className="trade-title" style={{ color: 'var(--purple)' }}>
+          {'\u{1F4C4}'} SANAL POZISYONLAR ({open.length})
+        </div>
+        {open.map((p, i) => {
+          const cur = p.currentPrice || p.entryPrice;
+          const pnlPct = ((cur - p.entryPrice) / p.entryPrice) * 100;
+          return (
+            <div key={p.symbol + i} style={{
+              background: 'var(--bg3)', borderRadius: 6, padding: 10, marginBottom: 6,
+              borderLeft: `3px solid ${pnlColor(pnlPct)}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 14, fontWeight: 700 }}>{p.symbol}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: pnlColor(pnlPct) }}>
+                  {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+                </span>
+                <div style={{ flex: 1 }} />
+                <button onClick={() => closePosition(p.symbol, p.openedAt)} style={{
+                  fontSize: 10, padding: '6px 14px', background: 'none', color: 'var(--orange)',
+                  border: '1px solid var(--orange)', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit',
+                }}>KAPAT</button>
+              </div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10, color: 'var(--t3)' }}>
+                <span>{p.shares} adet</span>
+                <span>Giris <b style={{ color: 'var(--t1)' }}>{p.entryPrice?.toFixed(2)}</b></span>
+                <span>Guncel <b style={{ color: 'var(--cyan)' }}>{cur?.toFixed(2)}</b></span>
+                <span>Stop <b style={{ color: 'var(--red)' }}>{p.stopLoss != null ? p.stopLoss.toFixed(2) : '-'}</b></span>
+                <span>Hedef <b style={{ color: 'var(--green)' }}>{p.target != null ? p.target.toFixed(2) : '-'}</b></span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <div className="trade-box" style={{ marginBottom: 12 }}>

@@ -345,3 +345,51 @@ export function selectBackfillTargets(signals, now = Date.now(), opts = {}) {
   }
   return { targets, symbols };
 }
+
+// ══ v31.23 — PHASE 2: CLOSE-DERIVED CHECKPOINTS BECOME AUTHORITATIVE ═══════
+// Phase 1 (v31.22) wrote reconstructed d1/d3/d5/d7 into a shadow field. This
+// makes them the PREFERRED source everywhere the checkpoints are read.
+//
+// Why the switch: the live latches in useSignalTracker are one-shot and only
+// fire while the app is open. If the app was closed for a week, all four of
+// d1/d3/d5/d7 receive the SAME day-7 price. That corrupted d5 is the single
+// most load-bearing number in the system — signalCalibration turns it into an
+// expectancy that scales score100 by 0.55-1.30. Reading a close-derived series
+// instead removes an error that was actively degrading live scoring.
+//
+// Deliberately a ?? fallback, not a replacement: a signal the sweep has not
+// reached yet (or whose symbol has no bars) keeps its live latch, so nothing
+// loses data. Reverting the whole phase means changing this one function.
+//
+// Semantic note: perfDaily is indexed by TRADING day, the live latch by
+// CALENDAR day. Trading days are the correct reading of "5-day performance"
+// (a Friday signal's calendar-d3 lands on a Monday), but the two can differ
+// across weekends and holidays. Both remain in exportCSV (dN vs dN*) so the
+// difference stays inspectable.
+export const PERF_KEYS = ['d1', 'd3', 'd5', 'd7'];
+
+/**
+ * Read one performance checkpoint, preferring the close-derived value.
+ * @param {object} signal
+ * @param {'d1'|'d3'|'d5'|'d7'} key
+ * @returns {number|null}
+ */
+export function perfCheckpoint(signal, key) {
+  const fromClose = signal?.perfDaily?.[key];
+  if (Number.isFinite(fromClose)) return fromClose;
+  const live = signal?.perf?.[key];
+  return Number.isFinite(live) ? live : null;
+}
+
+/**
+ * Best available realized return for a signal: d5, else d3, else d1.
+ * This is the number that feeds expectancy, profit factor and per-bucket ROI,
+ * so every caller must agree on the same precedence.
+ */
+export function realizedReturn(signal, fallback = 0) {
+  for (const k of ['d5', 'd3', 'd1']) {
+    const v = perfCheckpoint(signal, k);
+    if (v != null) return v;
+  }
+  return fallback;
+}

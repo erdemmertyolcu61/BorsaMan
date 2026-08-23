@@ -4,6 +4,7 @@ import {
   istanbulDayKey, normalizeDailyPerf, lastSettledTradingDay,
   maxDrawdownPct, maxRunupPct, consistencyRatio, pathQuality, scoreSignalPath,
   aggregatePathQuality, derivePerfCheckpoints, selectBackfillTargets,
+  perfCheckpoint, realizedReturn,
 } from '../signalPerfHistory.js';
 
 describe('appendDailyPerf', () => {
@@ -293,5 +294,42 @@ describe('selectBackfillTargets (v31.22)', () => {
   it('rejects signals with no usable entry price', () => {
     expect(selectBackfillTargets([sig({ id: 1, entryPrice: 0, price: 0 })], NOW).targets).toEqual([]);
     expect(selectBackfillTargets(null, NOW).targets).toEqual([]);
+  });
+});
+
+describe('perfCheckpoint / realizedReturn (v31.23 phase 2)', () => {
+  it('prefers the close-derived checkpoint over the live latch', () => {
+    const sig = { perf: { d5: 9.9 }, perfDaily: { d5: 2.1, src: 'backfill' } };
+    expect(perfCheckpoint(sig, 'd5')).toBe(2.1);
+  });
+
+  it('falls back to the live latch when the sweep has not reached the signal', () => {
+    expect(perfCheckpoint({ perf: { d5: 4 } }, 'd5')).toBe(4);
+    expect(perfCheckpoint({ perf: { d5: 4 }, perfDaily: { d5: null } }, 'd5')).toBe(4);
+  });
+
+  it('returns null when neither source has the checkpoint', () => {
+    expect(perfCheckpoint({ perf: { d1: 1 } }, 'd5')).toBe(null);
+    expect(perfCheckpoint(null, 'd5')).toBe(null);
+    expect(perfCheckpoint({}, 'd5')).toBe(null);
+  });
+
+  it('treats a genuine 0 as data, not as missing', () => {
+    expect(perfCheckpoint({ perfDaily: { d5: 0 }, perf: { d5: 7 } }, 'd5')).toBe(0);
+    expect(realizedReturn({ perfDaily: { d5: 0 } })).toBe(0);
+  });
+
+  it('realizedReturn walks d5 -> d3 -> d1 with the same precedence', () => {
+    expect(realizedReturn({ perf: { d1: 1, d3: 2, d5: 3 } })).toBe(3);
+    expect(realizedReturn({ perf: { d1: 1, d3: 2 } })).toBe(2);
+    expect(realizedReturn({ perf: { d1: 1 } })).toBe(1);
+    // close-derived d3 beats a live d5 only for its own key; d5 still wins overall
+    expect(realizedReturn({ perf: { d5: 5 }, perfDaily: { d3: 2 } })).toBe(5);
+    expect(realizedReturn({ perfDaily: { d5: 2 }, perf: { d5: 5 } })).toBe(2);
+  });
+
+  it('returns the caller-supplied fallback when nothing is available', () => {
+    expect(realizedReturn({}, 0)).toBe(0);
+    expect(realizedReturn({}, null)).toBe(null);
   });
 });
