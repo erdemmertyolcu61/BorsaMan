@@ -194,7 +194,13 @@ function formatDateISY(d) {
 }
 
 function getHeaders(source) {
-  return SOURCE_HEADERS[source] || SOURCE_HEADERS.default;
+  // Return a COPY. The Yahoo branch below injects a Cookie into this object; with
+  // a shared reference that cookie was written onto the module-level
+  // SOURCE_HEADERS.yahoo and then re-sent on every later request handled by the
+  // same warm serverless instance — including after the crumb rotated (55 min),
+  // so a stale cookie/crumb pair kept going out. Serverless instances are reused,
+  // so per-request mutation of module state is a cross-request leak.
+  return { ...(SOURCE_HEADERS[source] || SOURCE_HEADERS.default) };
 }
 
 export default async function handler(req, res) {
