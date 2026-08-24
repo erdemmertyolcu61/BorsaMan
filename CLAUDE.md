@@ -937,6 +937,68 @@ dar aralık 0 (kapı). Sıralama beklendiği gibi.
 
 Suite 528 pass, 0 lint error. `signals.test.js` / `signalCalibration.test.js` oynamadı.
 
+## Gün-Sonu Sinyal Birikimi + Adaptif Tarama Hızı (v31.25)
+
+Kullanıcı: "bedava yapılabilecek tüm veri okuma ve AI advisor güncellemeleri" + **"sinyaller
+her gün sonu birikmeli"**. İkisi de ücretsiz; paralı veri gerekmedi.
+
+### A — `scanSchedule.js` (saf, 9 test): gün-sonu kaydı artık KAÇMIYOR
+İki ayrı boşluk ölçüldü:
+1. Kapanış taraması **18:15'teki bir dakikalık pencerede** uygulama açıksa tetikleniyordu.
+   Kullanıcı 20:00'de açarsa o günün kapanışı **hiç** kaydedilmiyordu.
+2. Günde-bir-kez populate (v31.17) `bist_last_scan_day` damgasını **herhangi** bir tarama için
+   basıyordu → sabah 09:55 taraması koştuysa gün "tamam" sayılıyor, akşam ayrı bir kapanış
+   taraması hiç yapılmıyordu. Yani kaydedilen şey günün KAPANIŞI değil, **sabahki görüntüydü**.
+
+`shouldRunEndOfDayScan(now, lastEodDay)` tetikleyiciyi **saatten güne** çevirdi: karşılaştırma
+"hangi işlem gününün kapanışı kaydedildi" (`lastSettledTradingDay` üzerinden, v31.22'den yeniden
+kullanıldı). Kendi damgası var: `bist_last_eod_scan_day`. Sonuç (bir haftalık simülasyonla
+doğrulandı): **her işlem gününe tam bir kapanış kaydı** — 22:00'de açmak yakalar, ertesi sabah
+açılıştan önce açmak dünü telafi eder (günlük kapanış barı değişmediği için kayıt dürüst),
+hafta sonu Cuma'yı yakalar, çift kayıt yok.
+
+**Ölçülen kusur, düzeltildi**: damgayı taramadan ÖNCE basıyordum → tarama başarısız olursa
+(ağ yok/proxy down) o günün kaydı **tamamen kaybolup bir daha denenmiyordu**. Artık damga
+`bist_last_scan_day` ile aynı yerde, **yalnız başarılı dispatch'te** basılıyor; gün başına 5
+deneme sınırı (ağ kopukken 60 saniyede bir tam tarama denenmesin). Önizlemede doğrulandı:
+ağ engelliyken damga `null` kalıyor — gün yakılmıyor.
+
+Çakışma da giderildi: akşam açılışta hem populate hem gün-sonu taraması ateşlenip **iki tam
+tarama** yapabiliyordu; populate artık gün-sonu taraması beklemedeyse ona bırakıyor (o zaten
+her iki damgayı da basar ve kaydedilen veri günün kapanışı olur).
+
+### B — `adaptiveThrottle.js` (saf, 7 test): kısıtlamaya yavaşlayarak cevap
+**Ölçüldü**: BigPara ardışık hızlı isteklerde **401** dönüyor ("You do not have permission..."),
+aynı URL **20 sn sonra 200**. Yani yetki hatası değil, **üst-kaynak kısıtlaması**. Sabit
+20-paralel/60ms temposu bunu tetikleyip sembolleri "veri yok" diye düşürüyordu — daha önce
+ölçülen **111/612** kapsamanın muhtemel sebeplerinden biri. Devre kesici de yanlış araç: o
+kaynağı tamamen kapatıyor, oysa doğru tepki **yavaşlamak**.
+
+`createThrottleController` bilinçli olarak **asimetrik**: kısıtlama işareti görülünce hızla
+yavaşlar (gecikme ×2, eşzamanlılık ½), temiz geçişlerde yavaşça hızlanır (3 temiz gruptan sonra
+gecikme ×0.7, +2 paralel). Taban tempoyu aşamaz, `minConcurrency`/`maxDelayMs` ile sınırlı.
+Tarama döngüsü artık sabit `SCAN_CONCURRENCY`/`CHUNK_DELAY_MS` yerine bunu kullanıyor; kısıtlama
+sinyali olarak bir gruptaki **ani başarısızlık sıçraması** (>=%40) okunuyor — HTTP durum kodu
+proxy zincirinin arkasında görünmediği için. Tarama sonunda uyarlama log'a yazılıyor.
+
+**Dürüst sınır**: bu, kapsamayı *iyileştirmeyi* hedefler; gerçek kazanç ancak canlı taramada
+ölçülebilir (önizleme tarayıcısı harici istekleri engelliyor). Kapsama sayısı zaten her taramada
+log'a yazıldığı için fark görünür olacak.
+
+### C — Deploy öncesi proxy düzeltmeleri (ayrı commit, `e8cfbec`)
+Her iki proxy handler'ı yerelde gerçek uçlara karşı çalıştırıldı; iki hata bulundu:
+- `proxy/vercel.json` **`max-age=300`** ilan ediyordu. `max-age` **tarayıcı** direktifi ve bir
+  hissenin fiyat URL'i hiç değişmiyor → Live Guard'ın 5sn/15sn kademeleri deploy sonrası
+  **sessizce çalışmayacaktı**. Edge-only (`s-maxage=120`) yapıldı, üç dosya tutarlı.
+- `getHeaders` paylaşılan nesneyi **referansla** döndürüyordu, Yahoo dalı ona Cookie yazıyordu.
+  Serverless instance'lar yeniden kullanıldığı için cookie modül state'ine yapışıp sonraki tüm
+  isteklere gidiyordu — crumb 55 dk'da döndükten sonra bile bayat çift. Kopya döndürüyor.
+
+**Geri alınan uyarı**: BigPara'yı önce "401 veriyor, bozuk" diye raporladım — **yanlıştı**,
+yukarıdaki rate-limit davranışıydı; 20 sn ara verince 200. Kodda hata yoktu.
+
+Suite 544 pass (38 dosya), 0 lint error, build temiz.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

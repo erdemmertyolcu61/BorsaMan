@@ -12,6 +12,8 @@ import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../utils/regimeGate.js';
 import { computeRelativeStrength } from '../utils/relativeStrength.js';
 import { computeTopGainerPotential, topGainerConfidenceAdjust } from '../utils/topGainerPotential.js';
+import { shouldRunEndOfDayScan, isEodCatchUp, EOD_SCAN_DAY_KEY } from '../utils/scanSchedule.js';
+import { createThrottleController } from '../utils/adaptiveThrottle.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { computeThematicAdjust, activeThemes, computeSectorMacroAdjust } from '../utils/thematicMacro.js';
 import { getPaperTradeEngine } from '../utils/PaperTradeEngine.js';
@@ -734,6 +736,10 @@ export function useAIAdvisor(portfolio) {
   const [marketRegime, setMarketRegime] = useState({ regime: 'NEUTRAL', bistChangePct: 0 });
   const runningRef = useRef(false);
   const lastAutoScanRef = useRef(0); // ML-auto continuous-scan throttle (mobile "keep working")
+  // v31.25: gun-sonu taramasi icin gun-basina deneme sayaci (ag kopukken sonsuz
+  // yeniden deneme olmasin; damga yalniz basarili dispatch'te basildigi icin
+  // aksi halde her 60 saniyede bir tam tarama denenirdi).
+  const eodTriesRef = useRef({ day: null, tries: 0 });
   // Önceki taramadan kalan sektör güç haritası — mevcut taramada sinyal skorunu besler.
   // { 'Teknoloji': 72, 'Banka': 58, ... }
   const prevSectorMapRef = useRef({});
@@ -1174,13 +1180,42 @@ export function useAIAdvisor(portfolio) {
       };
 
       // Chunk-based scanning (matches original .exe behavior)
-      for (let i = 0; i < symbols.length; i += SCAN_CONCURRENCY) {
-        const chunk = symbols.slice(i, i + SCAN_CONCURRENCY);
+      // v31.25 ADAPTIF HIZ: BigPara'nin ardisik hizli isteklerde 401 dondurdugu
+      // OLCULDU (ayni URL 20s sonra 200). Bu yetki hatasi degil, ust-kaynak
+      // kisitlamasi; sabit 20-paralel/60ms temposu onu tetikleyip sembolleri
+      // "veri yok" diye dusuruyordu. Artik kisitlama gorulunce yavaslanir,
+      // temiz geciste kademeli hizlanilir.
+      const pace = createThrottleController({
+        baseDelayMs: CHUNK_DELAY_MS,
+        baseConcurrency: SCAN_CONCURRENCY,
+      });
+      for (let i = 0; i < symbols.length; ) {
+        const { delayMs, concurrency } = pace.current();
+        const chunk = symbols.slice(i, i + concurrency);
+        const before = failedSyms.size;
         const chunkResults = await Promise.all(chunk.map(s => processSymbol(s)));
         chunkResults.forEach(r => { if (r) results.push(r); });
-        done = Math.min(i + SCAN_CONCURRENCY, symbols.length);
+        // processSymbol basarisizlari failedSyms'e ekler; bir grupta ANİ bir
+        // basarisizlik sicramasi kisitlamanin en guvenilir isareti (HTTP durum
+        // kodu proxy zincirinin arkasinda gorunmuyor).
+        const newlyFailed = failedSyms.size - before;
+        pace.onBatch(newlyFailed >= Math.max(2, Math.ceil(chunk.length * 0.4))
+          ? { throttled: newlyFailed }
+          : { ok: chunk.length - newlyFailed });
+        i += chunk.length;
+        done = Math.min(i, symbols.length);
         setScanProgress({ done, total: symbols.length });
-        if (i + SCAN_CONCURRENCY < symbols.length) await sleep(CHUNK_DELAY_MS);
+        if (i < symbols.length) await sleep(delayMs);
+      }
+      {
+        const ps = pace.stats();
+        if (ps.throttleEvents > 0) {
+          pushLog({
+            type: 'info',
+            msg: `Hiz uyarlandi: ${ps.throttleEvents} kisitlama isareti → son tempo ` +
+                 `${ps.concurrency} paralel / ${ps.delayMs}ms`,
+          });
+        }
       }
 
       // ── v31.21 YENIDEN-DENEME GECISI — "tum hisseleri tarayabilmeliyiz" ──
@@ -3225,6 +3260,12 @@ export function useAIAdvisor(portfolio) {
         // v31.17: SADECE başarılı (dispatch olmuş) taramada "bugün tarandı" damgası —
         // başarısız tarama günü bloklamasın (populate tekrar denesin).
         try { localStorage.setItem('bist_last_scan_day', new Date().toDateString()); } catch { /* ignore */ }
+        // v31.25: gun-sonu damgasi da YALNIZ basarili dispatch'te basilir. Onceden
+        // tarama baslamadan basiliyordu; tarama basarisiz olursa (ag yok, proxy
+        // down) o gunun kapanis kaydi tamamen kayboluyor ve bir daha denenmiyordu.
+        if (opts.eodTargetDay) {
+          try { localStorage.setItem(EOD_SCAN_DAY_KEY, opts.eodTargetDay); } catch { /* ignore */ }
+        }
       } catch (dispatchErr) {
         console.error('[AI Advisor] advisor-scan-complete DISPATCH FAILED — bu tarama sinyal kaydına + paper-trade\'e ulaşmayacak:', dispatchErr);
         pushLog({ type: 'err', msg: 'Sinyal dagitim hatasi: ' + (dispatchErr.message || dispatchErr) });
@@ -3246,25 +3287,55 @@ export function useAIAdvisor(portfolio) {
   // Sadece BIST acilisinda (09:55) ve kapanisindan sonra (18:15) 1'er kez otomatik tarama yapilir.
   // Geri kalan zamanlarda kullanici \"TARA / YENILE\" butonuna basarsa manuel tarama yapilir.
   useEffect(() => {
-    const iv = setInterval(() => {
+    const tick = () => {
+      if (runningRef.current) return;
       const { day, h, m } = _istanbulParts();
-      
-      // Hafta sonu ise otomatik tarama yok
-      if (day < 1 || day > 5) return;
 
-      // Sadece 09:55 ve 18:15 saatlerinde tam 1 kez calisacak (Dakikada bir calistigi icin o dakikanin icinde yakalar)
-      const isOpenTime = (h === 9 && m === 55);
-      const isCloseTime = (h === 18 && m === 15);
-
-      if (isOpenTime || isCloseTime) {
-        if (!runningRef.current) {
-          runScan({ universe: SCAN_UNIVERSE, afterHours: isCloseTime });
-        }
+      // (1) ACILIS taramasi — saat pencereli, oldugu gibi kaldi.
+      if (day >= 1 && day <= 5 && h === 9 && m === 55) {
+        runScan({ universe: SCAN_UNIVERSE, afterHours: false });
+        return;
       }
-    }, 60000); // Dakikada bir kontrol et
 
-    return () => clearInterval(iv);
-  }, [runScan]);
+      // (2) KAPANIS taramasi — v31.25: artik SAAT PENCERESI DEGIL.
+      // Eskiden yalniz 18:15'teki bir dakikalik pencerede uygulama acikken
+      // calisiyordu; kullanici 20:00'de acarsa o gunun kapanisi HIC
+      // kaydedilmiyordu. Ayrica sabah taramasi gunu damgaladigi icin aksam
+      // ayri bir kapanis taramasi hic yapilmiyordu — kaydedilen sey gunun
+      // KAPANISI degil sabahki goruntuydu. Artik tetikleyici "hangi islem
+      // gununun kapanisi kaydedildi" karsilastirmasi: uygulama gun icinde ne
+      // zaman acilirsa acilsin o gunun kapanisi tam bir kez yakalanir.
+      let lastEod = null;
+      try { lastEod = localStorage.getItem(EOD_SCAN_DAY_KEY); } catch { /* ignore */ }
+      const eod = shouldRunEndOfDayScan(Date.now(), lastEod);
+      if (eod.should) {
+        // Damga taramadan ONCE degil, basarili dispatch'te basilir (runScan
+        // icinde) — basarisiz bir tarama o gunu yakmasin. Tekrar denemeyi
+        // sinirla ki ag tamamen kopukken 60 saniyede bir tam tarama denenmesin.
+        if (eodTriesRef.current.day !== eod.targetDay) {
+          eodTriesRef.current = { day: eod.targetDay, tries: 0 };
+        }
+        if (eodTriesRef.current.tries >= 5) return;
+        eodTriesRef.current.tries++;
+        const catchUp = isEodCatchUp(Date.now(), eod.targetDay);
+        pushLog({
+          type: 'info',
+          msg: catchUp
+            ? `Gun-sonu kaydi telafi ediliyor: ${eod.targetDay} kapanisi`
+            : `Gun-sonu kaydi aliniyor: ${eod.targetDay} kapanisi`,
+        });
+        runScan({ universe: SCAN_UNIVERSE, afterHours: true, eodTargetDay: eod.targetDay });
+      }
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVisible);
+    const iv = setInterval(tick, 60000);
+    tick();                                   // acilista hemen dene (telafi yolu)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      clearInterval(iv);
+    };
+  }, [runScan, pushLog]);
 
   // ── MOBIL "SUREKLI CALIS" — ML AUTO acikken on-planda surekli tarama + resume catch-up ──
   // Platform gercegi: mobil WebView (Capacitor) uygulama ARKA PLANA atilinca JS'i dondurur
@@ -3294,6 +3365,13 @@ export function useAIAdvisor(portfolio) {
       // ("mobilde sinyal takibi calismiyor"). Uygulama acildiginda bugun henuz
       // taranmadiysa BİR kez tara → o gunun pickleri Sinyal Takibi'ne kaydedilir.
       if (!scannedToday() && afterOpen()) {
+        // v31.25: gun-sonu taramasi beklemedeyse ONA birak. Ikisi de ayni anda
+        // atesleyip ust uste iki tam tarama yapmasin — gun-sonu taramasi hem
+        // 'bist_last_eod_scan_day' hem 'bist_last_scan_day' damgasini basar,
+        // yani bu dalin isini de gorur ve kaydedilen veri gunun KAPANISI olur.
+        let lastEod = null;
+        try { lastEod = localStorage.getItem(EOD_SCAN_DAY_KEY); } catch { /* ignore */ }
+        if (shouldRunEndOfDayScan(Date.now(), lastEod).should) return;
         runScan({ universe: SCAN_UNIVERSE, afterHours: !isMarketOpen() });
         return; // runScan finally 'bist_last_scan_day' damgalar → tekrar tetiklenmez
       }
