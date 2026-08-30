@@ -187,3 +187,52 @@ describe('signalCalibration — regime-aware buckets (v2)', () => {
     expect(r.multiplier).toBeGreaterThanOrEqual(0.55);
   });
 });
+
+describe('signalCalibration — v31.28 plan-aligned learning', () => {
+  beforeEach(() => clearSignalCalibration());
+
+  const planSig = (over = {}) => ({
+    id: Math.random().toString(36), cls: 'buy', source: 'advisor', setupGrade: 'B',
+    score100: 70, status: 'closed', outcome: 'WIN', perf: { d5: 2 }, ...over,
+  });
+
+  it('expectancy comes from planReturn, not the raw checkpoint, when it exists', () => {
+    const withPlan = buildCalibrationModel(
+      Array.from({ length: 10 }, () => planSig({ planReturn: 8, perf: { d5: 2 } })));
+    const withoutPlan = buildCalibrationModel(
+      Array.from({ length: 10 }, () => planSig({ perf: { d5: 2 } })));
+    expect(withPlan.byClass.buy.expectancy).toBeCloseTo(8, 6);
+    expect(withoutPlan.byClass.buy.expectancy).toBeCloseTo(2, 6);
+  });
+
+  it('a staged exit that ends net positive counts as a WIN even when outcome is STOP_HIT', () => {
+    // The real case: 40% sold at T1, the rest stopped out at breakeven. Calling
+    // that a loss because the LAST event was a stop would teach the wrong win rate.
+    const model = buildCalibrationModel(
+      Array.from({ length: 10 }, () => planSig({ outcome: 'STOP_HIT', planReturn: 2.8, perf: { d5: -1 } })));
+    expect(model.byClass.buy.winRate).toBe(1);
+    expect(model.byClass.buy.expectancy).toBeCloseTo(2.8, 6);
+  });
+
+  it('a staged exit that ends net negative still counts as a loss', () => {
+    const model = buildCalibrationModel(
+      Array.from({ length: 10 }, () => planSig({ outcome: 'TARGET_HIT', planReturn: -3.5 })));
+    expect(model.byClass.buy.winRate).toBe(0);
+    expect(model.byClass.buy.expectancy).toBeCloseTo(-3.5, 6);
+  });
+
+  it('signals without planReturn keep the old outcome-based classification', () => {
+    const model = buildCalibrationModel(
+      Array.from({ length: 10 }, () => planSig({ outcome: 'STOP_HIT', perf: { d5: -4 } })));
+    expect(model.byClass.buy.winRate).toBe(0);
+    expect(model.byClass.buy.expectancy).toBeCloseTo(-4, 6);
+  });
+
+  it('a genuine planReturn of 0 is neither win nor loss but still counts as a sample', () => {
+    const model = buildCalibrationModel(
+      Array.from({ length: 10 }, () => planSig({ outcome: 'STOP_HIT', planReturn: 0 })));
+    expect(model.byClass.buy.samples).toBe(10);
+    expect(model.byClass.buy.winRate).toBe(0);
+    expect(model.byClass.buy.expectancy).toBe(0);
+  });
+});

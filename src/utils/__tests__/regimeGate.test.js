@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../regimeGate.js';
+import {
+  classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay,
+  counterRegimeFloor, COUNTER_REGIME_MIN_SCORE, NEUTRAL_MIN_SCORE,
+} from '../regimeGate.js';
 
 // Helper: build a rising/falling/flat close series of length n
 const rising = (n, start = 100, step = 1) => Array.from({ length: n }, (_, i) => start + i * step);
@@ -64,10 +67,10 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(out).not.toBe(picks); // new array (pure)
   });
 
-  it('NEUTRAL — sells + quality buys (score>=65) tagged counter-regime', () => {
+  it('NEUTRAL — sells + quality buys (score>=70) tagged counter-regime', () => {
     const out = applyRegimeGate(picks, 'NEUTRAL');
-    // sell D + buys clearing the 65 floor (A=80, B=66); C=50 is cut
-    expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B']);
+    // v31.28: floor 54 -> 70. Only A=80 clears it; B=66 and C=50 are cut.
+    expect(out.map(p => p.symbol)).toEqual(['D', 'A']);
     expect(out.filter(p => p.cls === 'buy').every(p => p._counterRegime === true)).toBe(true);
     expect(out.find(p => p.symbol === 'D')._counterRegime).toBeUndefined();
   });
@@ -108,7 +111,14 @@ describe('regimeGate.applyRegimeGate', () => {
   });
 
   it('NEUTRAL — caps counter-regime buys via neutralMaxBuys (3rd arg)', () => {
-    const out = applyRegimeGate(picks, 'NEUTRAL', 2);
+    // Scores chosen above the v31.28 NEUTRAL floor (70) so this isolates the CAP.
+    const high = [
+      { symbol: 'A', cls: 'buy', score: 90 },
+      { symbol: 'B', cls: 'buy', score: 85 },
+      { symbol: 'C', cls: 'buy', score: 80 },
+      { symbol: 'D', cls: 'sell', score: 30 },
+    ];
+    const out = applyRegimeGate(high, 'NEUTRAL', 2);
     expect(out.map(p => p.symbol)).toEqual(['D', 'A', 'B']); // sell + top-2 buys
   });
 
@@ -126,22 +136,34 @@ describe('regimeGate.applyRegimeGate', () => {
     expect(neutral.filter(p => p.cls === 'buy').every(p => p._watchOnly)).toBe(false);
   });
 
-  it('v31.15 defaults: NEUTRAL floor 54 / cap 8, BEAR floor 58 / cap 4', () => {
-    const many = Array.from({ length: 8 }, (_, i) => ({ symbol: `B${i}`, cls: 'buy', score: 60 + i }));
+  it('v31.28 defaults: NEUTRAL floor 70 / cap 4, BEAR floor 58 / cap 4', () => {
+    // 8 candidates spanning 72..79 — all clear BOTH floors, so this isolates the CAP.
+    const many = Array.from({ length: 8 }, (_, i) => ({ symbol: `B${i}`, cls: 'buy', score: 72 + i }));
     many.push({ symbol: 'LOW', cls: 'buy', score: 50 }); // below both floors → cut
     const neutral = applyRegimeGate(many, 'NEUTRAL');
-    expect(neutral.filter(p => p.cls === 'buy')).toHaveLength(8); // opened up 6 → 8
+    expect(neutral.filter(p => p.cls === 'buy')).toHaveLength(4); // v31.28: 8 → 4
     expect(neutral.some(p => p.symbol === 'LOW')).toBe(false);
-    // YATAY: warned AL, NOT watch-only (tradeable buy per user request)
+    // YATAY: warned AL, NOT watch-only (still a tradeable buy, just smaller+rarer)
     expect(neutral.filter(p => p.cls === 'buy').every(p => p._counterRegime && !p._watchOnly)).toBe(true);
     const bear = applyRegimeGate(many, 'BEAR');
     expect(bear.filter(p => p.cls === 'buy')).toHaveLength(4);
   });
 
-  it('v31.15: NEUTRAL floor (54) is looser than BEAR (58)', () => {
-    const p = [{ symbol: 'M', cls: 'buy', score: 55 }]; // 54 <= 55 < 58
-    expect(applyRegimeGate(p, 'NEUTRAL').map(x => x.symbol)).toEqual(['M']); // passes YATAY
-    expect(applyRegimeGate(p, 'BEAR').map(x => x.symbol)).toEqual([]);       // cut in DÜŞÜŞ
+  it('v31.28: NEUTRAL floor (70) is now STRICTER than BEAR (58) — deliberate', () => {
+    // Not a typo: BEAR buys are _watchOnly (shown, never opened), so a low floor
+    // there costs nothing. NEUTRAL buys ARE tradeable, and NEUTRAL is where the
+    // measured -1.98% net actually spends money — so that is where the floor bites.
+    const p = [{ symbol: 'M', cls: 'buy', score: 62 }]; // 58 <= 62 < 70
+    expect(applyRegimeGate(p, 'NEUTRAL').map(x => x.symbol)).toEqual([]);   // cut in YATAY
+    const bear = applyRegimeGate(p, 'BEAR');
+    expect(bear.map(x => x.symbol)).toEqual(['M']);                          // visible in DÜŞÜŞ
+    expect(bear[0]._watchOnly).toBe(true);                                   // but not tradeable
+  });
+
+  it('counterRegimeFloor is the single source shared with displayPicks', () => {
+    expect(counterRegimeFloor('BEAR')).toBe(COUNTER_REGIME_MIN_SCORE);
+    expect(counterRegimeFloor('NEUTRAL')).toBe(NEUTRAL_MIN_SCORE);
+    expect(counterRegimeFloor(null)).toBe(NEUTRAL_MIN_SCORE); // unknown → stricter
   });
 });
 

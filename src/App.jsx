@@ -101,6 +101,10 @@ export default function App() {
       entry: pick.entry || pick.price,
       stop: pick.stop,
       target: pick.target || pick.t1,
+      // v31.28: kademeli kar-alma bacaklari. planSimulation bunlarla "plana
+      // uyulsaydi ne olurdu"yu barlardan yeniden kurar; yoksa tek hedefe duser.
+      t2: pick.targetT2 ?? pick.t2 ?? null,
+      t3: pick.targetT3 ?? pick.t3 ?? null,
       rr: pick.rr,
       source: 'advisor',
       sector: pick.sector,

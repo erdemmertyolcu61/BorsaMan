@@ -200,7 +200,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
       {topPicks.length > 0 && !scanning && (
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
           <span style={{ color: 'var(--t3)', fontSize: 11 }}>En İyi:</span>
-          {deriveDisplayPicks(topPicks, scanResults, marketRegime?.regime && marketRegime.regime !== 'BULL').slice(0, 4).map(p => {
+          {deriveDisplayPicks(topPicks, scanResults, marketRegime?.regime && marketRegime.regime !== 'BULL', marketRegime?.regime).slice(0, 4).map(p => {
             const isSell = p.cls === 'sell';
             const isHold = p.cls === 'hold' || p.cls === 'neutral';
             // Renk sinyale gore: AL=yesil, SAT=kirmizi, TUT=notr gri (yaniltmasin)
@@ -327,7 +327,7 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
     // v29: SHARED derivation — header strip ve panel AYNI picks'i gosterir.
     // v29.2: DUSUS/YATAY rejiminde emergency filler/fallback kapatilir (regimeRestrict).
     const regimeRestrict = !!(marketRegime?.regime && marketRegime.regime !== 'BULL');
-    setDisplayPicks(deriveDisplayPicks(topPicks, scanResults, regimeRestrict));
+    setDisplayPicks(deriveDisplayPicks(topPicks, scanResults, regimeRestrict, marketRegime?.regime));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUpdate]); // Sadece scan bitisinde calis — topPicks/scanResults bunu takip etmesin
 

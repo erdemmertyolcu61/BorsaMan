@@ -57,15 +57,27 @@ describe('deriveDisplayPicks', () => {
     expect(out.map(p => p.symbol)).toEqual(['STAR']);
   });
 
-  it('regimeRestrict=true with empty topPicks → only quality names, capped at 8', () => {
+  it('regimeRestrict=true with empty topPicks → only quality names, capped at 4', () => {
     const scan = Array.from({ length: 10 }, (_, i) =>
       pick({ symbol: `S${i}`, avgVolumeTL: 2_000_000, score: 70, confidence: 70 - i }));
     const out = deriveDisplayPicks([], scan, true);
-    expect(out.length).toBe(8); // v31.15: counter-regime target 6 → 8
+    expect(out.length).toBe(4); // v31.28: target 8 → 4, in step with the gate cap
     expect(out.every(p => p._counterRegime === true)).toBe(true); // all warned
-    // and a sub-58 scan yields nothing rather than filling with junk
+    // and a sub-floor scan yields nothing rather than filling with junk
     const weak = Array.from({ length: 10 }, (_, i) => pick({ symbol: `W${i}`, avgVolumeTL: 2_000_000, score: 50 }));
     expect(deriveDisplayPicks([], weak, true)).toEqual([]);
+  });
+
+  it('v31.28: the filler floor is regime-specific and matches the gate', () => {
+    // score 62 sits between the BEAR floor (58) and the NEUTRAL floor (70).
+    // If this branch used one blended floor it would re-admit exactly the names
+    // applyRegimeGate just removed — the v31.4 back door.
+    const scan = Array.from({ length: 6 }, (_, i) =>
+      pick({ symbol: `S${i}`, avgVolumeTL: 2_000_000, score: 62, confidence: 62 - i }));
+    expect(deriveDisplayPicks([], scan, true, 'NEUTRAL')).toEqual([]);        // cut
+    expect(deriveDisplayPicks([], scan, true, 'BEAR').length).toBe(4);        // shown
+    // omitted regime falls back to the STRICTER floor, never the weaker one
+    expect(deriveDisplayPicks([], scan, true)).toEqual([]);
   });
 
   it('empty topPicks + scanResults (no restrict) → fresh fallback with _fallback flag', () => {

@@ -19,6 +19,25 @@ function DayChip({ value }) {
   return <span style={{ fontSize: 9, color: c, fontWeight: 600 }}>{value > 0 ? '+' : ''}{value.toFixed(1)}%</span>;
 }
 
+// v31.28: PLAN getirisi — sistemin ARTIK ÖĞRENDİĞİ sayı.
+// Ham 1G/3G/5G "o gün fiyat neredeydi" der; bu ise "İŞLEM YÖNETİM PLANI'na
+// (T1'de %40 sat, +%3'te stop başabaşa, +%5 üstü yarısını kilitle) uyulsaydı ne
+// kalırdı" der. İkisi bilerek yan yana duruyor: fark denetlenebilir kalsın.
+const PLAN_EXIT_TR = { stop: 'stop/trailing ile çıkış', targets: 'hedefler dolduruldu', timeout: 'süre doldu, kapanıştan çıkış' };
+function PlanChip({ signal }) {
+  const v = signal?.planReturn;
+  if (!Number.isFinite(v)) return <span style={{ fontSize: 9, color: 'var(--t3)' }} title="Plan getirisi henüz hesaplanmadı — günlük barlar geldiğinde dolar.">—</span>;
+  const c = v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--t3)';
+  const why = PLAN_EXIT_TR[signal.planExitReason] || signal.planExitReason || '';
+  return (
+    <span
+      title={`Plana uyulsaydı: ${v > 0 ? '+' : ''}${v}%${why ? ` (${why})` : ''}${signal.planBarsHeld ? ` · ${signal.planBarsHeld} bar` : ''}
+Kademeli çıkış + başabaş/trailing stop uygulanmış hali. Kalibrasyon bu sayıdan öğrenir.`}
+      style={{ fontSize: 9, color: c, fontWeight: 700, borderBottom: '1px dotted var(--border)' }}
+    >{v > 0 ? '+' : ''}{v.toFixed(1)}%</span>
+  );
+}
+
 // v31.14: gün-gün getiri mini-sparkline — her nokta bir günün giriş-göreli getirisi.
 // Kullanıcı "hisseleri gün gün arttı azaldı" görebilsin diye kompakt bar-strip.
 function DailySpark({ data }) {
@@ -124,12 +143,15 @@ function SignalCard({ s, onAnalyze }) {
       <div style={{ background: 'var(--bg3)', borderRadius: 5, padding: '7px 9px' }}>
         <div style={{ fontSize: 8, color: 'var(--t3)', marginBottom: 4, letterSpacing: 0.5 }}>GÜN-GÜN DEĞİŞİM</div>
         <DailySpark data={s.dailyPerf} />
-        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+        <div style={{ display: 'flex', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
           {days.map(([label, v]) => (
             <span key={label} style={{ fontSize: 9, color: 'var(--t3)' }}>
               {label} <DayChip value={v} />
             </span>
           ))}
+          <span style={{ fontSize: 9, color: 'var(--t3)' }}>
+            PLAN <PlanChip signal={s} />
+          </span>
         </div>
       </div>
     </div>
@@ -201,6 +223,10 @@ export default function SignalsTab({ tracker, onAnalyze }) {
           case 'd5':
             aVal = perfCheckpoint(a, 'd5') ?? -999;
             bVal = perfCheckpoint(b, 'd5') ?? -999;
+            break;
+          case 'plan':
+            aVal = Number.isFinite(a.planReturn) ? a.planReturn : -999;
+            bVal = Number.isFinite(b.planReturn) ? b.planReturn : -999;
             break;
           case 'daily': {
             const last = (x) => {
@@ -434,6 +460,7 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                         { key: 'd3', label: '3G', align: 'center' },
                         { key: 'd5', label: '5G', align: 'center' },
                         { key: 'd7', label: '7G', align: 'center' },
+                        { key: 'plan', label: 'PLAN', align: 'center' },
                         { key: 'daily', label: 'GÜN-GÜN', align: 'center' },
                         { key: 'score', label: 'Skor', align: 'center' },
                         { key: 'outcome', label: 'Sonuç', align: 'center' },
@@ -485,6 +512,7 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={perfCheckpoint(s, 'd3')} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={perfCheckpoint(s, 'd5')} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><DayChip value={perfCheckpoint(s, 'd7')} /></td>
+                          <td style={{ padding: '4px 6px', textAlign: 'center' }}><PlanChip signal={s} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><DailySpark data={s.dailyPerf} /></td>
                           <td style={{ padding: '4px 6px', textAlign: 'center', fontSize: 10 }}>{s.score100 ? s.score100.toFixed(0) : '—'}</td>
                           <td style={{ padding: '4px 6px', textAlign: 'center' }}><OutcomeBadge outcome={s.outcome || 'OPEN'} /></td>

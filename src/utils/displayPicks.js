@@ -11,12 +11,14 @@
 // run, but every buy shown is tagged `_counterRegime` so the UI can warn (⚠ badge
 // + banner). Measured edge is negative outside YUKSELIS — surfaced, not hidden.
 
-import { COUNTER_REGIME_MIN_SCORE } from './regimeGate.js';
+import { counterRegimeFloor } from './regimeGate.js';
 
 // Outside YUKSELIS the panel targets fewer buys (matches applyRegimeGate's
-// neutralMaxBuys=6) so the filler can't re-inflate a counter-regime list back to 8.
-// v31.5: 4 → 6 (relaxed with the gate; user wanted more names visible).
-export const COUNTER_REGIME_BUY_TARGET = 8;
+// neutralMaxBuys) so the filler can't re-inflate a counter-regime list.
+// v31.28: 8 → 4 — the gate cap dropped to 4, and if this target stayed at 8 the
+// filler would quietly refill the list with exactly the sub-floor names the gate
+// just removed (the v31.4 back door). Gate cap and display target move together.
+export const COUNTER_REGIME_BUY_TARGET = 4;
 
 function isUnsafe(r) {
   const tp = Math.max(r.todayPumpReal || 0, r.recentPump || 0, r.change || 0);
@@ -53,9 +55,13 @@ const pickSort = (a, b) => {
  * @param {Array} topPicks - backend-filtered picks
  * @param {Array} scanResults - full scan output (for fillers/fallback)
  * @param {boolean} regimeRestrict - true in DUSUS/YATAY → tag buys _counterRegime
+ * @param {'BULL'|'NEUTRAL'|'BEAR'|null} [regime] - regime-specific score floor.
+ *   Omitted → the stricter (NEUTRAL) floor, so an unknown regime never leaks the
+ *   weaker tier through this branch.
  * @returns {Array} the picks to display, deterministic from the inputs (buys first)
  */
-export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestrict = false) {
+export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestrict = false,
+                                   regime = null) {
   const scan = Array.isArray(scanResults) ? scanResults : [];
   if (topPicks.length > 0) {
     // v31.6: NO "yarina umut" padding. The panel shows the system's GENUINE
@@ -80,7 +86,7 @@ export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestri
     };
     // v31.4: in a counter-regime the score floor and the smaller target apply here
     // too — this branch must not become a back door for the sub-65 tier.
-    const minScore = regimeRestrict ? COUNTER_REGIME_MIN_SCORE : 45;
+    const minScore = regimeRestrict ? counterRegimeFloor(regime) : 45;
     const target = regimeRestrict ? COUNTER_REGIME_BUY_TARGET : 8;
     let pool = scanResults.filter(r => !isUnsafe(r) && (r.score || 0) >= minScore && (r.avgVolumeTL || 0) >= 1_000_000);
     if (pool.length < target) {

@@ -1779,9 +1779,14 @@ export function calcPosition(accountSize, riskPct = 2, entry, stop, options = {}
   const { signalType = 'default', confidence = 50, useKelly = false } = options;
   // regimeMult: regime risk multiplier × governor kill-switch (pick._positionSizeMult).
   // Applied LAST so Kelly/confidence/grade logic stays comparable across regimes.
-  const regimeMult = Number.isFinite(options.regimeMult) && options.regimeMult > 0
-    ? Math.min(options.regimeMult, 1.5)
-    : 1;
+  // v31.28: ACIK SIFIR ile GECERSIZ ayrilir. positionSizing.applyConvictionSizing
+  // izle-only (DUSUS) pick'lere 0 doner — "pozisyon ACMA" demek. Eski guard
+  // `> 0 ? x : 1` oldugu icin 0'i gecersiz sayip TAM boyuta ceviriyordu, yani
+  // niyetin tam tersini yapardi. undefined/negatif hala 1'e duser.
+  const regimeMult = options.regimeMult === 0 ? 0
+    : (Number.isFinite(options.regimeMult) && options.regimeMult > 0
+      ? Math.min(options.regimeMult, 1.5)
+      : 1);
   
   const riskPerShare = Math.abs(entry - stop);
   if (riskPerShare <= 0) return { shares: 0, cost: 0, maxLoss: 0, method: 'fixed' };
@@ -1847,6 +1852,10 @@ export function calcPosition(accountSize, riskPct = 2, entry, stop, options = {}
 
   // Regime/governor scaling: in BEAR/VOLATILE tape (or governor DEFENSE) the
   // same setup opens with a fraction of the capital.
+  if (regimeMult === 0) {
+    return { shares: 0, cost: 0, maxLoss: 0, riskPct: 0, costPct: 0,
+             method: 'regime_blocked', regimeMult: 0 };
+  }
   if (regimeMult !== 1) shares = Math.floor(shares * regimeMult);
 
   // Cap by available cash

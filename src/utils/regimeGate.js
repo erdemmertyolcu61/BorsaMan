@@ -50,11 +50,31 @@ export function regimeLabel(regime) {
 // 58 lets the upper "early" band through (still warned via _counterRegime), while
 // the guaranteed daily pick (ensureBestOfDay) makes sure a name always shows.
 export const COUNTER_REGIME_MIN_SCORE = 58;
-// v31.15: YATAY (NEUTRAL) tabanı DÜŞÜŞ'ten (58) daha açık. Kullanıcı "YATAY'ı biraz
-// aç, uyarılı ama izle-değil-AL göster" dedi. Ölçüm YATAY'da negatif (-%1,68) ama
-// DÜŞÜŞ kadar (-%3,36) değil → daha fazla aday, hepsi ⚠ REJİME KARŞI uyarılı ama
-// _watchOnly DEĞİL (tradeable AL). DÜŞÜŞ 58 + watch-only olarak korunur.
-export const NEUTRAL_MIN_SCORE = 54;
+
+// v31.28 — YATAY TABANI 54 → 70. Kullanicinin kendi olculen rakamlariyla yapilan
+// aritmetik: islem basina net beklenti YUKSELIS +%0,84 / YATAY -%1,98 (%0,3
+// gidis-donus maliyeti dahil). YUKSELIS gunleri %70 bile olsa karisimin neti ~0 —
+// yani YATAY islemleri YUKSELIS'in tum kazancini siliyor. v31.15'te bu taban
+// kullanici istegiyle 54'e cekilmisti ("YATAY'i biraz ac"); kullanici simdi
+// onceligi kar olarak koydu ve bu aritmetigi gorup onayladi.
+//
+// DURUSTLUK NOTU: bu dosyanin basligindaki olcum "score tier does NOT save you"
+// diyor — yani YUKSELIS disinda yuksek skor tek basina kurtarici DEGIL. O yuzden
+// tabani yukseltmek TEK BASINA bir duzeltme degil; asil mekanizma toplam maruziyeti
+// dusurmek: daha AZ aday (cap 8→4) + daha KUCUK pozisyon (positionSizing.js
+// NEUTRAL_EXTRA_MULT=0.5) + bu taban birlikte YATAY maruziyetini ~1/4'e indirir.
+// Panelin bos kalmasi engellenir (ensureBestOfDay hala garantili bir isim koyar).
+export const NEUTRAL_MIN_SCORE = 70;
+
+/**
+ * Rejim-ozel kalite tabani — TEK KAYNAK.
+ * Hem `applyRegimeGate` hem `displayPicks` fallback dali bunu kullanir; ikisi
+ * ayrisirsa panel filler'i gate'in eledigi adaylari geri sizdirir (v31.4'te
+ * yasanan hata).
+ */
+export function counterRegimeFloor(regime) {
+  return regime === 'BEAR' ? COUNTER_REGIME_MIN_SCORE : NEUTRAL_MIN_SCORE;
+}
 
 /**
  * Apply the regime buy-gate to a pick list (buy-oriented; sells pass through).
@@ -67,19 +87,18 @@ export const NEUTRAL_MIN_SCORE = 54;
  * Pure: returns a NEW array, never mutates the input.
  * @param {Array<{cls?: string, score?: number}>} picks
  * @param {'BULL'|'NEUTRAL'|'BEAR'} regime
- * @param {number} [neutralMaxBuys=6] - max counter-regime buys shown in NEUTRAL
+ * @param {number} [neutralMaxBuys=4] - max counter-regime buys shown in NEUTRAL
  * @param {number} [bearMaxBuys=4] - max counter-regime buys shown in BEAR
- * @param {number} [minScore=58] - quality floor for counter-regime buys
+ * @param {number} [minScore=null] - quality floor override (default: regime-specific)
  * @returns {Array}
  */
-export function applyRegimeGate(picks, regime, neutralMaxBuys = 8, bearMaxBuys = 4,
+export function applyRegimeGate(picks, regime, neutralMaxBuys = 4, bearMaxBuys = 4,
                                 minScore = null) {
   if (!Array.isArray(picks)) return [];
   if (regime === 'BULL') return picks.slice(); // copy for purity
   const cap = regime === 'BEAR' ? Math.max(0, bearMaxBuys) : Math.max(0, neutralMaxBuys);
-  // v31.15: rejim-özel taban — açık geçilmezse YATAY 54, DÜŞÜŞ 58.
-  const floor = minScore != null ? minScore
-    : (regime === 'BEAR' ? COUNTER_REGIME_MIN_SCORE : NEUTRAL_MIN_SCORE);
+  // Rejim-ozel taban (tek kaynak): YATAY 70, DUSUS 58.
+  const floor = minScore != null ? minScore : counterRegimeFloor(regime);
   const sells = picks.filter(p => p.cls === 'sell');
   const buys = picks
     .filter(p => p.cls === 'buy' && (p.score || 0) >= floor) // kalite tabani (rejim-özel)

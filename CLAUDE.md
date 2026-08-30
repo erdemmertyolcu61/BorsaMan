@@ -999,6 +999,81 @@ yukarıdaki rate-limit davranışıydı; 20 sn ara verince 200. Kodda hata yoktu
 
 Suite 544 pass (38 dosya), 0 lint error, build temiz.
 
+## Karlilik Uclusu: Rejim Secililigi + Plan-Uyumlu Ogrenme + Konviksiyon Boyutu (v31.28)
+
+Kullanici: "Uygulama bana kar ettirsin yeterki. Baska ne duzeltmeler yapilabilir." Uc bulgu
+kodda dogrulandi ve uygulandi.
+
+### A — YATAY maruziyeti ~1/4'e indirildi (aritmetik, tahmin degil)
+Kullanicinin kendi olculen rakamlari + `tradingCosts.TOTAL_COST_PCT` (%0,3 gidis-donus):
+
+| Rejim | Brut | Net |
+|---|---|---|
+| YUKSELIS | +%1,14 | **+%0,84** |
+| YATAY | -%1,68 | **-%1,98** |
+| DUSUS | -%3,36 | -%3,66 *(zaten izle-only)* |
+
+Karisim: YUKSELIS gunleri %40 → -%0,85 · %50 → -%0,57 · %60 → -%0,29 · **%70 → -%0,01** ·
+sadece YUKSELIS → **+%0,84**. Yani YATAY islemleri YUKSELIS'in TUM kazancini siliyordu.
+
+- `regimeGate.NEUTRAL_MIN_SCORE` 54 → **70**; `applyRegimeGate` neutralMaxBuys 8 → **4**.
+- `displayPicks.COUNTER_REGIME_BUY_TARGET` 8 → **4** — gate'i sikip display target'i birakmak
+  v31.4'teki arka kapinin aynisi olurdu (filler tam da elenen isimleri geri koyar).
+- Yeni `regimeGate.counterRegimeFloor(regime)` **tek kaynak**; `deriveDisplayPicks` artik 4.
+  parametre olarak rejimi alir (verilmezse DAHA SIKI olan YATAY tabanina duser — bilinmeyen
+  rejim asla zayif kademeyi sizdirmaz).
+- **DUSUS tabani 58'de KALDI ve bu bilincli**: DUSUS AL'lari `_watchOnly` (gorunur, asla
+  acilmaz) → dusuk taban orada para harcamiyor. YATAY AL'lari tradeable, para orada gidiyor.
+  Yani YATAY tabani artik DUSUS'ten SIKI — ters gibi gorunur, degil.
+- **Durustluk**: bu dosyanin olcumu "score tier does NOT save you" diyor — taban tek basina
+  duzeltme DEGIL. Mekanizma toplam maruziyet: daha az aday × daha kucuk pozisyon × taban.
+- `ensureBestOfDay` korundu → panel yine asla bos kalmaz (kullanicinin v31.5 istegi).
+
+### B — Sistem artik KENDI talimatindan ogreniyor (`planSimulation.js`, 16 test)
+`buildTradePlan` "T1'de %40 sat, +%3'te stop basabasa, +%5 ustu yarisini kilitle" diyordu;
+`signalCalibration` ise ham `realizedReturn` (d5→d3→d1) ogreniyordu — **iki farkli strateji**.
+`simulatePlanReturn(signal, bars)` plana uyulsaydi ne olurdu'yu gunluk barlardan yeniden kurar.
+
+Konvansiyonlar (dokumante): yalniz CIKIS plani simule edilir (kademeli girisin dolup dolmadigi
+gun ici siralamaya bagli, gunluk bardan cikarilamaz — varsayim uretmek yerine olculebilir olani
+olceriz); bar icinde ONCE stop kontrol edilir (signalOutcome ile ayni durust konvansiyon);
+trailing seviye bar KAPANDIKTAN sonra ve SONRAKI bardan itibaren gecerli (ayni bara geriye donuk
+uygulamak ileriye bakmak olurdu).
+
+**Gercek veriyle dogrulandi** (kullanicinin BAHKM vakasi, giris 127,90 / T1 137,49 / T2 145 /
+T3 155, gun-gun +2,1/+6,3/+9,4/+12,82/+24,47): plan T1'i +%7,5'te, T2'yi +%13,37'de, T3'u
++%21,19'da doldurur → **planReturn +%13,37**, ham d5 ise **+%24,47**. Sistem kazanan bir
+islemden 11 puan FAZLA ogreniyordu (kaybedenlerde simetrik olarak eksik).
+
+- `learningReturn(sig, fallback)`: planReturn varsa o, yoksa eski checkpoint — **veri kaybi yok**.
+- Kazanc/kayip siniflandirmasi da ayni kaynagi izler: T1'i alip basabas stop'a dusen islem NET
+  POZITIF'tir; `outcome` STOP_HIT dese bile "kayip" saymak winRate'i yanlis ogretirdi.
+- Sweep barlari zaten cekiyordu → ek istek yok. UI: Sinyal Takibi'nde **PLAN** kolonu (mobil
+  kartta da) ham 1G/3G/5G/7G'nin YANINDA — fark denetlenebilir kalsin. CSV'ye `Plan%` +
+  `PlanCikis` eklendi. `recordAdvisorPick` artik `t2`/`t3` bacaklarini da kaydediyor.
+
+### C — Konviksiyon-bazli pozisyon boyutu (`positionSizing.js`, 12 test)
+`_positionSizeMult` yalniz rejim × governor'du → ayni rejimde score 82 sniper ile score 56 early
+AYNI boyutta aciliyordu. `applyConvictionSizing` tier carpani (sniper 1,0 / flagged 0,75 /
+early 0,5) + YATAY icin ek 0,5 ekler. Olculen cikti: sniper/BULL **1,0** → early/BULL 0,5 →
+sniper/YATAY 0,5 → early/YATAY **0,25** → DUSUS watch-only **0**.
+Wiring `stampSegKeys` icinde (tier + `_regime` tam orada damgalanir), `_convictionSized`
+bayragiyla idempotent (ayni nesne hem allResults hem finalPicks'te olabilir).
+
+**Yol ustunde bulunan gercek bug**: `calcPosition` ve `PaperTradeEngine` guard'lari
+`mult > 0 ? mult : 1` idi → acik **0** ("pozisyon ACMA") gecersiz sayilip **TAM boyuta**
+cevriliyordu, yani niyetin tam tersi. Ikisi de artik acik 0'i gecersizden ayiriyor
+(`method: 'regime_blocked'` / erken return). `_watchOnly` zaten upstream eleniyordu; bu ikinci
+savunma katmani.
+
+**Durust sinir (uc madde icin de)**: bunlar edge YARATMAZ — sermayeyi olculen edge'in yogun
+oldugu yere kaydirir ve sistemin dogru metrikten ogrenmesini saglar. Ustelik yukaridaki rejim
+olcumleri v31.20/v31.22/v31.23/v31.26 duzeltmelerinden ONCE alindi (sektor confidence sismesi,
+olu haber hatti, bozuk d5, hic kapanmayan sinyaller) → **yon guvenilir, kesin degerler degil**.
+Temiz olcum ancak simdi mumkun; 3-4 hafta veri birikince bu tablo yeniden cikarilmali.
+
+Test 606 pass (42 dosya), 0 lint error (79 warning, ratchet 90), build temiz.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

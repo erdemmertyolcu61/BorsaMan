@@ -9,6 +9,7 @@ import {
 } from '../utils/signalPerfHistory.js';
 import { fetchSingle } from '../utils/fetchEngine.js';
 import { evaluateOutcomeFromBars, isClosingOutcome } from '../utils/signalOutcome.js';
+import { simulatePlanReturn } from '../utils/planSimulation.js';
 
 let globalNotificationHandler = null;
 
@@ -371,7 +372,7 @@ export function useSignalTracker() {
   }, [signals]);
 
   const exportCSV = useCallback(() => {
-    const headers = ['Tarih', 'Sembol', 'Sınıf', 'Kaynak', 'Giriş', 'Son Fiyat', 'Hedef', 'Stop', 'R/R', 'Skor', '1G%', '3G%', '5G%', '7G%', '1G*', '3G*', '5G*', '7G*', 'Sonuç', 'Durum'];
+    const headers = ['Tarih', 'Sembol', 'Sınıf', 'Kaynak', 'Giriş', 'Son Fiyat', 'Hedef', 'Stop', 'R/R', 'Skor', '1G%', '3G%', '5G%', '7G%', '1G*', '3G*', '5G*', '7G*', 'Plan%', 'PlanÇıkış', 'Sonuç', 'Durum'];
     // *-suffixed columns are the CLOSE-derived checkpoints (v31.22 phase 1).
     // Nothing consumes them yet — they exist so the delta against the live
     // latches can be eyeballed before any reader is switched over.
@@ -394,6 +395,11 @@ export function useSignalTracker() {
       s.perfDaily?.d3?.toFixed(2) ?? '',
       s.perfDaily?.d5?.toFixed(2) ?? '',
       s.perfDaily?.d7?.toFixed(2) ?? '',
+      // v31.28: kalibrasyonun gercekten ogrendigi sayi. Ham checkpoint'lerle YAN
+      // YANA duruyor ki "plan ne kazandirdi vs fiyat nerede kapandi" farki
+      // disaridan denetlenebilsin.
+      Number.isFinite(s.planReturn) ? s.planReturn.toFixed(2) : '',
+      s.planExitReason || '',
       s.outcome || '',
       s.status || '',
     ]);
@@ -636,8 +642,22 @@ export function useSignalTracker() {
               ? evaluateOutcomeFromBars(sig, bars)
               : null;
 
+            // v31.28: PLANA UYULSAYDI NE OLURDU.
+            // Barlar zaten elimizde. Kademeli cikis + basabas/trailing stop
+            // uygulanmis gibi getiriyi yeniden kurar → kalibrasyon ham d5 yerine
+            // sistemin KENDI talimatinin sonucundan ogrenir. Her pasta yeniden
+            // hesaplanir (barlardan turevi oldugu icin idempotent, bar geldikce
+            // yakinsar). Simulasyon uretemezse alan hic yazilmaz → learningReturn
+            // eski checkpoint getirisine duser, veri kaybi olmaz.
+            const plan = simulatePlanReturn(sig, bars);
+
             updates[sig.id] = {
               dailyPerf: merged,
+              ...(plan ? {
+                planReturn: plan.planReturn,
+                planExitReason: plan.exitReason,
+                planBarsHeld: plan.barsHeld,
+              } : {}),
               ...(barOutcome ? {
                 outcome: barOutcome.outcome,
                 status: isClosingOutcome(barOutcome.outcome) ? 'closed' : sig.status,

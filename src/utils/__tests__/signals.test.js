@@ -115,6 +115,15 @@ describe('calcPosition', () => {
     expect(bear.regimeMult).toBe(0.4);
   });
 
+  it('v31.28: an explicit regimeMult of 0 blocks the position, it does NOT mean "default"', () => {
+    // positionSizing returns 0 for watch-only picks. The old guard was
+    // `> 0 ? x : 1`, so 0 fell through to FULL size — the exact opposite of intent.
+    const blocked = calcPosition(10000, 2, 100, 95, { regimeMult: 0 });
+    expect(blocked.shares).toBe(0);
+    expect(blocked.method).toBe('regime_blocked');
+    expect(blocked.maxLoss).toBe(0);
+  });
+
   it('regimeMult caps at 1.5 and ignores invalid values', () => {
     const base = calcPosition(10000, 2, 100, 95);
     const capped = calcPosition(10000, 2, 100, 95, { regimeMult: 5 });

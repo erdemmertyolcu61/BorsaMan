@@ -1,4 +1,5 @@
 import { realizedReturn } from './signalPerfHistory.js';
+import { learningReturn } from './planSimulation.js';
 // ============================================================
 // SIGNAL CALIBRATION ENGINE
 // ------------------------------------------------------------
@@ -42,15 +43,24 @@ function mkBucket() {
 function pushSignal(bucket, sig) {
   if (!sig || sig.status !== 'closed') return;
   bucket.closed += 1;
-  // v31.23 phase 2: prefer the close-derived checkpoint. This is the number
-  // that becomes expectancy -> the 0.55-1.30 multiplier on score100, so the
-  // corrupted live latch was directly degrading live scoring.
-  const roi = safeNum(realizedReturn(sig, null), 0);
+  // v31.28: OGREN, SANA SOYLEDIGIN SEYI.
+  // Sistem `buildTradePlan` ile "T1'de %40 sat, +%3'te stop'u basabasa cek"
+  // diyor ama kalibrasyon ham d5 getirisinden ogreniyordu — iki farkli strateji.
+  // `planReturn` (planSimulation, barlardan yeniden kurulur) varsa O kullanilir;
+  // yoksa v31.23'un kapanis-turevli checkpoint'ine duser. Hicbir veri kaybolmaz.
+  const roi = safeNum(learningReturn(sig, realizedReturn(sig, null)), 0);
   bucket.sumRoi += roi;
-  if (sig.outcome === 'TARGET_HIT' || sig.outcome === 'WIN') {
+
+  // Kazanc/kayip siniflandirmasi da ayni kaynagi izlemeli: kademeli cikista
+  // T1'i alip basabas stop'a dusen bir islem NET POZITIFTIR — `outcome`
+  // STOP_HIT dese bile onu "kayip" saymak winRate'i yanlis ogretir.
+  const planned = Number.isFinite(sig.planReturn);
+  const isWin = planned ? roi > 0 : (sig.outcome === 'TARGET_HIT' || sig.outcome === 'WIN');
+  const isLoss = planned ? roi < 0 : (sig.outcome === 'STOP_HIT' || sig.outcome === 'LOSS');
+  if (isWin) {
     bucket.wins += 1;
     bucket.sumWinRoi += Math.max(0, roi);
-  } else if (sig.outcome === 'STOP_HIT' || sig.outcome === 'LOSS') {
+  } else if (isLoss) {
     bucket.losses += 1;
     bucket.sumLossRoi += Math.min(0, roi);
   }

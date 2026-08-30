@@ -309,6 +309,13 @@ export class PaperTradeEngine {
     // 33% max capital allocation × regime/governor multiplier.
     // pick._positionSizeMult carries regimeEngine.riskMult × profitGovernor
     // positionMult — in BEAR/DEFENSE the same setup opens with a fraction.
+    // v31.28: acik 0 = "acma" (izle-only). Eskiden `> 0 ? x : 1` guard'i 0'i
+    // gecersiz sayip TAM boyuta ceviriyordu. _watchOnly zaten yukarida
+    // eleniyor (satir ~224); bu ikinci savunma katmani.
+    if (pick._positionSizeMult === 0) {
+      console.warn('[PaperTrade] SKIP', pick.symbol, '- position size multiplier is 0 (watch-only)');
+      return;
+    }
     const posMult = Number.isFinite(pick._positionSizeMult) && pick._positionSizeMult > 0
       ? Math.min(pick._positionSizeMult, 1.5)
       : 1;

@@ -10,6 +10,7 @@ import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../utils/regimeGate.js';
+import { applyConvictionSizing } from '../utils/positionSizing.js';
 import { computeRelativeStrength } from '../utils/relativeStrength.js';
 import { computeTopGainerPotential, topGainerConfidenceAdjust } from '../utils/topGainerPotential.js';
 import { shouldRunEndOfDayScan, isEodCatchUp, EOD_SCAN_DAY_KEY } from '../utils/scanSchedule.js';
@@ -3230,6 +3231,17 @@ export function useAIAdvisor(portfolio) {
             r.convictionTier = r.cls === 'sell' ? 'sell' : s >= 75 ? 'sniper' : s >= 65 ? 'flagged' : 'early';
           }
           if (!r._regime) r._regime = marketRegime;
+          // v31.28: KONVIKSIYON-BAZLI BOYUT. Buraya kadar `_positionSizeMult`
+          // yalniz rejim (regimeEngine.riskMult) x governor'du — ayni rejimde
+          // score 82'lik sniper ile score 56'lik early AYNI buyuklukte
+          // aciliyordu. Tier ve _regime tam BURADA damgalandigi icin tek dogru
+          // nokta burasi. `_convictionSized` bayragi idempotent yapar: ayni
+          // nesne hem allResults hem finalPicks icinde olabilir, carpan iki kez
+          // uygulanmamali.
+          if (!r._convictionSized) {
+            r._positionSizeMult = applyConvictionSizing(r._positionSizeMult, r, marketRegime);
+            r._convictionSized = true;
+          }
         }
       };
       stampSegKeys(allResults);
