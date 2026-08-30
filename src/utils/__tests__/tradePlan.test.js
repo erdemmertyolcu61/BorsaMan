@@ -18,11 +18,19 @@ describe('buildTradePlan', () => {
     expect(p.breakout).toBe(101);  // entry + 0.5*ATR
   });
 
-  it('stages profit taking at T1/T2/T3 with 40/30/30 fractions', () => {
+  it('v31.30: targets are REFERENCE levels, not sell orders — exit is the trailing stop', () => {
+    // Measured over 26,855 signals: staged selling at T1/T2/T3 returned +0.99% in
+    // BULL against +2.03% for trailing-only, while the average LOSS was unchanged
+    // (-4.87% vs -4.80%). The stop provides the protection; scaling out only
+    // clipped the winners. Trailing-only won in all 5 years measured.
     const p = buildTradePlan(buy);
-    expect(p.exitSteps.map(s => s.at)).toEqual([108, 112, 118]);
-    expect(p.exitSteps.map(s => s.fraction)).toEqual([40, 30, 30]);
-    expect(p.exitSteps[0].note).toMatch(/\+8%/); // (108-100)/100
+    expect(p.exitSteps.map(s => s.at)).toEqual([108, 112, 118, null]);
+    // No target carries a sell fraction any more; the whole position exits on the trail.
+    expect(p.exitSteps.slice(0, 3).every(s => s.fraction === 0)).toBe(true);
+    expect(p.exitSteps.at(-1).fraction).toBe(100);
+    expect(p.exitSteps[0].note).toMatch(/\+8%/);      // (108-100)/100
+    expect(p.exitSteps[0].note).toMatch(/SATMA/);      // explicit: do not sell here
+    expect(p.exitSteps.at(-1).note).toMatch(/trailing/i);
   });
 
   it('trailing exit when T3 is absent', () => {

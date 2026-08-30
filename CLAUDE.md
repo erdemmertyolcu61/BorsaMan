@@ -1139,6 +1139,71 @@ olan 36 sembolun 24'u (%67) pozitif — birkac isme bagli degil.
 konviksiyon boyutu yonu) olcumle destekleniyor. Degistirilmesi gereken bir esik cikmadi —
 degisen sey, artik bunlarin GEREKCESI tahmin degil olcum.
 
+## 89 Sembol + Walk-Forward: Kademeli Satis Kaldirildi (v31.30)
+
+Kullanici: "89 sembol + walk-forward ile calistir." Kosu iki onemli sey ortaya cikardi ve
+bunlardan biri bir onceki raporumu curuttu.
+
+### ONCE: uretim paritesi bug'i (v31.29 sonucunu gecersiz kilan)
+`useAIAdvisor` `fetchSingle(sym, '1y', '1d')` cagiriyor → canli taramada genSignal **~252 bar**
+goruyor. v31.29 replay'i TUM gecmisi veriyordu (2y'de 504, 5y'de 1250 bar). `calcSR`/
+`calcFibonacci` pencereye duyarli oldugu icin stop/hedef seviyeleri kayiyordu. `LOOKBACK = 252`
+eklendi. Yan fayda: kosu suresi ~8x dustu.
+
+**Bu yuzden v31.29'un "plan cikisi ham tutmayi yeniyor" sonucu GECERSIZ.** Duzeltilmis olcum
+(89 sembol / 5 yil / **26.855 sinyal**) tam tersini soyluyor: plan +%0,27 vs ham +%0,76.
+
+### ASIL BULGU: kademeli kar alma getirinin yarisindan fazlasini yok ediyordu
+
+| Cikis politikasi | net (tum) | net (YUKSELIS) | WR | ort kazanc | ort kayip | asagi-std |
+|---|---|---|---|---|---|---|
+| 40/30/30 kademeli (eski) | +%0,27 | +%0,99 | %58,2 | +%4,75 | -%4,87 | 3,10 |
+| **TRAILING-ONLY (yeni)** | **+%1,30** | **+%2,03** | %51,2 | **+%7,18** | -%4,80 | **2,18** |
+| %50 T1 + trailing | +%0,30 | +%1,04 | %57,8 | | | |
+| %100 T1 (erken al) | -%0,71 | +%0,06 | %57,4 | | | |
+| ham 5 gun tut (stopsuz) | +%0,76 | +%1,72 | %59,0 | | | en kotu -%92 |
+
+**Kademeli satis asagi koruma SAGLAMIYORDU** — ort kayip -%4,87 → -%4,80, asagi-std 3,10 → 2,18
+(trailing-only DAHA iyi). Korumayi **stop** sagliyor; hedefte satmak yalnizca kazananlari
+kirpiyordu (ort kazanc +%4,75 → +%7,18).
+
+Saglamlik: **5 yilin 5'inde de** trailing-only kademeli plani yendi (2022 +%4,05 vs +%1,88 …
+2026 +%1,48 vs +%0,92). Sermaye verimliligi kiyasi adil: islemlerin **%95'i ayni bar sayisi**
+tutuluyor (ort 5,48 vs 5,97 bar) — trailing-only daha uzun tutarak kazanmiyor.
+Yuksek toplam std (9,9 vs 5,4) **yukari** taraftan geliyor (yukari-std 11,43 vs 4,03); asagi
+taraf daha dar. Std burada risk degil, kazanc dagilimi.
+
+**Uygulanan**: `tradePlan.js` hedefleri artik SATIS emri degil **referans seviye**
+("Referans 1 (+%6,5) — SATMA; stop'u buranin altina cek"); cikis tamamen trailing stop.
+`planSimulation.DEFAULT_TRAIL_ONLY = true` → kalibrasyon da yeni politikadan ogrenir (ikisi
+senkron kalmali). Kademeli mod silinmedi: `{ trailOnly: false }` veya `{ fractions: [...] }`
+ile hala cagrilabilir ve test edilir. `AnalyzeTab` basligi "KADEMELI KAR ALMA" →
+"KAR YONETIMI (trailing)".
+
+### WALK-FORWARD: YATAY tabani 70 dogrulandi (13 pencere, 9ay IS / 3ay OOS)
+Her pencerede taban SADECE in-sample'dan secilir, sonra gorulmemis OOS'a uygulanir:
+
+| | medyan OOS | pozitif pencere |
+|---|---|---|
+| IS-secimi (veriden sec) | +%0,35 | %54 (13) |
+| **sabit 70** | **+%0,35** | **%54 (13)** |
+| sabit 54 | -%0,18 | %46 (13) |
+
+IS 13 pencerenin 8'inde zaten 70'i seciyor. Veriden secmek sabit 70'i **gecemiyor** → 70 bir
+asiri-uyum artefakti degil; 54 ise acikca daha kotu. **v31.28'in tabani degistirilmedi.**
+Durust okuma: YATAY, taban 70'te bile ~basabas (medyan +%0,35, pencerelerin yalniz %54'u
+pozitif) — kar merkezi degil, "sermayeyi yakmayan" bolge.
+
+### Rejim x kademe (buyuk ornek, artik n yeterli)
+BULL/sniper +%1,52 (n=178) · BULL/flagged +%1,07 (n=2296) · BULL/early +%0,96 (n=11545) →
+konviksiyon siralamasi YUKSELIS'te dogru, v31.28-C'nin yonu desteklendi.
+NEUTRAL hepsi ~0 (-%0,21 … +%0,12). BEAR -%1,16 … -%1,27 → watch-only dogrulandi.
+
+**Durust sinir**: tek veri kaynagi (Yahoo, bolunme artefaktlari mumkun — ham tutmada -%92'lik
+tek islem gorundu), 89 buyuk/orta-cap, 5 yil, ve olcum sinyal MOTORUNU olcer — canli advisor'in
+likidite/haber/makro/sektor katmanlari dahil degil. Trailing-only daha DUSUK kazanma orani
+(%51 vs %58) getirir: daha az kazanip daha buyuk kazanmak psikolojik olarak daha zordur.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

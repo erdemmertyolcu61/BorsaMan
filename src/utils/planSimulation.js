@@ -22,7 +22,27 @@
 import { istanbulDayKey } from './signalPerfHistory.js';
 import { PLAN_CONST } from './tradePlan.js';
 
-/** Plandaki kademeli kar alma oranlari — buildTradePlan ile ayni. */
+/**
+ * v31.30 — VARSAYILAN POLITIKA: TRAILING-ONLY.
+ *
+ * OLCULDU (89 sembol / 5 yil / 26.855 sinyal, scripts/replay-signals.mjs):
+ *   politika              net(tum)   net(YUKSELIS)   ort kazanc   ort kayip
+ *   40/30/30 kademeli      +0.27%       +0.99%         +4.75%      -4.87%
+ *   TRAILING-ONLY          +1.30%       +2.03%         +7.18%      -4.80%
+ *   %50 T1 + trailing      +0.30%       +1.04%
+ *   %100 T1                -0.71%       +0.06%
+ *
+ * Kademeli kar alma getirinin YARISINDAN FAZLASINI yok ediyordu ve karsiliginda
+ * asagi koruma SAGLAMIYORDU (asagi-std 3.10 -> 2.18, ort kayip neredeyse ayni).
+ * Korumayi saglayan sey STOP; hedefte satmak yalnizca kazananlari kirpiyor.
+ * 5 yilin 5'inde de trailing-only kademeli plani yendi. Tutma suresi ayni
+ * (islemlerin %95'i ayni bar sayisi) — sermaye verimliligi kiyasi adil.
+ *
+ * Hedefler artik SATIS noktasi degil, referans seviye (stop'un sikilastigi yer).
+ */
+export const DEFAULT_TRAIL_ONLY = true;
+
+/** Kademeli mod acikca istenirse kullanilan oranlar (buildTradePlan ile ayni). */
 export const PLAN_FRACTIONS = { t1: 0.40, t2: 0.30, t3: 0.30 };
 
 /** Takip penceresi: sinyaller 10 gunde otomatik kapanir, 30 bar fazlasiyla yeter. */
@@ -50,7 +70,10 @@ const r2 = (v) => Math.round(v * 100) / 100;
  *
  * @param {object} signal { entryPrice|price|entry, stop, target|t1, t2, t3, cls, timestamp }
  * @param {Array<{date:any, high?:number, low?:number, close:number}>} bars
- * @param {{maxBars?:number}} [opts]
+ * @param {{maxBars?:number, fractions?:number[], trailOnly?:boolean}} [opts]
+ *   fractions: T1/T2/T3 kademe oranlari (varsayilan PLAN_FRACTIONS 40/30/30).
+ *   trailOnly: hedeflerde HIC satma, tamamini trailing stop tasisin — "kazanani
+ *     kos" politikasi. Cikis politikasi karsilastirmasi icin (replay-signals.mjs).
  * @returns {{planReturn:number, exitReason:string, barsHeld:number, legs:Array}|null}
  */
 export function simulatePlanReturn(signal, bars, opts = {}) {
@@ -70,11 +93,19 @@ export function simulatePlanReturn(signal, bars, opts = {}) {
   // Hedef kademeleri. Takip edilen sinyaller cogunlukla tek `target` tasir
   // (App.jsx recordAdvisorPick: target = pick.target || pick.t1) — o zaman %40
   // hedefte alinir, kalan %60 trailing stop'a biner. Plan tam olarak bunu soyler.
+  const fr = Array.isArray(opts.fractions) && opts.fractions.length === 3
+    ? opts.fractions
+    : [PLAN_FRACTIONS.t1, PLAN_FRACTIONS.t2, PLAN_FRACTIONS.t3];
+  // Acikca `fractions` verilmisse kademeli mod istenmis demektir; aksi halde
+  // varsayilan olcume dayali politikadir (trailing-only).
+  const trailOnly = opts.trailOnly ?? (Array.isArray(opts.fractions) ? false : DEFAULT_TRAIL_ONLY);
   const levels = [];
-  const t1 = Number.isFinite(signal?.t1) ? signal.t1 : (Number.isFinite(signal?.target) ? signal.target : null);
-  if (t1 != null) levels.push({ key: 't1', at: t1, fraction: PLAN_FRACTIONS.t1 });
-  if (Number.isFinite(signal?.t2)) levels.push({ key: 't2', at: signal.t2, fraction: PLAN_FRACTIONS.t2 });
-  if (Number.isFinite(signal?.t3)) levels.push({ key: 't3', at: signal.t3, fraction: PLAN_FRACTIONS.t3 });
+  if (!trailOnly) {
+    const t1 = Number.isFinite(signal?.t1) ? signal.t1 : (Number.isFinite(signal?.target) ? signal.target : null);
+    if (t1 != null && fr[0] > 0) levels.push({ key: 't1', at: t1, fraction: fr[0] });
+    if (Number.isFinite(signal?.t2) && fr[1] > 0) levels.push({ key: 't2', at: signal.t2, fraction: fr[1] });
+    if (Number.isFinite(signal?.t3) && fr[2] > 0) levels.push({ key: 't3', at: signal.t3, fraction: fr[2] });
+  }
 
   let stop = Number.isFinite(signal?.stop) ? signal.stop : null;
   let remaining = 1;

@@ -11,6 +11,9 @@ const num = (v) => (Number.isFinite(v) ? v : null);
 
 export const PLAN_CONST = { BREAKEVEN_PCT: 3, TRAIL_ACTIVE_PCT: 5, LOCK_FRACTION: 0.5 };
 
+/** v31.30: cikis politikasi olcume dayali olarak trailing-only. Bkz. exitSteps. */
+export const EXIT_POLICY = 'trailing';
+
 /**
  * Build a deterministic trade-management plan from a signal.
  * @param {object} sig - { entry, stop, t1, t2, t3, atr, rr, holdText, cls }
@@ -38,11 +41,24 @@ export function buildTradePlan(sig = {}) {
     { fraction: 30, at: breakout, note: `Ekleme — kırılım teyidi (${pct(breakout) >= 0 ? '+' : ''}${pct(breakout)}%)` },
   ];
 
+  // ── v31.30: KADEMELİ SATIŞ KALDIRILDI — ölçüme dayalı ────────────────
+  // 89 sembol / 5 yıl / 26.855 sinyal (scripts/replay-signals.mjs):
+  //   40/30/30 kademeli : +%0,27 (tüm) · +%0,99 (YÜKSELİŞ) · ort kazanç +%4,75
+  //   TRAILING-ONLY     : +%1,30 (tüm) · +%2,03 (YÜKSELİŞ) · ort kazanç +%7,18
+  // Hedefte satmak getirinin yarısından fazlasını yok ediyordu ve karşılığında
+  // aşağı koruma SAĞLAMIYORDU (ort kayıp -%4,87 → -%4,80; aşağı-std 3,10 → 2,18).
+  // Korumayı stop sağlıyor; hedefte satmak yalnızca kazananları kırpıyor.
+  // 5 yılın 5'inde de trailing-only kademeli planı yendi, tutma süresi aynı.
+  // Hedefler artık SATIŞ emri değil, stop'un sıkıştığı REFERANS seviyeler.
   const exitSteps = [];
-  if (t1) exitSteps.push({ fraction: 40, at: round2(t1), note: `Hedef 1 (+${pct(t1)}%) → %40 sat` });
-  if (t2) exitSteps.push({ fraction: 30, at: round2(t2), note: `Hedef 2 (+${pct(t2)}%) → %30 sat` });
-  if (t3) exitSteps.push({ fraction: 30, at: round2(t3), note: `Hedef 3 (+${pct(t3)}%) → kalanı trailing` });
-  else exitSteps.push({ fraction: 30, at: null, note: 'Kalan %30 — trailing stop ile taşı' });
+  if (t1) exitSteps.push({ fraction: 0, at: round2(t1),
+    note: `Referans 1 (+${pct(t1)}%) — SATMA; stop'u buranın altına çek` });
+  if (t2) exitSteps.push({ fraction: 0, at: round2(t2),
+    note: `Referans 2 (+${pct(t2)}%) — hâlâ satma; trailing devam` });
+  if (t3) exitSteps.push({ fraction: 0, at: round2(t3),
+    note: `Referans 3 (+${pct(t3)}%) — güçlü direnç; hacim zayıflarsa yarısını al` });
+  exitSteps.push({ fraction: 100, at: null,
+    note: 'ÇIKIŞ = trailing stop. Ölçüm: hedefte kademeli satmak getiriyi yarıya düşürüyor, korumayı artırmıyor.' });
 
   const stopSteps = [
     { at: round2(stop), trigger: null,

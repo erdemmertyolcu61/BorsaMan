@@ -56,21 +56,30 @@ const arg = (k, d = null) => { const i = argv.indexOf(k); return i >= 0 ? argv[i
 const has = (k) => argv.includes(k);
 
 const RANGE = arg('--range', '2y');
-const LIMIT = parseInt(arg('--limit', '40'), 10);
+const LIMIT = parseInt(arg('--limit', '89'), 10);
 const OUT = arg('--out', null);
 const USE_CACHE = !has('--no-cache');
 const EXPLICIT = arg('--symbols', null);
 
 const COST_PCT = 0.3;            // tradingCosts.TOTAL_COST_PCT x 100
 const WARMUP = 210;              // MA200 + biraz pay — oncesinde gosterge yok
+// URETIM PARITESI: useAIAdvisor `fetchSingle(sym, '1y', '1d')` cagiriyor, yani
+// genSignal canli taramada ~252 bar goruyor. Replay'in TUM gecmisi vermesi
+// uretimle uyumsuzdu (calcSR/calcFibonacci pencereye duyarli) ve gereksiz yavasti.
+const LOOKBACK = 252;
 const EVAL_TAIL = 8;             // degerlendirme icin en az bu kadar ileri bar
 const CACHE_DIR = path.join(ROOT, '.replay-cache');
 
 // ── universe ──────────────────────────────────────────────────────────
 // Egitim DB'sindeki gercek BIST isimleri; yoksa likit bir varsayilan liste.
-const FALLBACK = ('THYAO GARAN AKBNK ISCTR YKBNK SISE EREGL KCHOL SAHOL TUPRS BIMAS FROTO '
-  + 'ASELS TCELL TTKOM PGSUS TOASO ARCLK KOZAL PETKM HEKTS SASA ENKAI VESTL ALARK DOAS '
-  + 'MGROS TAVHL OYAKC KRDMD ODAS AKSEN CIMSA GUBRF TKFEN AEFES ULKER BRSAN SOKM ISDMR').split(' ');
+// Egitim DB'sindeki (data/bist_ml_training_3yr.db) 89 gercek BIST ismi.
+const FALLBACK = ('ADEL AEFES AFYON AGESA AKBNK AKCNS AKENR AKFGY AKSA ALARK ALGYO ALKIM '
+  + 'ANHYT ANSGR ARCLK ASELS AYDEM AYGAZ BASGZ BIENY BIMAS BRISA BRYAT BUCIM CANTE CCOLA '
+  + 'CEMTS CIMSA DOAS DOHOL EGEEN EKGYO ENJSA ENKAI EREGL EUPWR FROTO GARAN GENIL GESAN '
+  + 'GLYHO GOZDE GSDHO GUBRF HALKB HEKTS INDES ISGYO ISMEN KARSN KCHOL KLSER KONTR KORDS '
+  + 'LOGO MAVI MPARK NETAS OBAMS OTKAR OYAKC PETKM PGSUS SAHOL SARKY SELEC SISE SKBNK '
+  + 'SNGYO SOKM TATGD TAVHL TCELL THYAO TMSN TOASO TRGYO TSKB TTKOM TTRAK TUPRS TURSG '
+  + 'ULKER ULUUN VAKBN VERUS VESTL YATAS YKBNK').split(' ');
 
 function universe() {
   if (EXPLICIT) return EXPLICIT.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
@@ -127,7 +136,8 @@ function replaySymbol(symbol, bars, regimeMap) {
   const out = [];
   const last = bars.length - EVAL_TAIL;
   for (let t = WARMUP; t < last; t++) {
-    const hist = bars.slice(0, t + 1);          // KARAR: sadece t'ye kadar
+    // KARAR: sadece t'ye kadar VE en fazla son 252 bar (uretim penceresi).
+    const hist = bars.slice(Math.max(0, t + 1 - LOOKBACK), t + 1);
     let ind, sig;
     try {
       ind = calcAll(hist);
@@ -144,11 +154,16 @@ function replaySymbol(symbol, bars, regimeMap) {
     const entry = fill.open;
     const future = bars.slice(t + 1);           // SONUC: sadece t+1'den sonrasi
 
-    const planned = simulatePlanReturn(
-      { cls: 'buy', entryPrice: entry, stop: sig.stop, target: sig.t1, t2: sig.t2, t3: sig.t3,
-        timestamp: fill.date },
-      future);
+    const shape = { cls: 'buy', entryPrice: entry, stop: sig.stop, target: sig.t1,
+                    t2: sig.t2, t3: sig.t3, timestamp: fill.date };
+    const planned = simulatePlanReturn(shape, future);
     if (!planned) continue;
+
+    // CIKIS POLITIKASI VARYANTLARI — ayni giris/stop/hedeflerle farkli kar alma
+    // kurallari. Mevcut 40/30/30 bir TASARIM tercihiydi, hic olculmemisti.
+    const vTrail = simulatePlanReturn(shape, future, { trailOnly: true });
+    const vHalf = simulatePlanReturn(shape, future, { fractions: [0.5, 0, 0] });
+    const vT1 = simulatePlanReturn(shape, future, { fractions: [1, 0, 0] });
 
     // Ham karsilastirma: 5 islem gunu tut, kapanista cik (kalibrasyonun
     // v31.28 oncesi ogrendigi metrigin ta kendisi).
@@ -165,6 +180,10 @@ function replaySymbol(symbol, bars, regimeMap) {
       rr: sig.rr ?? null,
       planReturn: planned.planReturn,
       planExit: planned.exitReason,
+      vTrail: vTrail ? vTrail.planReturn : null,
+      vTrailBars: vTrail ? vTrail.barsHeld : null,
+      vHalf: vHalf ? vHalf.planReturn : null,
+      vT1: vT1 ? vT1.planReturn : null,
       barsHeld: planned.barsHeld,
       rawD5: rawD5 == null ? null : Math.round(rawD5 * 100) / 100,
     });
@@ -302,6 +321,122 @@ for (const r of all) (byExit[r.planExit] ||= []).push(r.planReturn);
 console.log('\n5) PLAN CIKIS SEBEBI');
 for (const [k, v] of Object.entries(byExit).sort((a, b) => b[1].length - a[1].length)) {
   console.log(`  ${k.padEnd(10)} ${String(v.length).padStart(6)}  ort ${r2(mean(v)) >= 0 ? '+' : ''}${r2(mean(v))}%`);
+}
+
+
+// 5b) CIKIS POLITIKASI KARSILASTIRMASI
+// Mevcut 40/30/30 plani bir TASARIM tercihiydi, hic olculmemisti. Ayni
+// giris/stop/hedeflerle farkli kar-alma kurallarini yan yana koyar.
+{
+  const pol = [
+    ['mevcut plan 40/30/30', 'planReturn'],
+    ['trailing-only (kos)', 'vTrail'],
+    ['%50 T1 + trailing', 'vHalf'],
+    ['%100 T1 (erken al)', 'vT1'],
+    ['ham 5 gun tut (stopsuz)', 'rawD5'],
+  ];
+  const show = (rows, label) => {
+    console.log(`
+5b) CIKIS POLITIKASI - ${label}`);
+    console.log('  ' + 'politika'.padEnd(26) + 'net'.padStart(9) + 'WR'.padStart(9)
+      + 'std'.padStart(8) + 'en kotu %5'.padStart(12) + 'net/risk'.padStart(10));
+    console.log('  ' + '-'.repeat(74));
+    for (const [name, key] of pol) {
+      const v = rows.map(r => r[key]).filter(x => x != null);
+      if (!v.length) continue;
+      const mu = v.reduce((a, x) => a + x, 0) / v.length;
+      const m = mu - COST_PCT;
+      const sd = Math.sqrt(v.reduce((a, x) => a + (x - mu) ** 2, 0) / v.length);
+      const srt = v.slice().sort((a, b) => a - b);
+      const p5 = srt[Math.floor(v.length * 0.05)];
+      const wr = (100 * v.filter(x => x > 0).length / v.length);
+      console.log('  ' + name.padEnd(26) + pct(r2(m)).padStart(9) + `%${r2(wr)}`.padStart(9)
+        + r2(sd).toString().padStart(8) + pct(r2(p5)).padStart(12)
+        + (sd ? (m / sd).toFixed(3) : '-').padStart(10));
+    }
+  };
+  show(all, `tum adaylar (n=${all.length})`);
+  const bullRows = all.filter(x => x.regime === 'BULL');
+  show(bullRows, `YALNIZ YUKSELIS (n=${bullRows.length})`);
+}
+
+// ── 6) WALK-FORWARD: secilen taban GELECEGE genelleniyor mu? ──────────
+// Onceki kosuda YATAY tabani "iki donemde de pozitif kalan tek deger" diye
+// 70'te birakilmisti — ama o, TUM veriye bakip secilen bir esikti. Gercek
+// soru: gecmise bakarak taban secmek, GORULMEMIS doneme aktarilabiliyor mu?
+// Her pencerede taban SADECE in-sample'dan secilir, sonra out-of-sample'da
+// koru koruna uygulanir. Sabit tabanlarla yan yana raporlanir.
+const IS_MONTHS = parseInt(arg('--is-months', '9'), 10);
+const OOS_MONTHS = parseInt(arg('--oos-months', '3'), 10);
+const MIN_IS = parseInt(arg('--min-is', '40'), 10);   // altinda taban secme
+const FLOORS = [50, 54, 58, 62, 66, 70, 74];
+
+const addMonths = (d, m) => { const x = new Date(d); x.setMonth(x.getMonth() + m); return x; };
+const dstr = (d) => d.toISOString().slice(0, 10);
+
+function netOf(rows) {
+  if (!rows.length) return null;
+  return rows.reduce((a, r) => a + r.planReturn, 0) / rows.length - COST_PCT;
+}
+
+const sorted = all.slice().sort((a, b) => a.date < b.date ? -1 : 1);
+const t0 = new Date(sorted[0].date), tEnd = new Date(sorted[sorted.length - 1].date);
+const windows = [];
+for (let st = t0; addMonths(st, IS_MONTHS + OOS_MONTHS) <= tEnd; st = addMonths(st, OOS_MONTHS)) {
+  const isEnd = addMonths(st, IS_MONTHS), oosEnd = addMonths(isEnd, OOS_MONTHS);
+  windows.push({ isStart: dstr(st), isEnd: dstr(isEnd), oosEnd: dstr(oosEnd) });
+}
+
+console.log(`
+6) WALK-FORWARD — YATAY tabani (${IS_MONTHS}ay IS / ${OOS_MONTHS}ay OOS, ${windows.length} pencere)`);
+if (!windows.length) {
+  console.log('  Yeterli tarih araligi yok — daha uzun --range gerekiyor.');
+} else {
+  console.log('  ' + 'OOS donemi'.padEnd(24) + 'IS secimi'.padStart(10) + 'IS net'.padStart(10)
+    + 'OOS n'.padStart(8) + 'OOS net'.padStart(10) + '   sabit70   sabit54');
+  console.log('  ' + '-'.repeat(80));
+  const picked = [], fixed70 = [], fixed54 = [], chosenFloors = [];
+  for (const w of windows) {
+    const inIS = sorted.filter(r => r.regime === 'NEUTRAL' && r.date >= w.isStart && r.date < w.isEnd);
+    const inOOS = sorted.filter(r => r.regime === 'NEUTRAL' && r.date >= w.isEnd && r.date < w.oosEnd);
+    if (!inOOS.length) continue;
+
+    // IS'te en iyi tabani sec (yeterli ornek sarti ile) — OOS'a HIC bakmadan.
+    let best = null;
+    for (const f of FLOORS) {
+      const sub = inIS.filter(r => r.score >= f);
+      if (sub.length < MIN_IS) continue;
+      const n = netOf(sub);
+      if (n != null && (best == null || n > best.net)) best = { floor: f, net: n, n: sub.length };
+    }
+    const oosPick = best ? netOf(inOOS.filter(r => r.score >= best.floor)) : null;
+    const o70 = netOf(inOOS.filter(r => r.score >= 70));
+    const o54 = netOf(inOOS.filter(r => r.score >= 54));
+    if (oosPick != null) { picked.push(oosPick); chosenFloors.push(best.floor); }
+    if (o70 != null) fixed70.push(o70);
+    if (o54 != null) fixed54.push(o54);
+
+    console.log('  ' + `${w.isEnd} -> ${w.oosEnd}`.padEnd(24)
+      + (best ? String(best.floor) : 'yok').padStart(10)
+      + (best ? pct(r2(best.net)) : '-').padStart(10)
+      + String(inOOS.length).padStart(8)
+      + (oosPick == null ? '-' : pct(r2(oosPick))).padStart(10)
+      + (o70 == null ? '     -' : pct(r2(o70)).padStart(10))
+      + (o54 == null ? '     -' : pct(r2(o54)).padStart(10)));
+  }
+  const med = (a) => { if (!a.length) return null; const b = a.slice().sort((x, y) => x - y); return r2(b[Math.floor(b.length / 2)]); };
+  const posPct = (a) => a.length ? Math.round(100 * a.filter(x => x > 0).length / a.length) : 0;
+  console.log('  ' + '-'.repeat(80));
+  console.log(`  IS-secimi   : medyan OOS ${pct(med(picked))} · pozitif pencere %${posPct(picked)} (${picked.length})`);
+  console.log(`  sabit 70    : medyan OOS ${pct(med(fixed70))} · pozitif pencere %${posPct(fixed70)} (${fixed70.length})`);
+  console.log(`  sabit 54    : medyan OOS ${pct(med(fixed54))} · pozitif pencere %${posPct(fixed54)} (${fixed54.length})`);
+  if (chosenFloors.length) {
+    const tally = {};
+    for (const f of chosenFloors) tally[f] = (tally[f] || 0) + 1;
+    console.log("  IS secimi hangi tabanlari sectiy: " + Object.entries(tally).sort((a, b) => b[1] - a[1])
+      .map(([f, c]) => `${f}x${c}`).join(' '));
+  }
+  console.log("  (IS-secimi sabit 70i GECEMIYORSA, tabani veriden secmek asiri-uyum demektir)");
 }
 
 if (OUT) {

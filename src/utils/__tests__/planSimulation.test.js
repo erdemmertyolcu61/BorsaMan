@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { simulatePlanReturn, learningReturn, PLAN_FRACTIONS } from '../planSimulation.js';
+import { simulatePlanReturn, learningReturn, PLAN_FRACTIONS, DEFAULT_TRAIL_ONLY } from '../planSimulation.js';
+
+// v31.30: the DEFAULT policy is trailing-only (measured: +2.03% vs +0.99% in BULL
+// over 26,855 signals). Staged exits are still supported and still tested - they
+// just have to be asked for explicitly now.
+const STAGED = { trailOnly: false };
 
 // bar helper — dates are plain ISO days; istanbulDayKey normalises them.
 const bar = (date, high, low, close) => ({ date, high, low, close });
@@ -18,7 +23,7 @@ describe('planSimulation.simulatePlanReturn', () => {
       bar('2026-08-04', 108, 103, 107),  // T1 (107) hit -> sell 40%; peak 108 -> stop 104
       bar('2026-08-05', 109, 102, 103),  // low 102 <= 104 -> trailing stop takes the rest
     ];
-    const out = simulatePlanReturn(buySig(), bars);
+    const out = simulatePlanReturn(buySig(), bars, STAGED);
     // 40% at +7%  = 2.8   |   60% at +4% (stop 104) = 2.4
     expect(out.planReturn).toBeCloseTo(5.2, 6);
     expect(out.exitReason).toBe('stop');
@@ -44,7 +49,7 @@ describe('planSimulation.simulatePlanReturn', () => {
 
   it('takes all three legs when T1/T2/T3 are all reached', () => {
     const sig = buySig({ target: 107, t2: 112, t3: 120 });
-    const out = simulatePlanReturn(sig, [bar('2026-08-03', 125, 99, 124)]);
+    const out = simulatePlanReturn(sig, [bar('2026-08-03', 125, 99, 124)], STAGED);
     // 40%*7 + 30%*12 + 30%*20 = 2.8 + 3.6 + 6.0
     expect(out.planReturn).toBeCloseTo(12.4, 6);
     expect(out.exitReason).toBe('targets');
@@ -84,7 +89,7 @@ describe('planSimulation.simulatePlanReturn', () => {
   it('inverts every comparison for sell signals', () => {
     const sell = { cls: 'sell', entryPrice: 100, stop: 105, target: 93,
                    timestamp: '2026-08-03T09:00:00Z' };
-    const out = simulatePlanReturn(sell, [bar('2026-08-03', 102, 92, 94)]);
+    const out = simulatePlanReturn(sell, [bar('2026-08-03', 102, 92, 94)], STAGED);
     // 40% at +7% (price fell to 93) + 60% at +6% (close 94) = 2.8 + 3.6
     expect(out.planReturn).toBeCloseTo(6.4, 6);
   });
@@ -107,7 +112,7 @@ describe('planSimulation.simulatePlanReturn', () => {
 
   it('falls back to close when a bar has no high/low', () => {
     const out = simulatePlanReturn(buySig({ target: 107, stop: 95 }),
-      [{ date: '2026-08-03', close: 108 }]);
+      [{ date: '2026-08-03', close: 108 }], STAGED);
     expect(out.planReturn).toBeCloseTo(0.4 * 7 + 0.6 * 8, 6);
   });
 
@@ -118,6 +123,37 @@ describe('planSimulation.simulatePlanReturn', () => {
     expect(simulatePlanReturn(null, [bar('2026-08-03', 1, 1, 1)])).toBeNull();
     // bars exist but all predate the signal
     expect(simulatePlanReturn(buySig(), [bar('2026-07-01', 110, 90, 100)])).toBeNull();
+  });
+});
+
+describe('planSimulation — trailing-only is the default policy (v31.30)', () => {
+  it('does NOT sell at the target by default; the position rides the trailing stop', () => {
+    const bars = [
+      bar('2026-08-03', 108, 99, 107),   // T1 (107) touched - staged mode would sell 40% here
+      bar('2026-08-04', 115, 106, 114),  // keeps running instead
+      bar('2026-08-05', 116, 107, 109),  // low 107 <= trailing stop 107.5 -> exits at +7.5%
+    ];
+    const trail = simulatePlanReturn(buySig(), bars);
+    const staged = simulatePlanReturn(buySig(), bars, STAGED);
+    expect(DEFAULT_TRAIL_ONLY).toBe(true);
+    expect(trail.exitReason).toBe('stop');
+    // The whole point: capping the winner at T1 leaves money on the table.
+    expect(trail.planReturn).toBeGreaterThan(staged.planReturn);
+    expect(trail.legs.every(l => l.key !== 't1')).toBe(true);
+  });
+
+  it('protects the downside identically — the stop does that work, not the scale-out', () => {
+    const bars = [bar('2026-08-03', 101, 94, 96)];
+    const trail = simulatePlanReturn(buySig({ target: 120 }), bars);
+    const staged = simulatePlanReturn(buySig({ target: 120 }), bars, STAGED);
+    expect(trail.planReturn).toBeCloseTo(staged.planReturn, 6);
+    expect(trail.planReturn).toBeCloseTo(-5, 6);
+  });
+
+  it('passing explicit fractions opts back into staged mode', () => {
+    const bars = [bar('2026-08-03', 125, 99, 124)];
+    const half = simulatePlanReturn(buySig({ target: 107 }), bars, { fractions: [0.5, 0, 0] });
+    expect(half.legs.some(l => l.key === 't1' && l.fraction === 0.5)).toBe(true);
   });
 });
 

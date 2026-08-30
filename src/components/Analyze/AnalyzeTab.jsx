@@ -584,8 +584,10 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
                     <Section title="② STOP YÖNETİMİ" color="var(--orange)" items={plan.stopSteps.map(s => ({
                       tag: s.trigger ? `${s.trigger.toFixed(2)}` : 'başta', text: s.note,
                     }))} />
-                    <Section title="③ KADEMELİ KÂR ALMA" color="var(--green)" items={plan.exitSteps.map(s => ({
-                      tag: `%${s.fraction}`, text: `${fmt(s.at)} — ${s.note}`,
+                    {/* v31.30: hedefler artık satış emri değil referans seviye — ölçüm
+                        kademeli satışın getiriyi yarıya düşürdüğünü gösterdi. */}
+                    <Section title="③ KÂR YÖNETİMİ (trailing)" color="var(--green)" items={plan.exitSteps.map(s => ({
+                      tag: s.fraction ? `%${s.fraction}` : 'ref', text: `${fmt(s.at)} — ${s.note}`,
                     }))} />
                     <div style={{ marginTop: 6, fontSize: 9, color: 'var(--t3)', lineHeight: 1.5 }}>
                       <b style={{ color: 'var(--red)' }}>Geçersizleşme:</b> {plan.invalidation.toFixed(2)} TL günlük kapanış {plan.isBuy ? 'altında' : 'üstünde'} → setup bozuldu, çık.
