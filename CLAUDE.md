@@ -1074,6 +1074,71 @@ Temiz olcum ancak simdi mumkun; 3-4 hafta veri birikince bu tablo yeniden cikari
 
 Test 606 pass (42 dosya), 0 lint error (79 warning, ratchet 90), build temiz.
 
+## Gecmis Replay: "3-4 hafta bekle" bagimliligi kaldirildi (v31.29)
+
+Kullanici: "3-4 hafta beklemeden simdi baska ne yapabiliriz." v31.28'in uc karari da
+"ileri veri biriksin" notuyla birakilmisti. Ileri veri icin beklemek gerekiyor — ama GECMIS
+zaten var ve **Node'dan Yahoo bar cekmek calisiyor** (olculdu: HTTP 200, 504 bar/sembol).
+
+### `scripts/replay-signals.mjs` (yeni)
+Uretim motorunu (`calcAll` + `genSignal`, mock DEGIL — gercek modulleri `file://` ile import
+eder) tarihsel barlar uzerinde gun gun yeniden calistirir, her AL adayina
+`simulatePlanReturn` uygular ve rejim × kademe kirilimi cikarir.
+
+Durustluk kurallari koda islenmis: karar `bars[0..t]`, sonuc `bars[t+1..]` (lookahead yok);
+giris **sonraki barin ACILISI** (kapanisi gordukten sonra o kapanistan alamazsin — uygulamanin
+kendi kaydindan daha muhafazakar); maliyet %0.3; **kalibrasyon KAPALI** (gecmisten ogrenilmis
+carpanin ayni gecmisi puanlamasi dairesel olurdu). Yahoo'nun null tatil satirlari atlanir.
+Barlar `.replay-cache/`'e yazilir (gitignore) → tekrar kosular bedava.
+
+Aday havuzu bilincli olarak genis: `genSignal`in kati `cls==='buy'`i 2 yilda sembol basina ~1
+sinyal veriyor (olculdu: 3 sembolde 4 sinyal). Uygulama gercekte `score>=55` TUT'lari da AL'a
+ceviriyor (useAIAdvisor v29 reclassify), o yuzden replay ikisini de yakalar ve raporda ayirir.
+
+### Olculen (40 sembol, 2 yil, **3.504 AL adayi**)
+
+| Rejim | n | PLAN net | WR | HAM net (5g tut) |
+|---|---|---|---|---|
+| YUKSELIS | 1701 | **+%1,02** | %61,3 | +%0,63 |
+| YATAY | 1239 | +%0,37 | %53,4 | +%0,11 |
+| DUSUS | 548 | **-%1,51** | %31,8 | -%2,17 |
+
+**1. Plan cikisi ham tutmayi YENIYOR — v31.28-B artik varsayim degil, olcum.** Her rejimde ve
+her kademede pozitif fark. **AMA duzeltme: bas fark +0,37pp yaniltici.** Plan medyan 5 / ortalama
+7,1 bar tutuyor, ham karsilastirma sabit 5 gun — esit ufukta (<=5 bar, n=1779) fark **+0,14pp**.
+Gercek ama bas rakamin yarisindan az; avantajin bir kismi sadece daha uzun tutmaktan geliyor.
+
+**2. DUSUS iki donemde de negatif** (-%0,98 / -%1,82) → `_watchOnly` karari dogrulandi.
+**YUKSELIS iki donemde de pozitif** (+%1,35 / +%0,63) → serbest birakma dogrulandi.
+
+**3. YATAY hakkinda kendi hatami duzeltmem gerekiyor.** v31.28'i **-%1,98 net** rakamiyla
+gerekcelendirdim; temiz olcum **+%0,37** diyor — yani o rakam buyuklukce COK kotumserdi (eski
+tablo bozuk pipeline'la alinmisti: sektor confidence sismesi, olu haber hatti, bozuk d5).
+Ama kararin kendisi yine de ayakta, farkli bir sebeple: **YATAY istikrarsiz.**
+
+| YATAY tabani | 1. yari (2025-07→2026-01) | 2. yari (2026-01→2026-08) |
+|---|---|---|
+| 54 | +%1,14 (n=623) | **-%0,41** (n=616) |
+| 58 | +%1,25 (n=419) | **-%0,43** (n=429) |
+| 62 | +%1,19 (n=199) | **-%0,35** (n=242) |
+| 66 | +%1,29 (n=77) | **-%0,51** (n=121) |
+| **70** | **+%1,98** (n=21) | **+%1,14** (n=26) |
+
+**70, her iki donemde de pozitif kalan TEK taban.** Altindaki her taban ilk donemde kazanip
+ikincide kaybediyor — yani havuzlanmis +%0,37 iyi bir donemle kotu bir donemin ortalamasi.
+Bu, v29'daki "yalniz score>=75 pozitif" bulgusuyla ayni yonde. Taban DEGISTIRILMEDI.
+
+**Dürüst sinir**: n=21/26 kucuk ornek (arac <50'yi "dusuk ornek" diye isaretliyor). Tek donem,
+40 buyuk-cap sembol, walk-forward degil. Ayrica bu, sinyal MOTORUNU olcer — canli advisor'in
+likidite/haber/makro/sektor katmanlari dahil DEGIL. Yayginlik kontrolu: YATAY'da >=15 sinyali
+olan 36 sembolun 24'u (%67) pozitif — birkac isme bagli degil.
+
+**4. Kar profili**: %54 kazanan (ort +%4,48) / %46 kaybeden (ort -%3,72), profit factor **1,40**.
+
+**Net sonuc**: v31.28'in dort karari da (plan-uyumlu ogrenme, YATAY tabani 70, DUSUS watch-only,
+konviksiyon boyutu yonu) olcumle destekleniyor. Degistirilmesi gereken bir esik cikmadi —
+degisen sey, artik bunlarin GEREKCESI tahmin degil olcum.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

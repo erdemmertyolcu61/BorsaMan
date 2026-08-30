@@ -22,3 +22,8 @@ src/data/realPortfolio.local.json
 *.original
 .vercel
 .claude/worktrees/
+
+# Gecmis replay (scripts/replay-signals.mjs) — ikisi de yeniden uretilebilir,
+# depoya girmesin: onbellek ham piyasa verisi, rapor ise 1MB'lik cikti.
+.replay-cache/
+reports/replay-*.json
