@@ -8,6 +8,7 @@ import {
   aggregatePathQuality, derivePerfCheckpoints, perfCheckpoint, realizedReturn,
 } from '../utils/signalPerfHistory.js';
 import { fetchSingle } from '../utils/fetchEngine.js';
+import { evaluateOutcomeFromBars, isClosingOutcome } from '../utils/signalOutcome.js';
 
 let globalNotificationHandler = null;
 
@@ -100,6 +101,12 @@ function calcStats(signals) {
     Math.max(-1, Math.min(1, pathStats.avgPathScore || 0)) * 6 * pathConf
   );
   const reliability = Math.max(0, Math.min(100, reliabilityBase + pathAdj));
+  // v31.26: 0 kapali sinyalde formul SABIT 15 uretiyor (winRate 0 + orneklem 0 +
+  // ((0+10)/20)*30). Kullanici bunu "guvenilirlik 15" diye okuyordu — oysa bu bir
+  // skor degil, "hic veri yok" tabani. Tuketiciler bu bayrakla sayi yerine
+  // "yetersiz veri" gosterebilsin.
+  const RELIABILITY_MIN_SAMPLE = 8;
+  const reliabilityReady = total >= RELIABILITY_MIN_SAMPLE;
 
   const allReturns = closed.map(s => realizedReturn(s)).filter(v => v != null && v !== 0);
   const avgReturn = allReturns.length ? allReturns.reduce((a, v) => a + v, 0) / allReturns.length : 0;
@@ -201,6 +208,8 @@ function calcStats(signals) {
     profitFactor,
     reliability,
     reliabilityBase,
+    reliabilityReady,
+    reliabilityMinSample: RELIABILITY_MIN_SAMPLE,
     pathAdj,
     pathStats,
     winStreak,
@@ -615,8 +624,27 @@ export function useSignalTracker() {
               continue;
             }
             const merged = mergeDailyPerf(sig.dailyPerf, backfillDailyPerf(sig, bars));
+
+            // v31.26: SONUCU DA BARLARDAN BELIRLE.
+            // Bu barlar zaten elimizde ama sonuc yalniz canli fiyat kontrolunde
+            // hesaplaniyordu — o da sadece uygulama acikken calisiyor. Hedefin
+            // gecildigi an uygulama kapaliysa sinyal sonsuza kadar "ACIK"
+            // kaliyordu (kullanicinin BAHKM ornegi: +%24,5, hedef +%7,5). Hicbir
+            // sinyal kapanmadigi icin guvenilirlik de formulun sifir-orneklem
+            // tabani olan 15'te sikisip kaliyordu.
+            const barOutcome = (!sig.outcome || sig.outcome === 'OPEN')
+              ? evaluateOutcomeFromBars(sig, bars)
+              : null;
+
             updates[sig.id] = {
               dailyPerf: merged,
+              ...(barOutcome ? {
+                outcome: barOutcome.outcome,
+                status: isClosingOutcome(barOutcome.outcome) ? 'closed' : sig.status,
+                closedAt: sig.closedAt || new Date(barOutcome.date + 'T18:10:00+03:00').toISOString(),
+                outcomeSource: 'bar',
+                outcomePrice: barOutcome.price,
+              } : {}),
               // Phase 1: reconstructed checkpoints go to a SHADOW field. The
               // live d1/d3/d5/d7 latches are wrong whenever the app was closed
               // (all four take the same late price), and d5 drives the

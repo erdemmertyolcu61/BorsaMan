@@ -162,7 +162,12 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                      // rules-of-hooks ihlaliydi — defansif {} fallback yeterli.
 
   const reliability = parseInt(stats?.reliability || 0);
-  const relColor = reliability >= 70 ? 'var(--green)' : reliability >= 50 ? 'var(--yellow)' : 'var(--red)';
+  // v31.26: 0 kapali sinyalde formul sabit 15 doner — bu bir skor degil, taban.
+  // Sayiyi gostermek "guvenilirlik 15" gibi okunuyordu; yeterli ornek yokken
+  // sayi yerine durumu soyluyoruz.
+  const relReady = stats?.reliabilityReady !== false;
+  const relColor = !relReady ? 'var(--t3)'
+    : reliability >= 70 ? 'var(--green)' : reliability >= 50 ? 'var(--yellow)' : 'var(--red)';
   const winRate = parseFloat(stats?.winRate || 0);
   const wrColor = winRate >= 60 ? 'var(--green)' : winRate >= 45 ? 'var(--yellow)' : 'var(--red)';
 
@@ -339,10 +344,18 @@ export default function SignalsTab({ tracker, onAnalyze }) {
             {/* Reliability */}
             <div style={{ background: 'var(--bg2)', padding: 14, borderRadius: 8 }}>
               <div style={{ fontSize: 10, color: 'var(--purple)', fontWeight: 700, marginBottom: 10 }}>GÜVENİLİRLİK SKORU</div>
-              <div style={{ fontSize: 36, fontWeight: 800, color: relColor }}>{reliability}</div>
-              <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden', marginTop: 8 }}>
-                <div style={{ width: `${reliability}%`, height: '100%', background: relColor, transition: 'width 0.5s' }} />
+              <div style={{ fontSize: relReady ? 36 : 20, fontWeight: 800, color: relColor }}>
+                {relReady ? reliability : 'YETERSİZ VERİ'}
               </div>
+              {relReady ? (
+                <div style={{ height: 8, background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden', marginTop: 8 }}>
+                  <div style={{ width: `${reliability}%`, height: '100%', background: relColor, transition: 'width 0.5s' }} />
+                </div>
+              ) : (
+                <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 8 }}>
+                  {stats?.closed || 0} / {stats?.reliabilityMinSample ?? 8} kapanmış sinyal — skor bu eşikten sonra anlamlı olur.
+                </div>
+              )}
               <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 6 }}>
                 Win-rate × 0.5 + örneklem × 0.2 + ortalama getiri × 0.3
                 {' '}<span style={{ color: 'var(--t2)' }}>= {stats?.reliabilityBase ?? reliability}</span>
