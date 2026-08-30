@@ -1,0 +1,52 @@
+name: Signal Tracker
+
+# Arka plan sinyal takibi (v31.27).
+# Mobil WebView uygulama arka plana atilinca JS'i dondurur (OS siniri), bu yuzden
+# "uygulama kapaliyken hedef tuttugunda haber ver" ancak sunucu tarafinda
+# cozulebilir. Bu is kayitli sinyallerin fiyatini kontrol eder ve gerekirse
+# Web Push gonderir.
+#
+# NOT: GitHub cron'lari yogunlukta gecikebilir — dakika hassasiyeti garanti
+# degildir. Hedef/stop bildirimi icin bu kabul edilebilir; saniye hassasiyeti
+# gereken bir kullanim icin degil.
+
+on:
+  schedule:
+    # BIST seansi 09:55-18:10 TRT = 06:55-15:10 UTC. Seans boyunca 15 dakikada
+    # bir, kapanistan sonra bir kez daha (gun-sonu durumu).
+    - cron: '*/15 7-15 * * 1-5'
+    - cron: '20 15 * * 1-5'
+  workflow_dispatch:        # elle tetikleme (kurulum dogrulamasi icin)
+    inputs:
+      dry_run:
+        description: 'Bildirim gondermeden calistir'
+        type: boolean
+        default: false
+
+concurrency:
+  group: signal-tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install web-push
+        run: npm install --no-save web-push@^3.6.7
+
+      - name: Run tracker
+        env:
+          UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+          UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+          PROXY_BASE_URL: ${{ secrets.PROXY_BASE_URL }}
+        run: node scripts/track-signals.mjs ${{ inputs.dry_run && '--dry-run' || '' }}

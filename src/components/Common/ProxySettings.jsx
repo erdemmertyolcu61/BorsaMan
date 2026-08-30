@@ -3,12 +3,15 @@ import { PROXY_BASE_URL, setProxyBaseUrl, getProxyStats } from '../../utils/fetc
 import { getApiKey, setApiKey } from '../../utils/claude.js';
 import { getGeminiApiKey, setGeminiApiKey } from '../../utils/gemini.js';
 import { getEvdsApiKey, setEvdsApiKey } from '../../utils/foreignFlowEngine.js';
+import { isPushSupported, pushBlockedReason, enablePush, disablePush, getPushSubscription, syncTracking } from '../../utils/pushClient.js';
 
 export default function ProxySettings() {
   const [url, setUrl] = useState(PROXY_BASE_URL || '');
   const [claudeKey, setClaudeKey] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
   const [evdsKey, setEvdsKey] = useState('');
+  const [pushOn, setPushOn] = useState(false);
+  const [pushMsg, setPushMsg] = useState('');
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -18,6 +21,7 @@ export default function ProxySettings() {
     setClaudeKey(getApiKey());
     setGeminiKey(getGeminiApiKey());
     setEvdsKey(getEvdsApiKey());
+    getPushSubscription().then(sub => setPushOn(!!sub));
   }, []);
 
   const save = () => {
@@ -93,6 +97,57 @@ export default function ProxySettings() {
           style={{ flex: 1, fontSize: 10, padding: 7 }}
         />
       </div>
+
+      {/* v31.27: ARKA PLAN BILDIRIMI.
+          Mobil WebView arka planda JS'i dondurur (OS siniri) — bu yuzden
+          "uygulama kapaliyken haber ver" ancak push ile cozulebilir. Zamanlanmis
+          is (GitHub Actions) fiyatlari kontrol edip bildirimi gonderir. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 14 }}>{'\u{1F514}'}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
+          Arka Plan Bildirimi (uygulama kapaliyken)
+        </span>
+      </div>
+
+      <div style={{ fontSize: 9, color: 'var(--t3)', lineHeight: 1.5, marginBottom: 6 }}>
+        Acildiginda kayitli sinyallerin hedef/stop durumu sunucuda takip edilir ve
+        gerceklestiginde telefonuna bildirim gelir — uygulama kapali olsa bile.
+        {' '}iOS&apos;ta calismasi icin uygulamanin ANA EKRANA EKLENMIS olmasi sarttir.
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap' }}>
+        <button
+          onClick={async () => {
+            setPushMsg('...');
+            if (pushOn) {
+              const r = await disablePush();
+              setPushOn(!r.ok ? true : false);
+              setPushMsg(r.ok ? 'Bildirim kapatildi.' : (r.reason || 'Kapatilamadi'));
+              return;
+            }
+            const r = await enablePush();
+            if (!r.ok) { setPushMsg(r.reason || 'Acilamadi'); return; }
+            setPushOn(true);
+            let tracked = [];
+            try { tracked = JSON.parse(localStorage.getItem('bist_signal_history_v2') || '[]'); } catch { /* ignore */ }
+            const sync = await syncTracking(r.subscription, tracked, PROXY_BASE_URL);
+            setPushMsg(sync.ok
+              ? `Acildi. ${sync.count} aktif sinyal takibe alindi.`
+              : `Abonelik tamam ama sunucuya yazilamadi: ${sync.reason}`);
+          }}
+          style={{
+            fontSize: 10, fontWeight: 700, padding: '8px 14px', borderRadius: 5, cursor: 'pointer',
+            fontFamily: 'inherit',
+            background: pushOn ? 'rgba(244,63,94,0.12)' : 'rgba(0,230,118,0.12)',
+            border: `1px solid ${pushOn ? 'rgba(244,63,94,0.5)' : 'rgba(0,230,118,0.5)'}`,
+            color: pushOn ? '#ff5470' : 'var(--green)',
+          }}
+        >{pushOn ? 'BILDIRIMI KAPAT' : 'BILDIRIMI AC'}</button>
+        {!isPushSupported() && (
+          <span style={{ fontSize: 9, color: 'var(--orange)' }}>{pushBlockedReason()}</span>
+        )}
+      </div>
+      {pushMsg && <div style={{ fontSize: 9, color: 'var(--t2)', marginBottom: 16 }}>{pushMsg}</div>}
 
       {/* v31.22: TCMB EVDS anahtari - foreignFlowEngine bu anahtari zaten okuyordu
           ama girecek bir alan yoktu, bu yuzden piyasa geneli yabanci akisi hep
