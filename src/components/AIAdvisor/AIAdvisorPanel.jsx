@@ -153,7 +153,17 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
             {isMarketOpen() ? 'CANLI' : 'YARIN İÇİN'}
           </span>
         )}
-        {scanning && <span style={{ color: 'var(--yellow)' }}>Taranıyor... {scanProgress.total > 0 ? `${scanProgress.done}/${scanProgress.total}` : ''}</span>}
+        {scanning && (
+          <span style={{ color: 'var(--yellow)' }}>
+            Taranıyor... {scanProgress.total > 0 ? `${scanProgress.done}/${scanProgress.total}` : ''}
+            {/* v31.32: sayaç 612/612'ye ulaştıktan SONRA hâlâ dakikalarca son-işlem
+                var (yeniden deneme, haber, temel, zenginleştirme, Claude). Faz adı
+                olmayınca bu "donmuş" görünüyordu. */}
+            {scanProgress.phase
+              ? <span style={{ color: 'var(--t3)' }}> · {scanProgress.phase}</span>
+              : null}
+          </span>
+        )}
         {!scanning && lastUpdate && <span style={{ color: 'var(--t3)' }}>{new Date(lastUpdate).toLocaleTimeString('tr-TR')}</span>}
         <DataFreshnessBadge />
         <SourceHealthBadge />

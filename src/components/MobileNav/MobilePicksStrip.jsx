@@ -53,6 +53,10 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
         {scanning ? (
           <span className="m-advisor-scanning">
             {scanProgress.total > 0 ? `${scanProgress.done}/${scanProgress.total}` : '...'}
+            {/* v31.32: 612/612'den sonraki son-işlem fazı — yoksa "dondu" görünüyor. */}
+            {scanProgress.phase
+              ? <span style={{ opacity: 0.65 }}> · {scanProgress.phase}</span>
+              : null}
           </span>
         ) : (
           <div className="m-advisor-sentiment">

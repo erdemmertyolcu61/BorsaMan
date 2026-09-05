@@ -11,6 +11,7 @@ import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../utils/regimeGate.js';
 import { applyConvictionSizing } from '../utils/positionSizing.js';
+import { createPhaseTracker, formatPhaseSummary } from '../utils/scanPhases.js';
 import { computeRelativeStrength } from '../utils/relativeStrength.js';
 import { computeTopGainerPotential, topGainerConfidenceAdjust } from '../utils/topGainerPotential.js';
 import { shouldRunEndOfDayScan, isEodCatchUp, EOD_SCAN_DAY_KEY } from '../utils/scanSchedule.js';
@@ -730,7 +731,7 @@ export function useAIAdvisor(portfolio) {
   const [advisorLog, setAdvisorLog] = useState([]);
   const [sectorHeatmap, setSectorHeatmap] = useState({});
   const [scanning, setScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState({ done: 0, total: 0 });
+  const [scanProgress, setScanProgress] = useState({ done: 0, total: 0, phase: '' });
   const [lastUpdate, setLastUpdate] = useState(null);
   // v26: Piyasa rejimi (BULL/NEUTRAL/BEAR) — BIST100 gunluk performansina dayanir.
   // Tarama agresifligini belirler (BEAR=3 pick, NEUTRAL=5, BULL=8).
@@ -789,10 +790,22 @@ export function useAIAdvisor(portfolio) {
     runningRef.current = true;
     setScanning(true);
     pushLog({ type: 'info', msg: 'AI taramasi baslatildi' });
+    // try'dan ONCE tanimli: tarama hata verse bile `finally` sure dokumunu basar.
+    let phases = null;
 
     try {
       const symbols = getStockList(opts.universe || SCAN_UNIVERSE);
-      setScanProgress({ done: 0, total: symbols.length });
+      // v31.32: FAZ GORUNURLUGU. Ana dongu bitince sayac 612/612'de kaliyor ama
+      // arkasindan hala dakikalarca son-islem var (yeniden deneme 90s butce, haber,
+      // temel, zenginlestirme, Claude). Kullanici bunu "dondu" olarak gordu — hakli,
+      // hicbir geri bildirim yoktu. Faz adi UI'a yazilir, sureler sonunda loglanir.
+      phases = createPhaseTracker();
+      const phase = (name) => {
+        phases.mark(name);
+        setScanProgress(prev => ({ ...prev, phase: name || '' }));
+      };
+      setScanProgress({ done: 0, total: symbols.length, phase: 'hisseler taraniyor' });
+      phases.mark('hisse taramasi');
 
       // ── FRESH SCAN GUARD (v18) ──
       // Her tarama tamamen guncel veri ile calismali. L1 cache (memory) + L2 cache
@@ -1190,7 +1203,19 @@ export function useAIAdvisor(portfolio) {
         baseDelayMs: CHUNK_DELAY_MS,
         baseConcurrency: SCAN_CONCURRENCY,
       });
+      // v31.32 ANA DONGU SURE BUTCESI. Yeniden-deneme gecisinin (v31.21) butcesi
+      // vardi, ana dongunun YOKTU. Olculdu (onizlemede, agin engelli oldugu
+      // ortamda): tum semboller basarisiz olunca throttle tabana iniyor
+      // (4 paralel / 1500ms) ve sembol timeout'u 11s → 612 sembol icin
+      // 153 grup x ~12s ≈ YARIM SAAT. Dongu donmuyor, ilerliyor (149→159/8sn
+      // olculdu) ama kullanici acisindan "takildi"dan farksiz.
+      // Butce cömert: saglikli tarama 2-5 dk suruyor, bu onu KESMEZ; yalnizca
+      // patolojik durumu sinirlar. Kesilirse kapsama DURUSTCE raporlanir.
+      const SCAN_BUDGET_MS = 8 * 60 * 1000;
+      const scanStart = Date.now();
+      let scanBudgetHit = false;
       for (let i = 0; i < symbols.length; ) {
+        if (Date.now() - scanStart > SCAN_BUDGET_MS) { scanBudgetHit = true; break; }
         const { delayMs, concurrency } = pace.current();
         const chunk = symbols.slice(i, i + concurrency);
         const before = failedSyms.size;
@@ -1205,8 +1230,16 @@ export function useAIAdvisor(portfolio) {
           : { ok: chunk.length - newlyFailed });
         i += chunk.length;
         done = Math.min(i, symbols.length);
-        setScanProgress({ done, total: symbols.length });
+        setScanProgress({ done, total: symbols.length, phase: 'hisseler taraniyor' });
         if (i < symbols.length) await sleep(delayMs);
+      }
+      if (scanBudgetHit) {
+        const left = symbols.length - Math.min(done, symbols.length);
+        pushLog({
+          type: 'warn',
+          msg: `Tarama sure butcesi doldu (${SCAN_BUDGET_MS / 60000} dk) — ${left} sembol taranmadi. `
+             + 'Ust kaynak yavas/kisitli; sonuclar eksik ama gecerli.',
+        });
       }
       {
         const ps = pace.stats();
@@ -1225,6 +1258,7 @@ export function useAIAdvisor(portfolio) {
       // SURESININ onemli olmadigini belirtti → basarisizlari DAHA UZUN timeout ve
       // DAHA DUSUK eszamanlilikla (rate-limit/circuit-breaker rahatlasin) tekrar dene.
       if (failedSyms.size) {
+        phase('eksik semboller yeniden deneniyor');
         // SINIRLI retry: ilk surumde sinir yoktu ve olculdu — cok sembol basarisiz
         // olunca gecis 15+ dakika suruyordu (uzun timeout x dusuk eszamanlilik).
         // Artik UC sert sinir var: sembol tavani, duvar-saati butcesi ve daha kisa
@@ -1247,7 +1281,8 @@ export function useAIAdvisor(portfolio) {
           const chunk = retryList.slice(i, i + RETRY_CONCURRENCY);
           const rr = await Promise.all(chunk.map(s => processSymbol(s, RETRY_TIMEOUT_MS)));
           rr.forEach(r => { if (r) results.push(r); });
-          setScanProgress({ done: symbols.length, total: symbols.length });
+          setScanProgress({ done: symbols.length, total: symbols.length,
+            phase: `yeniden deneme ${Math.min(i + RETRY_CONCURRENCY, retryList.length)}/${retryList.length}` });
           if (i + RETRY_CONCURRENCY < retryList.length) await sleep(CHUNK_DELAY_MS);
         }
         const recovered = results.length - (symbols.length - allFailed.length);
@@ -1263,6 +1298,7 @@ export function useAIAdvisor(portfolio) {
       }
       console.info(`[AI Advisor] Kapsama: ${results.length}/${symbols.length} (basarisiz: ${failedSyms.size})`);
 
+      phase('top-10 potansiyeli');
       // ── v31.24: GUNLUK TOP-10 YUKSELEN ADAYLARI ────────────────────────
       // Kullanici "top-10'a girme potansiyeli olanlari bulsun" dedi. Bu, kurulum
       // kalitesinden AYRI bir siralama: tum evren top-gainer skoruna gore siralanip
@@ -2433,8 +2469,14 @@ export function useAIAdvisor(portfolio) {
         // v29 PLATFORM PARITY: getMlRules returns the Electron live DB rules when
         // available, else a bundled static snapshot (src/data/mlRules.json) so
         // web/mobile apply the SAME ML boost as desktop — identical picks everywhere.
+        phase('ML kurallari');
         const { getMlRules } = await import('../utils/mlRules.js');
-        const { rules: mlRules, source: mlSource } = await getMlRules(10);
+        // v31.32: tek sinirsiz await buydu — Electron'da SQLite IPC'ye gidiyor.
+        // Bir yanit gelmezse tum son-islem zinciri burada sonsuza kadar beklerdi.
+        const { rules: mlRules, source: mlSource } = await Promise.race([
+          getMlRules(10),
+          new Promise(r => setTimeout(() => r({ rules: [], source: 'timeout' }), 8000)),
+        ]);
         {
           console.log(`[AI Advisor] ML rules loaded: ${mlRules?.length || 0} rules (source: ${mlSource})`);
           if (mlRules?.length) {
@@ -2645,6 +2687,7 @@ export function useAIAdvisor(portfolio) {
           ...picks.map(p => p.symbol),
         ].filter(Boolean))];
         if (allSymbols.length) {
+          phase('haber taramasi');
           const preNews = await Promise.race([
             fetchMarketNews({ universe: allSymbols, maxPerSource: 25 }),
             new Promise(res => setTimeout(() => res(null), 10_000)),
@@ -2713,6 +2756,7 @@ export function useAIAdvisor(portfolio) {
           .slice(0, 18);
         if (fundCandidates.length) {
           const rejectSet = new Set();
+          phase('temel analiz');
           await Promise.all(fundCandidates.map(async (p) => {
             try {
               const f = await Promise.race([
@@ -2821,6 +2865,7 @@ export function useAIAdvisor(portfolio) {
       // `newsIndex` is declared + populated by the v31.8 pre-selection news pass
       // above (news now drives selection, not just decoration). It is carried on
       // the scan-complete event (AlertLog/ChatPanel read detail.newsIndex).
+      phase('zenginlestirme (fiyat/haber/yabanci/iceriden)');
       const enrichResults = await Promise.allSettled([
         // [0] Price refresh
         _withTimeout((async () => {
@@ -2938,6 +2983,7 @@ export function useAIAdvisor(portfolio) {
       // journal PROVES the A-vs-C spread (n>=30, >=10pt) it earns influence on
       // confidence + position sizing. Below that floor: annotation only.
       try {
+        phase('Claude notlari');
         const { askDailyPicks, getApiKey } = await import('../utils/claude.js');
         if (picks.length && getApiKey()) {
           const graded = await Promise.race([
@@ -3244,6 +3290,7 @@ export function useAIAdvisor(portfolio) {
           }
         }
       };
+      phase('sonuclandirma');
       stampSegKeys(allResults);
       stampSegKeys(finalPicks);
 
@@ -3285,6 +3332,17 @@ export function useAIAdvisor(portfolio) {
     } catch (err) {
       pushLog({ type: 'err', msg: 'Tarama hatasi: ' + (err.message || err) });
     } finally {
+      // v31.32: nereye gitti bu sure? Bir dahaki "yavas/dondu" raporunda tahmin
+      // etmek yerine gercek dokumu okuyabilelim diye HER taramada loglanir.
+      if (phases) {
+        const summary = phases.finish();
+        const line = formatPhaseSummary(summary);
+        if (line) {
+          console.info('[AI Advisor] ' + line);
+          pushLog({ type: summary.slow.length > 2 ? 'warn' : 'info', msg: line });
+        }
+      }
+      setScanProgress(prev => ({ ...prev, phase: '' }));
       setScanning(false);
       runningRef.current = false;
     }

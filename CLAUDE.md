@@ -1279,6 +1279,53 @@ paper testin olcegi ona gore kayar (yon degismez).
 
 Test 612 pass (42 dosya), 0 lint error (79 warning, ratchet 90), build temiz.
 
+## "612/612'de Kaliyor" — Gorunurluk + Sinirlar (v31.32)
+
+Kullanici: "Sistem hem mobilde hem PC'de 612/612 tarandigi zaman kaliyor."
+
+### Teshis: sonsuz dongu YOK, gorunurluk yok
+`setScanProgress({ done: 612, total: 612 })` ANA DONGU biter bitmez yaziliyor (satir ~1208).
+Arkasindan hala uzun bir son-islem zinciri var ve **hicbiri ilerleme gostermiyordu**:
+yeniden-deneme gecisi (90s butce) → top-10 → makro (6s) → ML kurallari → haber (10s) →
+temel (6s) → zenginlestirme (12s) → Claude (25s) → sonuclandirma. En kotu ~2,5 dakika,
+sayac 612/612'de ve cubuk %100'de sabit. Kullanici hakli olarak "dondu" diye okuyor.
+
+Her iki arayuz de (`AIAdvisorPanel`, `MobilePicksStrip`) yalniz `done/total` gosteriyordu.
+
+### Yapilanlar
+
+**1. `scanPhases.js` (yeni, saf, 9 test)** — `createPhaseTracker` faz adini ve suresini tutar,
+`formatPhaseSummary` okunabilir dokum uretir. Zaman kaynagi enjekte edilebilir (test icin).
+
+**2. Faz adi arayuze yazilir**: artik "Taranıyor... 612/612 · zenginleştirme" gibi.
+Dogrulandi (canli): "Taranıyor... 0/612 · hisseler taraniyor".
+
+**3. Sure dokumu HER taramada loglanir** (`finally` blogunda, tarama hata verse bile):
+`Tarama 117.3s — hisse taramasi 92.0s · Claude notlari 25.0s · ...`. Bir dahaki "yavas"
+raporunda tahmin etmek yerine gercek dagilim okunacak. 2'den fazla yavas faz varsa `warn`.
+
+**4. Tek sinirsiz `await` sinirlandirildi**: `getMlRules(10)` (Electron'da SQLite IPC'ye gider)
+zaman asimsizdi — yanit gelmezse tum zincir sonsuza kadar beklerdi. 8s cap eklendi.
+**Denetlendi: son-islem yolundaki her `await` artik sinirli** (makro 6s, ML 8s, haber 10s,
+temel 6s, zenginlestirme 12s x4 `allSettled`, Claude 25s) → sonsuz donma artik mumkun degil.
+
+**5. ANA DONGU SURE BUTCESI (8 dk)** — asil yavaslik kaynagi buydu ve olculdu.
+Onizlemede (dis istekler engelli) tum semboller basarisiz olunca v31.25 adaptif throttle
+tabana iniyor (**4 paralel / 1500ms**), sembol timeout'u 11s → 612 sembol icin 153 grup x
+~12s ≈ **yarim saat**. Dongu DONMUYOR (olculdu: 149→159 sembol / 8 saniye) ama kullanici
+acisindan takilmaktan farksiz. Yeniden-deneme gecisinin zaten butcesi vardi (v31.21),
+ana dongunun yoktu. Butce comert: saglikli tarama 2-5 dk, bu onu KESMEZ; yalnizca patolojik
+durumu sinirlar ve kesilirse kac sembol taranmadigi DURUSTCE loglanir.
+
+### Durust sinir
+Kullanicinin ortaminda hangi fazin ne kadar surdugu **henuz bilinmiyor** — onizleme tarayicisi
+dis istekleri engelledigi icin gercek bir tam tarama orada kosturulamaz. Bu commit sorunu
+"gorunmez" olmaktan cikarip **olculebilir** yapar; bir sonraki adim kullanicinin log satirini
+okuyup asil yavas fazi hedeflemek. Ana dongu butcesi disinda hicbir faz hizlandirilmadi —
+neyin hizlandirilmasi gerektigini henuz veri soylemedi.
+
+Test 621 pass (43 dosya), 0 lint error, build temiz.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.
