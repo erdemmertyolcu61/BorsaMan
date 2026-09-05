@@ -23,7 +23,13 @@ import { computeLiveEdge } from './liveEdge.js';
 const STORAGE_KEY = 'bist_paper_ml_engine_v1';
 const START_CAPITAL = 100_000;
 const MAX_POSITIONS = 3;          // TOP 3 ML picks only
-const MAX_POS_PCT = 0.33;         // 33% capital per trade
+const MAX_POS_PCT = 0.33;         // sermaye TAVANI (artik birincil olcut degil)
+// v31.31: birincil olcut RISK. `calcPosition`'in varsayilani ile ayni (%2) —
+// kullaniciya gosterilen lot onerisi ile forward test ayni stratejiyi olcsun.
+// Medyan stop mesafesi ~%5.5 oldugu icin tipik pozisyon ~%36 -> MAX_POS_PCT
+// tavaniyla ~%33'e kirpilir; yani hesabin OLCEGI neredeyse degismez, ama
+// pozisyon artik stop mesafesiyle DOGRU sekilde degisir.
+const RISK_PER_TRADE_PCT = 0.02;
 const STOP_LOSS_PCT = -0.03;      // fallback -3% stop (pick's own stop preferred)
 const TIME_EXIT_DAYS = 3;         // rotate stagnant positions after 3 trading days
 const TIME_EXIT_MIN_GAIN_PCT = 1; // keep only if gross P&L >= +1% at day 3
@@ -306,9 +312,6 @@ export class PaperTradeEngine {
     const legSlippage = liquiditySlippagePct(pick.liquidity);
     const entry = applyEntryCost(currentPrice, 'buy', legSlippage);
 
-    // 33% max capital allocation × regime/governor multiplier.
-    // pick._positionSizeMult carries regimeEngine.riskMult × profitGovernor
-    // positionMult — in BEAR/DEFENSE the same setup opens with a fraction.
     // v31.28: acik 0 = "acma" (izle-only). Eskiden `> 0 ? x : 1` guard'i 0'i
     // gecersiz sayip TAM boyuta ceviriyordu. _watchOnly zaten yukarida
     // eleniyor (satir ~224); bu ikinci savunma katmani.
@@ -319,16 +322,11 @@ export class PaperTradeEngine {
     const posMult = Number.isFinite(pick._positionSizeMult) && pick._positionSizeMult > 0
       ? Math.min(pick._positionSizeMult, 1.5)
       : 1;
-    const sizeTl = Math.min(s.cash * MAX_POS_PCT * posMult, s.cash);
-    if (sizeTl < MIN_ENTRY_TL) {
-      console.warn('[PaperTrade] ABORTING trade for', pick.symbol, '- Position size too small:',
-        sizeTl, 'TL (min:', MIN_ENTRY_TL, ', cash:', s.cash, ', posMult:', posMult, ')');
-      return;
-    }
 
     // Honor the pick's own ATR/structure stop so the forward test actually
     // validates the advisor's exit logic. Fixed -3% only as sanity fallback
     // (missing or implausible stop: above entry or further than -12%).
+    // NOTE: stop is computed BEFORE sizing now — sizing depends on it (v31.31).
     const pickStop = Number(pick.stop);
     const pickStopValid = Number.isFinite(pickStop)
       && pickStop < entry
@@ -338,6 +336,33 @@ export class PaperTradeEngine {
       : Math.round(entry * (1 + STOP_LOSS_PCT) * 100) / 100;
     const stopSource = pickStopValid ? 'pick' : 'fixed3pct';
     const targetPrice = pick.target || pick.t1 || entry * 1.10;
+
+    // ── v31.31: RISKE GORE BOYUTLANDIRMA (eskiden sabit %33 sermaye) ────
+    // OLCULEN UYUMSUZLUK: kullaniciya gosterilen lot onerisi `calcPosition`
+    // ile RISKE gore hesaplaniyor (maxRiskTL / riskPerShare), ama forward test
+    // sabit %33 SERMAYE ile aciyordu. Yani ileri test, onerilen stratejiden
+    // FARKLI bir stratejiyi olcuyordu — v31.28-B'de cikis tarafinda duzeltilen
+    // "sistem soyledigini olcmuyor" hatasinin boyutlandirma versiyonu.
+    //
+    // Bu ayrimin OLCULEN sonucu var: stop genisligi taramasinda (26.638 sinyal)
+    // ham yuzde getiri "genis stop daha iyi" derken (sabit sermaye varsayimi),
+    // R-katsayisi tam tersini soyluyordu (sabit risk varsayimi: 2.5x genis stop
+    // = 2.5x kucuk pozisyon). Hangi konvansiyonu kullandigin sonucu TERSINE
+    // cevirdigi icin ikisinin ayni olmasi sart.
+    //
+    // MAX_POS_PCT tavan olarak KORUNUR: cok siki bir stop asiri buyuk pozisyon
+    // uretmesin (2% risk / %1 stop = sermayenin 2 kati olurdu).
+    const stopDistPct = (entry - stopPrice) / entry;
+    const riskBudget = s.cash * RISK_PER_TRADE_PCT * posMult;
+    const riskSized = stopDistPct > 0 ? riskBudget / stopDistPct : 0;
+    const capCeiling = s.cash * MAX_POS_PCT * posMult;
+    const sizeTl = Math.min(riskSized, capCeiling, s.cash);
+    if (!(sizeTl >= MIN_ENTRY_TL)) {
+      console.warn('[PaperTrade] ABORTING trade for', pick.symbol, '- Position size too small:',
+        sizeTl, 'TL (min:', MIN_ENTRY_TL, ', cash:', s.cash, ', posMult:', posMult,
+        ', stopDist:', (stopDistPct * 100).toFixed(2) + '%)');
+      return;
+    }
     const lots = Math.floor(sizeTl / entry);
     console.log('[PaperTrade] Opening trade for', pick.symbol, 'at', currentPrice,
       '| stop=', stopPrice, '| target=', targetPrice, '| sizeTL=', sizeTl, '| lots=', lots);

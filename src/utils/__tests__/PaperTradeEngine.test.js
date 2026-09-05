@@ -66,6 +66,50 @@ describe('PaperTradeEngine v2 (sizing + exits)', () => {
     expect(broken.positionMult).toBe(1);
   });
 
+  // START_CAPITAL 100k, risk %2 -> 2000 TL. MAX_POS_PCT %33 tavani, stop
+  // mesafesi ~%6.1'in ALTINDA kaldiginda baglar. Asagidaki testler tavanin
+  // BAGLAMADIGI araligi (-%7 .. -%11) ve tavanin BAGLADIGI durumu ayri ayri
+  // dogrular — ikisi de kasitli davranis.
+  const sizeFor = async (stop, symbol = 'THYAO') => {
+    localStorage.clear();
+    const e = await mkEngine();
+    await e._openTrade(mkPick({ symbol, stop }));
+    const t = e._state.openTrades[0];
+    return { size: t.size_tl ?? t.sizeTl, entry: t.entry_price ?? t.entryPrice,
+             stop: t.stop_price ?? t.stopPrice };
+  };
+
+  it('v31.31: sizes by RISK, so a wider stop opens a SMALLER position', async () => {
+    // The forward test has to size the way calcPosition tells the user to size
+    // (maxRiskTL / riskPerShare), otherwise it validates a different strategy
+    // than the one the app recommends. Measured consequence: under fixed-capital
+    // sizing a wider stop looks better, under fixed-risk it looks worse - the
+    // convention flips the answer, so both sides must use the same one.
+    const tight = await sizeFor(93, 'TIGHT');   // -7%
+    const wide = await sizeFor(89, 'WIDE');     // -11%
+    expect(wide.size).toBeLessThan(tight.size);
+    // Position scales as 1/stopDistance, so ~7/11 of the tighter one.
+    expect(wide.size / tight.size).toBeCloseTo(7 / 11, 1);
+  });
+
+  it('v31.31: TL at risk is the invariant, not TL deployed', async () => {
+    const riskOf = (r) => r.size * ((r.entry - r.stop) / r.entry);
+    const a = await sizeFor(93, 'A');   // -7%
+    const b = await sizeFor(89, 'B');   // -11%
+    // 2% of 100k = 2000 TL at risk either way (slippage moves entry a hair).
+    expect(riskOf(a)).toBeCloseTo(2000, -2);
+    expect(riskOf(b)).toBeCloseTo(riskOf(a), -2);
+  });
+
+  it('v31.31: the capital ceiling still clips an implausibly tight stop', async () => {
+    // 2% risk against a 0.5% stop would ask for 4x capital; MAX_POS_PCT must hold.
+    const hair = await sizeFor(99.5, 'HAIRLINE');   // -0.5%
+    const two = await sizeFor(98, 'TWO');           // -2%
+    expect(hair.size).toBeLessThanOrEqual(100_000 * 0.33 + 1);
+    // Both are clipped to the same ceiling, so risk-sizing does NOT run away.
+    expect(hair.size).toBeCloseTo(two.size, 0);
+  });
+
   it('TIME_EXIT closes a stagnant 3+ day position below +1%', async () => {
     const e = await mkEngine();
     await e._openTrade(mkPick({ symbol: 'STALE' }));

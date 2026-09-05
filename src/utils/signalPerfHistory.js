@@ -117,16 +117,38 @@ export function mergeDailyPerf(existing, backfilled, maxDays = 30) {
 //     comes from closes (see lastSettledTradingDay / selectBackfillTargets).
 
 /** 'YYYY-MM-DD' in Europe/Istanbul (no DST in TR since 2016). */
+// v31.31 PERFORMANS: bicimlendirici bir KEZ kurulur. Eskiden her cagride yeni
+// bir `Intl.DateTimeFormat` yaratiliyordu; bu fonksiyon bar basina cagriliyor
+// (simulatePlanReturn, backfill sweep) ve olculdugunde parametre taramasinin
+// baskin maliyetiydi. Uygulama tarafinda da settlement sweep'i yavaslatiyordu.
+let _trtFmt;
+function _fmt() {
+  if (_trtFmt === undefined) {
+    try {
+      _trtFmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit',
+      });
+    } catch { _trtFmt = null; }
+  }
+  return _trtFmt;
+}
+
+/** Sadece-tarih dizesi (YYYY-MM-DD) — bar tarihlerinin bicimi. */
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export function istanbulDayKey(d = Date.now()) {
+  // HIZLI YOL: zaten bir gun anahtari. `new Date('2026-08-03')` UTC gece yarisi
+  // demek; Istanbul UTC+3 (2016'dan beri DST yok) → ayni takvim gunu. Yani bu
+  // kisayol donusumle BIREBIR ayni sonucu verir, sadece Date+Intl'i atlar.
+  if (typeof d === 'string' && DATE_ONLY_RE.test(d)) return d;
+
   const dt = d instanceof Date ? d : new Date(d);
   if (Number.isNaN(dt.getTime())) return '';
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(dt);
-  } catch {
-    return new Date(dt.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const f = _fmt();
+  if (f) {
+    try { return f.format(dt); } catch { /* asagidaki yedege dus */ }
   }
+  return new Date(dt.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
 /**

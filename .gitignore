@@ -27,3 +27,6 @@ src/data/realPortfolio.local.json
 # depoya girmesin: onbellek ham piyasa verisi, rapor ise 1MB'lik cikti.
 .replay-cache/
 reports/replay-*.json
+
+# Parametre taramasi ciktisi (yeniden uretilebilir)
+reports/sweep-*.json

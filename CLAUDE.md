@@ -1204,6 +1204,81 @@ tek islem gorundu), 89 buyuk/orta-cap, 5 yil, ve olcum sinyal MOTORUNU olcer —
 likidite/haber/makro/sektor katmanlari dahil degil. Trailing-only daha DUSUK kazanma orani
 (%51 vs %58) getirir: daha az kazanip daha buyuk kazanmak psikolojik olarak daha zordur.
 
+## Cikis Parametre Taramasi: Degistirilecek Sey Cikmadi (v31.31)
+
+v31.30 kademeli satisi kaldirdi → cikis artik TAMAMEN trailing stop. Bu, uc sayiyi stratejinin
+KENDISI yapti (`BREAKEVEN_PCT=3` / `TRAIL_ACTIVE_PCT=5` / `LOCK_FRACTION=0.5`) ve ucu de
+`useLivePrices`'tan miras varsayimdi, hic olculmemisti. Dorduncu eksen: baslangic stop genisligi.
+
+### `scripts/sweep-exit-params.mjs` (yeni)
+Kombinasyonlari tarar, ama **walk-forward zorunlu**: Bolum 1 (tum-veri siralamasi) yalnizca fikir
+verir, Bolum 2 parametreyi SADECE in-sample'dan secip gorulmemis OOS'ta mevcut varsayilanla yan
+yana koyar. IS-secimi mevcudu OOS'ta gecemiyorsa degisiklik yapilmaz. `--axis <ad>` ile tek
+parametre ince taranir (cok-eksenli gridde sinir degerine takilmayi boyle yakalarsin).
+
+### ASIL DERS: metrik secimi cevabi TERSINE ceviriyordu
+89 sembol / 5 yil / **26.638 sinyal**, stop genisligi ekseni:
+
+| stopScale | ham net % | R-katsayisi | **PORTFOY getirisi** |
+|---|---|---|---|
+| 0.7 (dar) | +%1,01 | **0,262** | +%0,33 |
+| **1.0 (mevcut)** | +%1,28 | 0,233 | **+%0,38** |
+| 1.5 | +%1,54 | 0,187 | +%0,37 |
+| 2.5 (genis) | **+%1,87** | 0,136 | +%0,32 |
+
+- **Ham yuzde getiri** "genis daha iyi" diyor, 2,5'e kadar monoton — cunku farkli bahis
+  boyutlarini karsilastiriyor (sabit sermaye varsayimi).
+- **R-katsayisi** "dar daha iyi" diyor, 0,7'ye kadar monoton — cunku **%33 sermaye tavanini**
+  yok sayiyor (stop daraldikca R sonsuza gider ama pozisyon BUYUMEZ, yalniz stop-out artar).
+- **PORTFOY getirisi** = getiri% x min(risk_butcesi/stop_mesafesi, tavan) — yani gercek
+  boyutlandirma kurali. Burada **ic optimum var ve mevcut ayar tam ustunde** (1,0-1,3 platosu).
+
+Ikisi de kendinden emin, ikisi de yanlis, ve zit yonde. Walk-forward da bunu dogruluyor: dogru
+metrige gecince `stopScale` **kararsizlasti** (0.7x3 · 2x2 · 1.15x2 · 1.3x2 · 0.85x2 · 1.5x1) —
+onceki "12/12 pencerede 1.35" istikrari yanlis hedef fonksiyonun artefaktiymis.
+
+**KARAR: hicbir cikis parametresi degismedi.** IS-secimi medyan OOS +%0,14, mevcut +%0,16.
+Trailing esiklerinin ucu de zaten uclar arasinda salinip duruyordu (gurultu).
+
+### Bunu MUMKUN kilan duzeltme: paper motoru artik RISKE gore boyutluyor
+Iki metrigin zit cevap vermesinin sebebi, uygulamanin kendi icinde tutarsiz olmasiydi:
+- `calcPosition` (kullaniciya gosterilen lot onerisi) → **riske gore** (`maxRiskTL / riskPerShare`)
+- `PaperTradeEngine` → sabit **%33 sermaye**; `usePaperTrading` → sabit **%15 sermaye**
+
+Yani forward test, onerilen stratejiden FARKLI bir stratejiyi olcuyordu — v31.28-B'de cikis
+tarafinda duzeltilen "sistem soyledigini olcmuyor" hatasinin boyutlandirma versiyonu.
+
+`PaperTradeEngine` artik `risk_butcesi(%2) / stop_mesafesi` ile boyutluyor, `MAX_POS_PCT` tavan
+olarak KORUNDU (cok siki stop asiri pozisyon uretmesin). Stop hesabi boyutlandirmadan ONCEYE
+tasindi (bagimlilik sirasi). **Olculen etki (n=1025 sinyal): islemlerin %70'i DEGISMIYOR**
+(tavana kirpiliyor, stop < %6,06), **%30'u kuculuyor** — ortalama eskinin %82'sine. Hesabin
+olcegi neredeyse ayni, ama islem basina risk artik sabit.
+
+`usePaperTrading` (standart motor) bilincli olarak DOKUNULMADI: kullanici-ayarlanabilir
+`maxPosPct` alani var ve ogrenme dongusunu beslemiyor (`computeLiveEdge` ML motorunu +
+sinyal-takibi kapanislarini okur).
+
+### Yan fayda: `istanbulDayKey` ~100x hizlandi
+Her cagride `new Intl.DateTimeFormat` kuruluyordu. Bar basina cagriliyor (`simulatePlanReturn`,
+settlement sweep) ve parametre taramasinin baskin maliyetiydi — ilk deneme 10 dakikada bitmedi.
+Bicimlendirici bir kez kurulur + `YYYY-MM-DD` dizeleri icin hizli yol (Istanbul UTC+3, 2016'dan
+beri DST yok → sadece-tarih dizesi zaten gun anahtaridir, donusum BIREBIR ayni sonucu verir).
+Olculdu: 500k cagri **40ms**. Uygulamadaki settlement sweep de bundan faydalanir.
+Saat dilimi mantigi korundu (21:30Z → ertesi gun, dogrulandi).
+
+### Kendi iki hatam
+1. R-katsayisini once **oran-ortalamasi** olarak hesapladim → sutun tumden negatif cikti (kucuk
+   paydali tek islemler patlatiyor). Dogrusu toplam-getiri/toplam-risk.
+2. Portfoy metrigini eklemeden once ham-% tablosuna bakip stop'u 1,35x genisletmeye
+   hazirlaniyordum. Boyutlandirmayi hesaba katinca bunun yanlis oldugu ortaya cikti.
+
+**Durust sinir**: tek veri kaynagi (Yahoo), 89 buyuk/orta-cap, 5 yil, ve olcum sinyal MOTORUNU
+olcer — canli advisor'in likidite/haber/makro/sektor katmanlari dahil degil. `RISK_PER_TRADE_PCT
+= 0.02` `calcPosition`'in varsayilaniyla eslesir; kullanici farkli bir risk orani kullaniyorsa
+paper testin olcegi ona gore kayar (yon degismez).
+
+Test 612 pass (42 dosya), 0 lint error (79 warning, ratchet 90), build temiz.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

@@ -74,6 +74,8 @@ const r2 = (v) => Math.round(v * 100) / 100;
  *   fractions: T1/T2/T3 kademe oranlari (varsayilan PLAN_FRACTIONS 40/30/30).
  *   trailOnly: hedeflerde HIC satma, tamamini trailing stop tasisin — "kazanani
  *     kos" politikasi. Cikis politikasi karsilastirmasi icin (replay-signals.mjs).
+ *   breakevenPct / trailActivePct / lockFraction: trailing esikleri (varsayilan
+ *     PLAN_CONST). Parametre taramasi icin override edilebilir.
  * @returns {{planReturn:number, exitReason:string, barsHeld:number, legs:Array}|null}
  */
 export function simulatePlanReturn(signal, bars, opts = {}) {
@@ -84,6 +86,13 @@ export function simulatePlanReturn(signal, bars, opts = {}) {
   if (!startKey) return null;
 
   const maxBars = Number.isFinite(opts.maxBars) ? opts.maxBars : MAX_PLAN_BARS;
+  // v31.31: trailing parametreleri disaridan verilebilir. Cikis artik TAMAMEN
+  // trailing stop oldugu icin (v31.30) bu uc sayi stratejinin KENDISI — sabit
+  // birakmak yerine olculebilir olmalari gerekiyordu. Varsayilan hala
+  // PLAN_CONST (= useLivePrices'in gercekten uyguladigi degerler).
+  const beP = Number.isFinite(opts.breakevenPct) ? opts.breakevenPct : PLAN_CONST.BREAKEVEN_PCT;
+  const acP = Number.isFinite(opts.trailActivePct) ? opts.trailActivePct : PLAN_CONST.TRAIL_ACTIVE_PCT;
+  const lockF = Number.isFinite(opts.lockFraction) ? opts.lockFraction : PLAN_CONST.LOCK_FRACTION;
   const isBuy = signal?.cls !== 'sell';
   const dir = isBuy ? 1 : -1;
 
@@ -159,10 +168,10 @@ export function simulatePlanReturn(signal, bars, opts = {}) {
     if (isBuy ? fav > peak : fav < peak) peak = fav;
     const peakGain = pctOf(peak);
     let newStop = stop;
-    if (peakGain >= PLAN_CONST.TRAIL_ACTIVE_PCT) {
-      const locked = entry + (peak - entry) * PLAN_CONST.LOCK_FRACTION;
+    if (peakGain >= acP) {
+      const locked = entry + (peak - entry) * lockF;
       if (newStop == null || (isBuy ? locked > newStop : locked < newStop)) newStop = locked;
-    } else if (peakGain >= PLAN_CONST.BREAKEVEN_PCT) {
+    } else if (peakGain >= beP) {
       if (newStop == null || (isBuy ? entry > newStop : entry < newStop)) newStop = entry;
     }
     stop = newStop;   // asla gevsemez (yalniz lehimize hareket eder)
