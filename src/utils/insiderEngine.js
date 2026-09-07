@@ -15,6 +15,7 @@
 
 import { getDataViaProxies } from './fetchEngine.js';
 import { fetchKAPDisclosures } from './kapEngine.js';
+import { isKapAvailable, kapUnavailableInsider } from './kapAvailability.js';
 
 // ── Cache ────────────────────────────────────────────────────
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -488,6 +489,10 @@ export function getInsiderScore(transactions) {
  * }>}
  */
 export async function fetchInsiderTransactions(symbol) {
+  // v31.33: KAP rotalari kalkti (bkz. kapAvailability.js — 2026-09-07 olcumu).
+  // Sessizce bos donmek yerine ACIKCA "veri yok" diyoruz: skorda hayalet
+  // bilesen olusmasin ve olu katman gorunur kalsin.
+  if (!isKapAvailable()) return kapUnavailableInsider();
   if (!symbol) {
     return _emptyResult();
   }

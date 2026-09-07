@@ -1,4 +1,5 @@
 import { smartFetch } from './fetchEngine.js';
+import { isKapAvailable, kapUnavailableDisclosures } from './kapAvailability.js';
 
 // ============================================================
 // KAP SENTIMENT SCORING ENGINE
@@ -143,6 +144,8 @@ async function resolveMemberOid(symbol) {
 }
 
 export async function fetchKAPDisclosures(symbol) {
+  // v31.33: bkz. kapAvailability.js — tum KAP rotalari olu (olculdu 2026-09-07).
+  if (!isKapAvailable()) return kapUnavailableDisclosures();
   try {
     const oid = await resolveMemberOid(symbol);
     if (!oid) return [];
@@ -221,6 +224,8 @@ export async function fetchKAPDisclosures(symbol) {
  * @param {string} symbol - BIST stock code
  */
 export async function fetchKAPSummaryFinancials(symbol) {
+  // v31.33: api/ozetFinansalBilgiler 404 — temel analiz artik yalniz Yahoo bacagi.
+  if (!isKapAvailable()) return null;
   try {
     const oid = await resolveMemberOid(symbol);
     if (!oid) return null;

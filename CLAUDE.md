@@ -1326,6 +1326,96 @@ neyin hizlandirilmasi gerektigini henuz veri soylemedi.
 
 Test 621 pass (43 dosya), 0 lint error, build temiz.
 
+## Derinlemesine Denetim Bulgulari + 4 Duzeltme (v31.33)
+
+Kullanici: "Uygulamayi derinlemesine tara ve rapor sun" → ardindan "2-5'i yap".
+Denetimin tamami CANLI olcumle yapildi (dosya boyutlari, coverage, npm audit, gercek HTTP
+istekleri). Asagidakiler tahmin degil, olcum.
+
+### 1) KAP KATMANI OLU — durustce kapatildi (`kapAvailability.js`, 6 test)
+**Olculdu (2026-09-07):** KAP siteyi Next.js/RSC'ye tasidi, uygulamanin kullandigi TUM rotalar
+kalkti:
+
+| Uc | Sonuc |
+|---|---|
+| `/tr/api/iceridiogrenenler/<oid>` | **404** |
+| `/tr/api/ozetFinansalBilgiler` | **404** |
+| `/tr/bildirim-sorgu-sonuc` | 200 ama govde Next.js **"404: This page could not be found"** kabugu |
+
+Ayristirici kaniti: `insiderEngine` `/"publishDate"/` ariyor → **0 eslesme**; sayfada `<td>` 1,
+`dd.mm.yyyy` tarih 0, RSC yukunde tek bildirim kaydi yok.
+
+**Kazima YAPILMADI, bilincli:** `/tr/bildirim-sorgu` (1,1 MB) canli ama veriyi istemci tarafinda
+yukluyor; sayfada ve ilk JS chunk'larinda API yolu yok. Kararli uc olmadan yazilacak kazima bir
+sonraki dagitimda YINE sessizce olur — `foreignFlowEngine` icin de ayni karar verilmisti
+([[foreign-flow-dead-sources]]).
+
+**Uygulanan:** `isKapAvailable()` tek kaynak; `insiderEngine`/`kapEngine` kisa devre yapip
+`unavailable: true` + sebep donuyor (sessizce bos DEGIL). Tarama logunda bir kez uyari.
+`KAPPanel` artik "bildirim bulunamadi" demiyor — "KAP verisi kullanilamiyor, bildirim YOK demek
+degil" diyor (eskisi kullaniciya YANLIS bilgi veriyordu). `KAP_STATUS` donduruldu; geri acmak
+icin tek degisiklik `available: true`.
+
+### 2) SIFIRLAMA BOSLUGU — gercek bug (`resetStorage.js`, 7 test)
+`bist_last_eod_scan_day` ne temizlenenler ne korunanlar listesindeydi: v31.25'te eklendi, liste
+v31.24'ten. **Sifirlamadan sonra sistem "bugunun kapanisi zaten kaydedildi" sanip gun-sonu
+taramasini ATLIYORDU.** Listede zaten `bist_last_scan_day` var ve yorumu "must re-arm after
+reset" diyor — ayni gerekce. `resetStorage`'in hic testi yoktu; yeni testler damga sabitlerini
+`scanSchedule.js`'ten IMPORT ederek kontrol ediyor, yani yeniden adlandirma/ekleme sessizce
+kacamaz.
+
+### 3) SESSIZ OLUM IZLEME (`sourceHealth.js`, 8 test)
+Ayni hata UC kez olustu: RSS haber hatti (v31.22), yabanci akis, KAP. Ucunde de kod
+"best-effort" olup sessizce bos donuyordu ve **BOS ile YOK ayirt edilemiyordu**; `catch {}`
+bunun mekanizmasi (kodda **93 adet** olculdu).
+
+93 catch'i tek tek duzenlemek gurultu olurdu — bunun yerine kaynak bazinda ardisik bos sonuc
+sayilir; N kez ust uste bos donen kaynak "sessize dustu" diye **bir kez** uyarilir (her taramada
+degil), veri gelince bayrak duser ve yeniden uyarabilir. Baglandigi yerler: `rss-haber` (haber
+taramasi sonrasi) ve `temel-analiz` (kac adayda bilanco alinabildi). Temel analiz ozellikle
+kritik: Yahoo `quoteSummary` crumb istiyor (kimliksiz **401** olculdu) ve KAP bacagi olu — bu
+kapinin tamamen bos calismasi mumkun, artik sessiz degil.
+
+### 4) TAVAN KAPISI CIKARILDI (`pumpGuard.js`, 17 test)
+`isUnsafeForTomorrow` + `calcContinuationProbability` 3.481 satirlik `useAIAdvisor.js` icinde
+yasiyordu ve **hic testi yoktu** — oysa `isUnsafeForTomorrow` uc filtre yolundan (buyPicks /
+fallbackBuys / lastResort) cagrilan TEK KARAR NOKTASI: "bugun patlamis hisseyi yarin icin AL
+gosterelim mi?" Sermayeyi en dogrudan koruyan kapi buydu.
+
+**Kod TASINDI, yeniden yazilmadi** (davranis birebir korundu). Testler mevcut esikleri kilitler:
+RSI>90 / MFI>92 mutlak red · tp>=7 icin 38/45/50 kademeli baraj · tp 5-7 icin kataliz + 4 teknik
+teyit sarti · cp>=22 icin %55 · cp 18-22 icin kataliz. Bir esigi degistirmek isteyen once testi gorur.
+
+### 5) GUVENLIK: 6 acik → **0**
+`npm audit --omit=dev` 6 acik gosteriyordu (2 orta, 4 yuksek). Kirilim:
+- `dompurify` 3.1.6 → **3.4.15** (uygulamanin XSS sinirinin KENDISI; string modunda kullaniliyor,
+  `IN_PLACE` yok — CVE'lerin cogu o moda ozeldi, yani pratik risk gorundugunden dusuktu ama
+  guncellenmesi gerekiyordu).
+- Kalan 5'in **hepsi tek pakete** bagliydi: `borsajs@0.3.0` (axios/undici/ws/form-data/
+  follow-redirects). `borsajsAdapter.js` v31'de olu kod olarak silinmisti ama **paket
+  package.json'da kalmisti**; kodda tek bir `import`/`require` yok (iki gecis de sadece string:
+  health-map anahtari ve Electron Referer host kontrolu). Kaldirildi → **found 0 vulnerabilities**.
+
+### 6) OLU KOD
+`SignalBadge.jsx` silindi (sifir referans). `fetchBigParaList` de tuketicisiz (ve uc zaten 403
+donuyor) — kaldirilmadi, notlandi.
+
+### Denetimin diger olcumleri (duzeltilmedi, kayit icin)
+- Kaynak 34.810 satir / test 6.005; **kodun %68'i (23.778 satir) testsiz** — ve testsiz kisim tam
+  olarak ORKESTRASYON katmani (`useAIAdvisor` 3.481, `AIAdvisorPanel` 1.596, `DatabaseManager`
+  1.186). Saf yardimcilar test edilmis, glue edilmemis. pumpGuard cikarmasi bu yonde bir adim.
+- Canli kaynak sagligi: Yahoo v8 OK (258 bar/477ms) · BigPara OK (onceki 401 gercekten gecici
+  rate-limit'ti, v31.25 tezi dogrulandi) · 4 RSS feed OK (80 haber) · **Is Yatirim 10,4 sn**
+  (11 sn timeout'un dibinde) · TCMB EVDS anahtari hala yok.
+- **Self-proxy yapilandirilmamis** (`proxyEngine.js` varsayilani `localhost:3001`,
+  `fetchEngine` bos) → her istek public CORS proxy yarisina dusuyor → rate limit → v31.25 adaptif
+  throttle tabana iniyor → 612 sembol yarim saat. "612/612'de kaliyor" sikayetinin kok nedeni bu.
+  **Kullanici tarafinda cozulur** (`cd proxy && npx vercel --prod` + ayarlara URL).
+
+Test 659 pass (47 dosya), 0 lint error, 0 guvenlik acigi, build temiz.
+Canli dogrulandi: `isKapAvailable()` false, `fetchInsiderTransactions` `{score:0, unavailable:true}`,
+pumpGuard zayif tavani reddediyor / sakin hisseyi geciriyor, sourceHealth bir kez uyariyor.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

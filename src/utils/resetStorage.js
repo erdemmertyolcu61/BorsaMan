@@ -38,6 +38,10 @@ export const TRACKING_KEYS = [
   'bist_ai_pick_memory',      // useAIAdvisor     — stagnant-pick memory
   'bist_scan_history',        // scan history
   'bist_last_scan_day',       // once-per-day scan stamp (must re-arm after reset)
+  // v31.33: BU ATLANMISTI. v31.25'te eklendi, bu liste v31.24'ten — yani
+  // sifirlamadan sonra sistem "bugunun kapanisi zaten kaydedildi" sanip
+  // gun-sonu taramasini ATLIYORDU. Yukaridaki ile ayni gerekce.
+  'bist_last_eod_scan_day',   // gun-sonu tarama damgasi (reset sonrasi yeniden kurulmali)
   'bist_jarvis_memory',       // JARVIS conversation memory
   'bist_portfolio',           // virtual (paper) positions — headless but still paper
   'bist_tracker_reset_v3',    // legacy one-shot flag, superseded by the epoch

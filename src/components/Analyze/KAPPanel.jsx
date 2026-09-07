@@ -17,7 +17,12 @@ export default function KAPPanel({ symbol }) {
       try {
         const disclosures = await fetchKAPDisclosures(symbol);
         if (!disclosures || disclosures.length === 0) {
-          setError('Son 14 gunde KAP bildirimi bulunamadi.');
+          // v31.33: "bildirim yok" ile "KAP'a ulasilamiyor" AYNI SEY DEGIL.
+          // KAP rotalari 2026-09-07'de olculdu ve olu; bunu "bildirim bulunamadi"
+          // diye gostermek kullaniciya yanlis bilgi vermek olur.
+          setError(disclosures?.unavailable
+            ? 'KAP verisi su anda kullanilamiyor (KAP sitesi veri ucunu kaldirdi) — bildirim YOK demek degil.'
+            : 'Son 14 gunde KAP bildirimi bulunamadi.');
           setLoading(false);
           return;
         }
