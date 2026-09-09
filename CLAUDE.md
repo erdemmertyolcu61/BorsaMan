@@ -1416,6 +1416,87 @@ Test 659 pass (47 dosya), 0 lint error, 0 guvenlik acigi, build temiz.
 Canli dogrulandi: `isKapAvailable()` false, `fetchInsiderTransactions` `{score:0, unavailable:true}`,
 pumpGuard zayif tavani reddediyor / sakin hisseyi geciriyor, sourceHealth bir kez uyariyor.
 
+## Mobil Paper/ML Trading Denetimi — 3 Duzeltme (v31.34)
+
+Kullanici: "Mobilde paper ve ml tradingleri incele nasil gidiyor, gelistirme var mi?"
+Ek bilgi (oturum sirasinda): "Mobilde suan auto on da ve islem yapiyor."
+
+Yani boru hatti UCTAN UCA CALISIYOR (tarama → dispatch → motor pozisyon aciyor). Denetim
+bu yuzden "calisiyor mu"ya degil, **mobilde DOGRU calisiyor mu**ya odaklandi.
+
+### 1) CIKIS FIYATI — mobilde kayiplari sistematik abartiyordu (`exitFill.js`, 11 test)
+
+`checkPrices` pozisyonu stop/hedef SEVIYESINDEN degil, kontrol anindaki CANLI FIYATTAN
+kapatiyordu:
+
+```js
+if (live.price <= trade.stop_price) closeTrade(id, live.price, 'STOP')
+```
+
+Uygulama surekli aciksa sorun yok. Ama mobil WebView arka planda JS'i DONDURUR (OS siniri —
+v31.27'de de bu yuzden sunucu tarafi gerekmisti). Auto-trade acikken:
+
+> giris 214, stop 202,5 (-%5,4). Kullanici uygulamayi kapatir, fiyat gun icinde 190'a duser,
+> aksam acinca monitor calisir → pozisyon **190'dan** kapanir. Kayit **-%11,2**.
+> Stratejinin dedigi ise -%5,4.
+
+Hedefte simetrik: hedefin cok ustunde acilan uygulama, gercekte alinamayacak bir kazanci yazar.
+
+**Bu hata canli skorlamaya siziyor**: bu kapanislari `computeLiveEdge` (v31.16) okuyor ve
+convictionTier × rejim hucrelerinin expectancy'sine gore confidence'i ±%15 olcekliyor.
+
+**Cozum — ne oldugunu BILDIGIMIZ kadarini iddia et.** `resolveExitPrice` son basarili
+kontrolden bu yana gecen sureye bakar:
+- **<= 2 dk** (uygulama izliyordu) → canli fiyat adil bir dolum.
+- **daha uzun** (arka plan/kapali) → fiyatin YOLUNU bilmiyoruz; emir seviyeye degdiginde
+  dolardi, ucta bir fiyat iddia etmek uydurma olur → **seviye** kullanilir, `STOP_STALE` /
+  `TARGET_STALE` olarak isaretlenir.
+
+Kural **simetrik ve tarafsiz**: stop'ta seviye canliDAN IYI (kaybi duzeltir), hedefte
+canliDAN KOTU (kazanci duzeltir). Gormedigimiz hareketi kendi lehimize yorumlamiyoruz.
+Motorun mevcut **cikis slipaji** korunur (dolum seviyenin biraz altinda kalir — gercekci).
+
+Ilk yazimda iki girdi de gecersizken `NaN` fiyat donuyordu (P&L'i sessizce zehirlerdi);
+artik `price: null` donup cagiran pozisyonu KAPATMIYOR.
+
+**Sinir (durust)**: bu, gun ici barlardan yeniden kurmanin (`evaluateOutcomeFromBars`, v31.26)
+YERINE gecmez — onun ucuz ve bagimsiz bir yaklasimidir. Barlar elde oldugunda o daha kesindir.
+
+### 2) "TL POZISYONDA" YANLIS HESAPLANIYORDU (her iki motorda)
+
+`sub={`${tl(startCapital - cash)} TL pozisyonda`}` — yani **baslangic sermayesi eksi nakit**.
+Hesap kardayken bu KAR miktarini "pozisyonda" diye gosterir. Onizlemede olculdu: **0 acik
+pozisyon varken "78.506 TL pozisyonda"** (cash 178.506 − startCapital 100.000). Yalniz tam
+basabasta dogru sonuc veriyordu. Artik acik pozisyonlarin buyukluk toplami kullaniliyor
+(ML: `size_tl`, standart: `size`).
+
+### 3) MOBIL ISLEM GECMISI OKUNAMIYORDU
+
+v31.23'te uc yuzey (Sinyal Takibi, Gercek Portfoy, PortfolioExtras) kart yerlesimine
+gecirilmisti; **Paper Trading atlanmisti** — `useIsMobile` hic kullanilmiyordu. Olculdu:
+gecmis tablolari **11 kolon (ML) / 10 kolon (standart)**, hepsi `whiteSpace: nowrap`.
+375px'te v31.23 oncesi 754px'lik sinyal tablosuyla ayni durum: P&L ve cikis sebebi yatay
+kaydirma kutusunun icinde kaliyor. Auto-trade acikken en cok bakilan yuzey burasi.
+
+`HistoryCard` eklendi, <=768px'te iki gecmis listesi de karta geciyor. **Acik pozisyonlar
+zaten kart** (`minmax(280px,1fr)` grid) — dokunulmadi, mobilde sorunu yoktu.
+Dogrulandi (375px, canli): `EREGL TARGET +7.1% · Giris 52.10 · Cikis 55.80 · P&L +1420 TL`,
+tablo yok, sayfa tasmasi yok. Rozet renkleri `startsWith` ile eslesiyor → `STOP_STALE` de
+kirmizi kaliyor.
+
+**Dogrulama sinirlari (durust)**:
+- Masaustu dali burada DOGRULANAMADI: onizleme paneli compose etmedigi icin `innerWidth` 0
+  donuyor ve `matchMedia` bunu mobil sayiyor (v31.23'te de ayni sinir vardi). Masaustu kodu
+  dokunulmadan duruyor — yalnizca onune bir `isMobile ?` dali eklendi.
+- **Kullanicinin GERCEK paper sonuclari gorulemedi** — veri cihazinda (localStorage/SQLite).
+  "Nasil gidiyor" sorusuna sayi veremem; ustelik yukaridaki cikis hatasi yuzunden mobilde
+  birikmis mevcut kapanislar kayiplari abartiyor olabilir. Bu duzeltmeden SONRAKI kapanislar
+  temiz; eskiler `STOP`/`TARGET` (stale isaretsiz) olarak kalir.
+- CANLI EDGE matrisi 375px'te 340px/313px = 27px tasiyor ama kendi `overflowX` kutusunda —
+  kucuk, duzeltilmedi.
+
+Test 672 pass (48 dosya), 0 lint error (80 warning, ratchet 90), build temiz.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

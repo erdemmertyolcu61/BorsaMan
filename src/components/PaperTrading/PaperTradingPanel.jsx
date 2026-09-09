@@ -17,6 +17,7 @@
  */
 
 import { useState, useMemo } from 'react';
+import useIsMobile from '../../hooks/useIsMobile.js';
 
 // ── Renk yardimcilari ──
 const pnlColor = (v) => v > 0 ? '#10e87a' : v < 0 ? '#f43f5e' : '#9ca3af';
@@ -227,6 +228,7 @@ function LiveEdgeMatrix({ liveEdge }) {
 // ══════════════════════════════════════════════════════════════
 
 function MLForwardTestPanel({ paperML }) {
+  const isMobile = useIsMobile();
   const [mlTab, setMlTab] = useState('positions');
   const [sortHistory, setSortHistory] = useState('date');
 
@@ -256,6 +258,9 @@ function MLForwardTestPanel({ paperML }) {
     expectancy, profitFactor, maxDrawdown, openTrades, closedTrades, mlBuckets,
     liveEdge,
   } = snapshot;
+
+  // v31.34: gercekten pozisyonda olan sermaye — acik islemlerin buyukluk toplami.
+  const deployedTl = (openTrades || []).reduce((a, t) => a + (Number(t.size_tl ?? t.sizeTl) || 0), 0);
 
   return (
     <div>
@@ -308,8 +313,11 @@ function MLForwardTestPanel({ paperML }) {
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', padding: '14px 0' }}>
         <StatCard label="TOPLAM EQUİTY" value={`₺${tl(totalEquity)}`}
           sub={`${pct(totalEquityPct)}`} color={pnlColor(totalEquityPct)} />
+        {/* v31.34: eskiden `startCapital - cash` yaziyordu — hesap kardayken bu
+            KAR miktarini "pozisyonda" diye gosteriyordu (olculdu: 0 acik pozisyon
+            varken "78.506 TL pozisyonda"). Dogrusu acik pozisyonlarin toplami. */}
         <StatCard label="SERBEST NAKİT" value={`₺${tl(cash)}`}
-          sub={`${tl(startCapital - cash)} TL pozisyonda`} />
+          sub={`${tl(deployedTl)} TL pozisyonda`} />
         <StatCard label="REALİZED P&L" value={`${totalPnl >= 0 ? '+' : ''}₺${tl(totalPnl)}`}
           sub={pct(totalPnlPct)} color={pnlColor(totalPnl)} />
         <StatCard label="WIN RATE" value={`%${winRate.toFixed(0)}`}
@@ -490,6 +498,17 @@ function MLForwardTestPanel({ paperML }) {
             <div style={{ textAlign: 'center', padding: '40px', color: 'var(--t3)', fontSize: 12 }}>
               ML kapali islem yok. ML Auto Trade'i aktifle ve tarama bekle.
             </div>
+          ) : isMobile ? (
+            <div>
+              {sortedHistory.map((t, i) => (
+                <HistoryCard key={t.id || i}
+                  symbol={t.symbol} openedAt={t.opened_at}
+                  entry={t.entry_price} exit={t.exit_price}
+                  reason={t.exit_reason} pnlTl={t.pnl_tl} pnlPct={t.pnl_pct}
+                  lots={t.lots}
+                  extra={t.ml_confidence ? `ML +${Number(t.ml_confidence).toFixed(1)}` : null} />
+              ))}
+            </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
@@ -529,14 +548,14 @@ function MLForwardTestPanel({ paperML }) {
                         <td style={{ padding: '7px 10px' }}>
                           <span style={{
                             fontSize: 8, padding: '1px 6px', borderRadius: 3, fontWeight: 700,
-                            background: t.exit_reason === 'TARGET' ? 'rgba(16,232,122,0.15)'
-                              : t.exit_reason === 'STOP' ? 'rgba(244,63,94,0.15)'
+                            background: String(t.exit_reason||'').startsWith('TARGET') ? 'rgba(16,232,122,0.15)'
+                              : String(t.exit_reason||'').startsWith('STOP') ? 'rgba(244,63,94,0.15)'
                               : 'rgba(255,255,255,0.08)',
-                            color: t.exit_reason === 'TARGET' ? '#10e87a'
-                              : t.exit_reason === 'STOP' ? '#f43f5e'
+                            color: String(t.exit_reason||'').startsWith('TARGET') ? '#10e87a'
+                              : String(t.exit_reason||'').startsWith('STOP') ? '#f43f5e'
                               : 'var(--t3)',
-                            border: `1px solid ${t.exit_reason === 'TARGET' ? 'rgba(16,232,122,0.3)'
-                              : t.exit_reason === 'STOP' ? 'rgba(244,63,94,0.3)'
+                            border: `1px solid ${String(t.exit_reason||'').startsWith('TARGET') ? 'rgba(16,232,122,0.3)'
+                              : String(t.exit_reason||'').startsWith('STOP') ? 'rgba(244,63,94,0.3)'
                               : 'rgba(255,255,255,0.1)'}`,
                           }}>{t.exit_reason}</span>
                         </td>
@@ -569,6 +588,47 @@ function MLForwardTestPanel({ paperML }) {
 // ══════════════════════════════════════════════════════════════
 // MAIN PANEL — TABS BETWEEN STANDARD AND ML ENGINES
 // ══════════════════════════════════════════════════════════════
+
+
+// v31.34: MOBIL ISLEM GECMISI KARTI.
+// Gecmis tablolari 11 (ML) ve 10 (standart) kolon ve hepsi `nowrap` — 375px'te
+// v31.23 oncesi sinyal tablosuyla ayni durum: yatay kaydirma kutusunun icinde
+// kaliyor, P&L ve cikis sebebi ekran disinda. Auto-trade acikken en cok bakilan
+// yuzey burasi oldugu icin mobilde kart yerlesimine geciyor. Masaustunde tablo
+// aynen duruyor.
+function HistoryCard({ symbol, openedAt, entry, exit, reason, pnlTl, pnlPct, lots, extra }) {
+  const up = (pnlPct || 0) >= 0;
+  const col = up ? 'var(--green)' : 'var(--red)';
+  const reasonStr = String(reason || '');
+  const rc = reasonStr.startsWith('TARGET') ? 'var(--green)'
+    : reasonStr.startsWith('STOP') ? 'var(--red)' : 'var(--t3)';
+  return (
+    <div style={{
+      background: 'var(--bg2)', borderRadius: 8, padding: 10, marginBottom: 8,
+      borderLeft: `3px solid ${col}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--t1)' }}>{symbol}</span>
+        <span style={{ fontSize: 9, fontWeight: 700, color: rc, padding: '1px 6px',
+                       borderRadius: 3, background: 'var(--bg3)' }}>{reasonStr || '—'}</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: col }}>
+          {up ? '+' : ''}{(pnlPct ?? 0).toFixed(1)}%
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10, color: 'var(--t3)' }}>
+        <span>Giris <b style={{ color: 'var(--t1)' }}>{Number(entry ?? 0).toFixed(2)}</b></span>
+        <span>Cikis <b style={{ color: 'var(--t1)' }}>{Number(exit ?? 0).toFixed(2)}</b></span>
+        <span>P&L <b style={{ color: col }}>{up ? '+' : ''}{Math.round(pnlTl ?? 0)} TL</b></span>
+        {lots ? <span>Lot <b style={{ color: 'var(--t1)' }}>{lots}</b></span> : null}
+      </div>
+      <div style={{ marginTop: 4, fontSize: 9, color: 'var(--t3)' }}>
+        {openedAt ? new Date(openedAt).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+        {extra ? <> · {extra}</> : null}
+      </div>
+    </div>
+  );
+}
 
 export default function PaperTradingPanel({ paperTrading, paperML }) {
   const [engine, setEngine] = useState('ml'); // 'standard' | 'ml'
@@ -628,12 +688,16 @@ export default function PaperTradingPanel({ paperTrading, paperML }) {
 // ── Standard Paper Trading Panel (original) ──
 
 function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHistory }) {
+  const isMobile = useIsMobile();
   const {
     capital, startCapital, startDate,
     positions, closedTrades, autoTrade, equityCurve, config,
     openPosition, closePosition, toggleAutoTrade, updateConfig, reset,
     performance: perf,
   } = paperTrading;
+
+  // v31.34: standart motorda pozisyon buyuklugu `size` alaninda.
+  const deployedStdTl = (positions || []).reduce((a, p) => a + (Number(p.size) || 0), 0);
 
   const sortedHistory = useMemo(() => {
     const h = [...closedTrades];
@@ -693,8 +757,9 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', padding: '14px 0' }}>
         <StatCard label="TOPLAM KAPİTAL" value={`₺${tl(perf.totalEquity)}`}
           sub={`${pct(perf.totalEquityPct)} baslangica gore`} color={pnlColor(perf.totalEquityPct)} />
+        {/* v31.34: ayni hata standart motorda da vardi. */}
         <StatCard label="SERBEST KAPİTAL" value={`₺${tl(capital)}`}
-          sub={`${tl(startCapital - capital)} TL pozisyonda`} />
+          sub={`${tl(deployedStdTl)} TL pozisyonda`} />
         <StatCard label="REALIZED P&L" value={`${perf.totalPnl >= 0 ? '+' : ''}₺${tl(perf.totalPnl)}`}
           sub={pct(perf.totalPnlPct)} color={pnlColor(perf.totalPnl)} />
         <StatCard label="WIN RATE" value={`%${perf.winRate.toFixed(0)}`}
@@ -822,6 +887,17 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
             <div style={{ textAlign: 'center', padding: '40px', color: 'var(--t3)', fontSize: 12 }}>
               Henuz kapali islem yok. Ilk pozisyonu ac.
             </div>
+          ) : isMobile ? (
+            <div>
+              {sortedHistory.map((t, i) => (
+                <HistoryCard key={t.id || i}
+                  symbol={t.symbol} openedAt={t.openedAt ?? t.opened_at}
+                  entry={t.entry} exit={t.exitPrice ?? t.exit_price}
+                  reason={t.exitReason ?? t.exit_reason}
+                  pnlTl={t.pnl ?? t.pnl_tl} pnlPct={t.pnlPct ?? t.pnl_pct}
+                  lots={t.lots} />
+              ))}
+            </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10 }}>
@@ -854,16 +930,16 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
                         <td style={{ padding: '7px 10px' }}>
                           <span style={{
                             fontSize: 8, padding: '1px 6px', borderRadius: 3, fontWeight: 700,
-                            background: t.exitReason === 'TARGET' ? 'rgba(16,232,122,0.15)'
-                              : t.exitReason === 'STOP' ? 'rgba(244,63,94,0.15)'
+                            background: String(t.exitReason||'').startsWith('TARGET') ? 'rgba(16,232,122,0.15)'
+                              : String(t.exitReason||'').startsWith('STOP') ? 'rgba(244,63,94,0.15)'
                               : t.exitReason === 'EOD' ? 'rgba(251,191,36,0.15)'
                               : 'rgba(255,255,255,0.08)',
-                            color: t.exitReason === 'TARGET' ? '#10e87a'
-                              : t.exitReason === 'STOP' ? '#f43f5e'
+                            color: String(t.exitReason||'').startsWith('TARGET') ? '#10e87a'
+                              : String(t.exitReason||'').startsWith('STOP') ? '#f43f5e'
                               : t.exitReason === 'EOD' ? '#fbbf24'
                               : 'var(--t3)',
-                            border: `1px solid ${t.exitReason === 'TARGET' ? 'rgba(16,232,122,0.3)'
-                              : t.exitReason === 'STOP' ? 'rgba(244,63,94,0.3)'
+                            border: `1px solid ${String(t.exitReason||'').startsWith('TARGET') ? 'rgba(16,232,122,0.3)'
+                              : String(t.exitReason||'').startsWith('STOP') ? 'rgba(244,63,94,0.3)'
                               : 'rgba(255,255,255,0.1)'}`,
                           }}>{t.exitReason}</span>
                         </td>

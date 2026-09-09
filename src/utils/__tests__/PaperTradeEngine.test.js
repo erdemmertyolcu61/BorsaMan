@@ -110,6 +110,47 @@ describe('PaperTradeEngine v2 (sizing + exits)', () => {
     expect(hair.size).toBeCloseTo(two.size, 0);
   });
 
+  it('v31.34: a stop hit found after a background gap fills at the STOP, not the crash price', async () => {
+    // The mobile case: the WebView freezes, the price drifts far below the stop,
+    // and the user reopens the app hours later. Booking the crashed price claims
+    // a fill nobody could have got - and these closes feed computeLiveEdge, so
+    // the error reaches live scoring.
+    const e = await mkEngine();
+    await e._openTrade(mkPick({ symbol: 'GAPDOWN', price: 100, stop: 96.5 }));
+    const t = e._state.openTrades[0];
+    const entry = t.entry_price ?? t.entryPrice;
+    const stop = t.stop_price ?? t.stopPrice;
+
+    // No previous check recorded -> treated as "we were not watching".
+    await e.checkPrices({ GAPDOWN: { price: 88 } });
+
+    const closed = e._state.closedTrades.at(-1);
+    const exit = closed.exit_price ?? closed.exitPrice;
+    // The engine applies exit slippage on top (a real seller crosses the spread),
+    // so the fill sits just BELOW the stop - not at the 88 crash price.
+    expect(exit).toBeLessThanOrEqual(stop);
+    expect(exit).toBeGreaterThan(stop - 0.5);
+    expect(exit).toBeGreaterThan(90);            // nowhere near the crashed 88
+    expect(String(closed.exit_reason ?? closed.exitReason)).toMatch(/^STOP/);
+    const pct = ((exit - entry) / entry) * 100;
+    expect(pct).toBeGreaterThan(-6);             // ~-3.6%, not ~-12%
+  });
+
+  it('v31.34: a stop hit while actively watching still fills at the live price', async () => {
+    const e = await mkEngine();
+    await e._openTrade(mkPick({ symbol: 'WATCHED', price: 100, stop: 96.5 }));
+    // First check establishes "we are watching"; the second lands inside the window.
+    await e.checkPrices({ WATCHED: { price: 99 } });
+    await e.checkPrices({ WATCHED: { price: 96.2 } });
+    const closed = e._state.closedTrades.at(-1);
+    const exit = closed.exit_price ?? closed.exitPrice;
+    // Live basis: the fill tracks the observed 96.2 (minus the same slippage),
+    // and crucially it is NOT snapped up to the 96.5 stop.
+    expect(exit).toBeLessThan(96.2);
+    expect(exit).toBeGreaterThan(95.8);
+    expect(closed.exit_reason ?? closed.exitReason).toBe('STOP');
+  });
+
   it('TIME_EXIT closes a stagnant 3+ day position below +1%', async () => {
     const e = await mkEngine();
     await e._openTrade(mkPick({ symbol: 'STALE' }));

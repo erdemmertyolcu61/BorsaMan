@@ -18,6 +18,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { applyEntryCost, applyExitCost, liquiditySlippagePct } from './tradingCosts.js';
+import { resolveExitPrice } from './exitFill.js';
 import { computeLiveEdge } from './liveEdge.js';
 
 const STORAGE_KEY = 'bist_paper_ml_engine_v1';
@@ -499,6 +500,11 @@ export class PaperTradeEngine {
 
     const s = this._state;
     let changed = false;
+    // v31.34: son basarili kontrolden bu yana gecen sure. Mobil WebView arka
+    // planda JS'i dondurdugu icin bu aralik SAATLER olabilir; o durumda fiyatin
+    // yolunu bilmiyoruz ve ucta bir fiyattan dolum iddia edemeyiz.
+    const msSinceCheck = this._lastPriceCheckAt ? (Date.now() - this._lastPriceCheckAt) : Infinity;
+    this._lastPriceCheckAt = Date.now();
 
     for (const trade of [...s.openTrades]) {
       const live = priceMap[trade.symbol];
@@ -508,15 +514,27 @@ export class PaperTradeEngine {
       trade.current_price = live.price;
       changed = true;
 
-      // Check stop
+      // Check stop — v31.34: SEVIYEDEN dolum (bkz. exitFill.js). Eskiden canli
+      // fiyattan kapaniyordu; mobilde arka plandan donuldugunde bu, kaybi
+      // sistematik olarak abartiyordu (giris 214 / stop 202,5 / fiyat 190 →
+      // -%11,2 kaydediliyordu, strateji -%5,4 diyordu). Bu kapanislar
+      // computeLiveEdge uzerinden canli skorlamayi besledigi icin hata siziyordu.
       if (live.price <= trade.stop_price) {
-        await this.closeTrade(trade.id, live.price, 'STOP');
+        const fill = resolveExitPrice({ level: trade.stop_price, livePrice: live.price,
+                                        msSinceCheck, kind: 'stop', isBuy: true });
+        if (fill.price != null) {
+          await this.closeTrade(trade.id, fill.price, fill.stale ? 'STOP_STALE' : 'STOP');
+        }
         continue;
       }
 
-      // Check target
+      // Check target — ayni kural, simetrik: gormedigimiz sicramayi kazanc yazmayiz.
       if (trade.target_price && live.price >= trade.target_price) {
-        await this.closeTrade(trade.id, live.price, 'TARGET');
+        const fill = resolveExitPrice({ level: trade.target_price, livePrice: live.price,
+                                        msSinceCheck, kind: 'target', isBuy: true });
+        if (fill.price != null) {
+          await this.closeTrade(trade.id, fill.price, fill.stale ? 'TARGET_STALE' : 'TARGET');
+        }
         continue;
       }
 
