@@ -385,7 +385,7 @@ function MLForwardTestPanel({ paperML }) {
           }}>{t.label}</button>
         ))}
         <div style={{ flex: 1 }} />
-        <button onClick={reset} style={{
+        <button onClick={() => { if (confirmPaperReset('ML Forward Test')) reset(); }} style={{
           padding: '5px 12px', borderRadius: 5, cursor: 'pointer', fontSize: 9,
           fontWeight: 700, background: 'rgba(244,63,94,0.1)',
           border: '1px solid rgba(244,63,94,0.3)', color: '#f87171',
@@ -596,6 +596,19 @@ function MLForwardTestPanel({ paperML }) {
 // kaliyor, P&L ve cikis sebebi ekran disinda. Auto-trade acikken en cok bakilan
 // yuzey burasi oldugu icin mobilde kart yerlesimine geciyor. Masaustunde tablo
 // aynen duruyor.
+
+// v31.36: SIFIRLA butonu onaysizdi. Mobilde "Acik / Gecmis" sekmelerinin hemen
+// yaninda duruyor ve yanlislikla dokunmak paper hesabini GERI DONUSSUZ siliyordu.
+// Onay metni ne SILINDIGINI ve ne KALDIGINI acikca soyler — kullanicinin en cok
+// merak ettigi sey sinyal gecmisinin hayatta kalip kalmadigi.
+function confirmPaperReset(which) {
+  const msg = `${which} paper hesabi SIFIRLANACAK.\n\n`
+    + 'SILINIR: acik pozisyonlar, islem gecmisi, equity/P&L istatistikleri\n'
+    + 'KALIR:   Sinyal Takibi gecmisi, gercek portfoy, ayarlar, API anahtarlari\n\n'
+    + 'Geri alinamaz. Devam edilsin mi?';
+  try { return window.confirm(msg); } catch { return true; }
+}
+
 function HistoryCard({ symbol, openedAt, entry, exit, reason, pnlTl, pnlPct, lots, extra }) {
   const up = (pnlPct || 0) >= 0;
   const col = up ? 'var(--green)' : 'var(--red)';
@@ -798,7 +811,7 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
           }}>{t.label}</button>
         ))}
         <div style={{ flex: 1 }} />
-        <button onClick={reset} style={{
+        <button onClick={() => { if (confirmPaperReset('Standard')) reset(); }} style={{
           padding: '5px 12px', borderRadius: 5, cursor: 'pointer', fontSize: 9,
           fontWeight: 700, background: 'rgba(244,63,94,0.1)',
           border: '1px solid rgba(244,63,94,0.3)', color: '#f87171',
