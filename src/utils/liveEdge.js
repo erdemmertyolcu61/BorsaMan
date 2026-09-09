@@ -9,6 +9,9 @@
 // report the numbers but flag reliable=false so the UI can grey it out and the
 // scorer (if ever wired) can ignore it. Small samples lie.
 
+import { realizedReturn, perfCheckpoint } from './signalPerfHistory.js';
+import { learningReturn } from './planSimulation.js';
+
 export const MIN_SAMPLE = 8;
 
 const TIER_ORDER = ['sniper', 'flagged', 'early'];
@@ -135,9 +138,19 @@ export function signalsToLiveEdgeTrades(signals) {
   const out = [];
   for (const s of signals) {
     if (!s || s.cls !== 'buy') continue;
-    const settled = s.status === 'closed' || (s.perf && s.perf.d5 != null);
+    // v31.35: BU OKUYUCU IKI DUZELTMEDE DE ATLANMISTI.
+    //  - v31.23 tum okuyuculari `perfCheckpoint`e cevirdi (kapanistan turetilen
+    //    checkpoint). Ham `perf.dN` mandallari uygulama KAPALIYKEN bozuk: dordu de
+    //    ayni gec fiyati aliyor.
+    //  - v31.28-B kalibrasyonu `learningReturn`e (plan-uyumlu getiri) cevirdi.
+    // Burasi hala ham `perf.d5` okuyordu → canli confidence'i (±%15) BOZUK ve
+    // kalibrasyondan FARKLI bir metrikle besliyordu. Artik ayni oncelik zinciri:
+    // planReturn → perfDaily checkpoint → canli mandal.
+    const settled = s.status === 'closed'
+      || perfCheckpoint(s, 'd5') != null
+      || Number.isFinite(s.planReturn);
     if (!settled) continue;
-    const pnlPct = s.perf?.d5 ?? s.perf?.d3 ?? s.perf?.d1 ?? s.currentReturn;
+    const pnlPct = learningReturn(s, realizedReturn(s, null)) ?? s.currentReturn;
     if (pnlPct == null || !Number.isFinite(pnlPct)) continue;
     const score = Number.isFinite(s.score) ? s.score : (s.score100 || 0);
     const convictionTier = s.convictionTier

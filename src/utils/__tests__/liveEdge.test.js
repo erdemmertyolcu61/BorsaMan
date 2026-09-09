@@ -173,3 +173,41 @@ describe('signalsToLiveEdgeTrades (v31.16)', () => {
     expect(stat.winRate).toBe(100); // all positive d5
   });
 });
+
+describe('signalsToLiveEdgeTrades — v31.35: same return source as calibration', () => {
+  const sig = (over = {}) => ({
+    cls: 'buy', status: 'closed', score: 78, regime: 'BULL',
+    timestamp: '2026-08-20T09:00:00Z', ...over,
+  });
+
+  it('prefers planReturn — the metric the app actually instructs', () => {
+    // v31.28-B moved calibration onto the plan return. This reader kept using the
+    // raw latch, so the two learning paths were optimising different numbers.
+    const [t] = signalsToLiveEdgeTrades([sig({ planReturn: 6.4, perf: { d5: -2.1 } })]);
+    expect(t.pnlPct).toBe(6.4);
+  });
+
+  it('prefers the close-derived checkpoint over the live latch', () => {
+    // perf.dN is one-shot and only runs while the app is open: with the app shut
+    // for a week all four latches take the SAME late price (v31.22/v31.23).
+    const [t] = signalsToLiveEdgeTrades([sig({ perfDaily: { d5: 3.3 }, perf: { d5: 11.9 } })]);
+    expect(t.pnlPct).toBe(3.3);
+  });
+
+  it('still falls back to the live latch when nothing better exists', () => {
+    const [t] = signalsToLiveEdgeTrades([sig({ perf: { d5: 2.5 } })]);
+    expect(t.pnlPct).toBe(2.5);
+  });
+
+  it('counts a signal as settled on planReturn alone', () => {
+    // A bar-reconstructed plan return is settled evidence even when the live
+    // latches never fired because the app was closed.
+    const out = signalsToLiveEdgeTrades([sig({ status: 'active', planReturn: -4.2 })]);
+    expect(out).toHaveLength(1);
+    expect(out[0].pnlPct).toBe(-4.2);
+  });
+
+  it('leaves a genuinely unsettled signal out', () => {
+    expect(signalsToLiveEdgeTrades([sig({ status: 'active' })])).toHaveLength(0);
+  });
+});
