@@ -1,18 +1,18 @@
-// Configurable self-hosted proxy URL (set to your Vercel deployment URL)
-// Auto-detect: on Vercel (same origin has /api/proxy), use '' (same-origin).
-// On localhost dev, Vite proxy handles /api/* routes.
-// Manual override via localStorage still works.
+import { resolveProxyBaseUrl } from './proxyTarget.js';
+// v31.37: proxy hedefi artik `proxyTarget.resolveProxyBaseUrl` (saf + 10 test).
+// Eski kosul fallback'i YALNIZ Capacitor native'e veriyordu; kullanici PWA
+// kullandigi icin `window.Capacitor` tanimsiz kaliyor ve her istek public CORS
+// proxy yarisina dusuyordu. Ayrinti ve takas proxyTarget.js'te.
 export let PROXY_BASE_URL = '';
 try {
-  const stored = localStorage.getItem('bist_proxy_url');
-  if (stored) {
-    PROXY_BASE_URL = stored;
-  } else if (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) {
-    PROXY_BASE_URL = location.origin;
-  } else if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform()) {
-    // Mobilde public proxy cökmelerini engellemek icin varsayilan Vercel proxy fallback
-    PROXY_BASE_URL = 'https://proxy-delta-mocha-43.vercel.app';
-  }
+  const { url } = resolveProxyBaseUrl({
+    stored: localStorage.getItem('bist_proxy_url'),
+    hostname: typeof location !== 'undefined' ? location.hostname : '',
+    origin: typeof location !== 'undefined' ? location.origin : '',
+    capacitorNative: typeof window !== 'undefined'
+      && !!window.Capacitor?.isNativePlatform?.(),
+  });
+  PROXY_BASE_URL = url;
 } catch {}
 export function setProxyBaseUrl(url) {
   PROXY_BASE_URL = (url || '').replace(/\/+$/, ''); // Remove trailing slashes
