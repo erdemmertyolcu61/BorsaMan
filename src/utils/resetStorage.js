@@ -18,7 +18,23 @@
 import { clearSignalCalibration } from './signalCalibration.js';
 import { clearSignalReliabilityHints } from './signals.js';
 
-/** Bump to trigger a fresh automatic reset on every device. */
+/**
+ * Bump to trigger a fresh automatic reset on every device.
+ *
+ * ⚠ 2026-09-09 — BUNU YUKSELTMEDEN ONCE OKU.
+ * Kullanici paper hesabini ELIYLE sifirladi ve o andan itibaren ILK TAMAMEN
+ * TEMIZ forward test birikiyor: riske gore boyutlandirma (v31.31), seviyeden
+ * cikis (v31.34) ve plan-uyumlu liveEdge (v31.35) duzeltmelerinin HEPSINDEN
+ * sonra baslayan ilk olcum bu.
+ *
+ * Bu sabiti yukseltmek HER cihazda `TRACKING_KEYS`'i siler — yani SINYAL
+ * TAKIBI GECMISINI de. Kullanici sinyal gecmisinin KALMASINI acikca istedi
+ * (paper'i ayri sifirladi, [[silent-dead-layer-pattern]] degil bu, bilincli bir
+ * secim). Olcum en az 8 kapanis (MIN_SAMPLE) biriktirmeden yukseltmek,
+ * beklenen tek seyi — zaman — yok eder.
+ *
+ * Gercekten sema-kirici bir degisiklik olursa: once kullaniciya sor.
+ */
 const RESET_EPOCH = '2026-08-24';
 const RESET_EPOCH_KEY = 'bist_reset_epoch';
 
