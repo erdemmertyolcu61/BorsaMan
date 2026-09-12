@@ -24,8 +24,9 @@ npm run build                # Vite production build -> dist/
 npm run electron:prod        # Vite build + Electron calistir
 npm run electron:build       # NSIS installer (.exe)
 
-# Proxy (Vercel)
-cd proxy && vercel --prod    # Self-hosted proxy deploy
+# Proxy (Vercel) — kokten calistir; `vercel --cwd proxy` KULLANMA (kok vercel.json'u okur)
+npm run deploy:proxy         # proxy/ icine girip vercel --prod + canli dogrulama
+npm run check:proxy          # Yayindaki proxy yeni kaynaklari taniyor mu (salt-okunur)
 
 # Test
 npm test                     # Tum testleri calistir (Vitest)
@@ -279,7 +280,8 @@ graphify explain <node>        # Bir node + komsulari aciklama
 - **Whitelist**: 10 domain (Yahoo, BigPara, IsYatirim, KAP, TCMB, vb.) — Foreks whitelist'te ama dead
 - **Cache**: `s-maxage=120, stale-while-revalidate=600` edge cache
 - **Codex endpoint**: `/api/Codex` — Anthropic API'ye x-api-key ile proxy; `anthropic-beta` header'ini upstream'e pass etmeli
-- **Deploy**: `cd proxy && vercel --prod`
+- **Deploy**: kokte `npm run deploy:proxy`. `vercel --prod --cwd proxy` KULLANMA: CLI dosyalari proxy/'den
+  yukler ama vercel.json'u calistirildigi kok dizinden alir → Vite build ayarlari → "Missing script: build".
 - **Regions**: fra1, ams1
 
 ## Electron (Desktop)

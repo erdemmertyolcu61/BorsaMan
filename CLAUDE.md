@@ -24,8 +24,9 @@ npm run build                # Vite production build -> dist/
 npm run electron:prod        # Vite build + Electron calistir
 npm run electron:build       # NSIS installer (.exe)
 
-# Proxy (Vercel)
-cd proxy && vercel --prod    # Self-hosted proxy deploy
+# Proxy (Vercel) — kokten calistir; `vercel --cwd proxy` KULLANMA (bkz. Proxy Server)
+npm run deploy:proxy         # proxy/ icine girip vercel --prod + canli dogrulama
+npm run check:proxy          # Yayindaki proxy yeni kaynaklari taniyor mu (salt-okunur)
 
 # Test
 npm test                     # Tum testleri calistir (Vitest)
@@ -309,7 +310,16 @@ Terminalin "Portföy" sekmesi **sanal** paper hesaptır; bu sekme **gerçek** ç
   Tarayici bu uclara cross-origin POST atamaz, proxy cagirir. Yeni kaynak adlari icin proxy yeniden deploy edilmeli.
 - **Cache**: `s-maxage=120, stale-while-revalidate=600` edge cache
 - **Claude endpoint**: `/api/claude` — Anthropic API'ye x-api-key ile proxy; `anthropic-beta` header'ini upstream'e pass etmeli
-- **Deploy**: `cd proxy && vercel --prod`
+- **Deploy (v31.39)**: kokte `npm run deploy:proxy` (proxy/'ye girip `vercel --prod`, ardindan `check:proxy`).
+  **`vercel --prod --cwd proxy` KULLANMA** — olculdu (2026-09-12): CLI dosyalari proxy/'den yukledi ama
+  vercel.json'u calistirildigi KOK dizinden aldi (`vercel inspect` rotalarinda kokun SPA rewrite'i ve
+  manifest/sw basliklari vardi; proje ayarlari varsayilandi) → `npm run build` → "Missing script: build".
+  Basarisiz build yayindaki alias'a dokunmadi. Kullanici kabugu PowerShell 5.1: `cd proxy && ...` orada
+  parse hatasi verir; npm script cmd.exe'de kostugu icin calisir. Proxy'ye no-op `build` script'i EKLEME —
+  yanlis config ile yuksek sesle dusmek, sessizce yanlis yayinlanmaktan iyidir.
+- **Yukleme kapsami**: `proxy/.vercelignore` yerel Express/WS sunucusunu (`/index.js`, `/ws-server.js`) disarida
+  birakir — yuklenince statik dosya sayilip kok adreste KAYNAK KODU olarak servis ediliyordu. Sir sizmadi
+  (olculdu: `proxy/.env` = `.env.example`, yalniz port ayarlari; uretimde `/.env` 404).
 - **Regions**: fra1, ams1
 
 ## Electron (Desktop)

@@ -1,0 +1,11 @@
+# Vercel yalniz api/ fonksiyonlarini calistirir (proxy.js, claude.js, index.js).
+# Asagidakiler yerel Express/WebSocket sunucusu ve belgeler icindir. Yuklendiklerinde
+# statik dosya sayiliyor ve kok adreste KAYNAK KODU olarak servis ediliyordu
+# (olculdu 2026-09-12: GET / ve /index.js -> index.js kaynagi, HTTP 200).
+#
+# Bastaki '/' SART: yalniz 'index.js' yazmak api/index.js fonksiyonunu da eler.
+/index.js
+/ws-server.js
+/README.md
+.env
+.env.*

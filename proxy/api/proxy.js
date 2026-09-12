@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 // BIST Terminal — Self-Hosted CORS Proxy (Vercel Serverless)
 // ═══════════════════════════════════════════════════════════════
-// Deploy: cd proxy && vercel --prod
+// Deploy: repo kokunde `npm run deploy:proxy` (proxy/ ICINDEN deploy eder; --cwd kok vercel.json'u okur)
 // Usage: /api/proxy?url=https://query1.finance.yahoo.com/...
 //        /api/proxy?source=yahoo&path=/v8/finance/chart/THYAO.IS&range=1mo&interval=1d
 //        /api/proxy?source=bigpara&symbol=THYAO

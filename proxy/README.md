@@ -64,10 +64,26 @@ ws.send(JSON.stringify({
 
 ## Vercel Deployment
 
+Depo kokunden — proxy/ klasorune girip production'a deploy eder, ardindan canli uclari dogrular:
+
 ```bash
-cd proxy
-vercel deploy
+npm run deploy:proxy
 ```
+
+Elle yapacaksan once klasore gir. `vercel --prod --cwd proxy` KULLANMA: CLI dosyalari proxy/'den
+yukler ama `vercel.json`'u calistirildigi dizinden okur; kokun Vite ayarlari (`npm run build`,
+`dist`) proxy'ye uygulanir ve build "Missing script: build" ile duser.
+
+```powershell
+cd proxy
+vercel --prod
+```
+
+Deploy'dan sonra (salt-okunur): `npm run check:proxy` — "Invalid source parameter" goruyorsan
+yayindaki dagitim eski.
+
+Yalniz `api/` fonksiyonlari deploy edilir. `index.js` ve `ws-server.js` yerel sunucu icindir ve
+`.vercelignore` ile yuklenmez.
 
 Ortam değişkeni ayarla:
 ```bash
