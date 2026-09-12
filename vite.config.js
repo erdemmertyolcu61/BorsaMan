@@ -91,6 +91,20 @@ export default defineConfig({
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
         configure: (proxy) => { proxy.on('proxyReq', (pReq) => { pReq.removeHeader('cookie'); pReq.removeHeader('origin'); }); },
       },
+      // v31.38: İş Yatırım hisse tarama — hisse bazlı yabancı oranı + göreli getiri.
+      // Tarayıcı oraya cross-origin POST atamaz; üretimde proxy (source=isy_foreign),
+      // yerelde bu kural. /api/isyatirim'den ÖNCE olmalı (önek eşleşmesi).
+      '/api/isyatirim-screener': {
+        target: 'https://www.isyatirim.com.tr',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/isyatirim-screener/, '/tr-tr/analiz/_Layouts/15/IsYatirim.Website/StockInfo/CompanyInfoAjax.aspx/getScreenerDataNEW'),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://www.isyatirim.com.tr/tr-tr/analiz/hisse/Sayfalar/gelismis-hisse-arama.aspx',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        configure: (proxy) => { proxy.on('proxyReq', (pReq) => { pReq.removeHeader('cookie'); pReq.removeHeader('origin'); }); },
+      },
       // İş Yatırım HisseTekil — historical daily OHLCV (must be before /api/isyatirim)
       '/api/isyatirim-hisse': {
         target: 'https://www.isyatirim.com.tr',

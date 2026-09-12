@@ -1,50 +1,61 @@
-// ── KAP KULLANILABILIRLIGI (v31.33) — saf, test edilebilir ────────────────
+// ── KAP KULLANILABILIRLIGI — saf, test edilebilir ─────────────────────────
 //
-// OLCULEN DURUM (2026-09-07, canli istek): KAP sitesini Next.js / React Server
-// Components'e tasidi ve uygulamanin kullandigi ROTALARIN HEPSI kalkti:
+// IKI AYRI DURUM VAR (v31.38):
 //
-//   https://www.kap.org.tr/tr/api/iceridiogrenenler/<oid>     -> HTTP 404
-//   https://www.kap.org.tr/tr/api/ozetFinansalBilgiler?...    -> HTTP 404
-//   https://www.kap.org.tr/tr/bildirim-sorgu-sonuc?member=... -> HTTP 200 AMA
-//       govdesi Next.js'in "404: This page could not be found" kabugu; RSC
-//       yukunde tek bir bildirim kaydi yok, <td> sayisi 1, dd.mm.yyyy tarih 0.
-//       insiderEngine'in ayristiricisi /"publishDate"/ ariyor → 0 eslesme.
+// 1) BILDIRIM AKISI — CALISIYOR (olculdu 2026-09-12)
+//      POST https://www.kap.org.tr/tr/api/disclosure/list/main
+//      3 gun: 674 bildirim / 207 hisse · THYAO (mkkMemberOid) 60 gun: 11 bildirim
+//    Kod: kapFeed.js. Tarama (islem tedbiri filtresi + rozet), Piyasa ekrani ve
+//    Tekil Analiz KAP paneli bunu kullanir.
 //
-// NEDEN KAZIMA DENEMIYORUZ: /tr/bildirim-sorgu sayfasi (1,1 MB) canli ama
-// bildirim verisini ISTEMCI TARAFINDA yukluyor; sayfada ve ilk JS chunk'larinda
-// hicbir API yolu gorunmuyor. Kararli bir uc olmadan yazilacak kazima, bir
-// sonraki dagitimda YINE SESSIZCE olur — ki bu katmanin aylarca fark edilmeden
-// sifir katki vermesinin sebebi tam olarak buydu (ayni sinif hata: v31.22'de
-// olu RSS hatti). `foreignFlowEngine` icin de ayni karar verilmisti.
+// 2) ESKI JSON UCLARI — OLU (olculdu 2026-09-07)
+//      /tr/api/iceridiogrenenler/<oid>  → 404  (iceriden ogrenen islemleri)
+//      /tr/api/ozetFinansalBilgiler      → 404  (ozet finansal tablo)
+//    insiderEngine ve fetchKAPSummaryFinancials bunlara bagli; kapali kalirlar.
 //
-// TASARIM: sessizce bos donmek YASAK. Cagrilar `unavailable: true` + sebep
-// dondurur; UI ve tarama logu "KAP verisi yok" der. Boylece skorda hayalet
-// bilesen olmaz ve gelecekte kimse ayni olu ucu yeniden aramaz.
+// DURUST DUZELTME: 2026-09-07 notu "kararli veri ucu yok, sayfa veriyi istemcide
+// yukluyor" diyordu. Olcum eksikti: yalniz ilk JS parcalarina bakilmisti, uc
+// adlari ayri bir sabitler parcasindaydi. /tr/bildirim-sorgu-sonuc'un "bos 404
+// kabugu" da BOS `member=` parametresiyle denendigi icindi — gecerli bir OID ile
+// sayfa bildirimleri doner (kullanmiyoruz; JSON uc daha hafif).
 //
-// GERI ACMA: KAP calisan bir uc yayinlarsa TEK degisiklik `KAP_STATUS.available`
-// degerini true yapmak (ve gerekiyorsa engine'lerdeki URL'leri guncellemek).
+// TASARIM (degismedi): sessizce bos donmek YASAK. Olu uclar `unavailable: true`
+// + sebep dondurur; UI ve log "veri yok" ile "bildirim yok"u ayirir.
 
-/** Olculen durum. Tek kaynak — engine'ler ve UI bunu okur. */
+/** Eski JSON uclari (insider, ozet finansal). Tek kaynak — engine'ler bunu okur. */
 export const KAP_STATUS = Object.freeze({
   available: false,
   measuredAt: '2026-09-07',
-  reason: 'KAP Next.js/RSC gecisi sonrasi kullanilan tum rotalar kalkti (JSON uclari 404, '
-        + 'HTML sonuc sayfasi bos 404 kabugu). Kararli bir veri ucu yok.',
+  reason: 'KAP iceriden-ogrenen ve ozet-finansal JSON uclari Next.js gecisinde kalkti (404). '
+        + 'Bildirim akisi ayri bir uctan calisiyor (kapFeed.js) ama insider/ozet finansal verisi yok.',
   routes: Object.freeze([
     { url: '/tr/api/iceridiogrenenler/<oid>', status: 404 },
     { url: '/tr/api/ozetFinansalBilgiler', status: 404 },
-    { url: '/tr/bildirim-sorgu-sonuc', status: 200, note: 'bos 404 kabugu — kayit yok' },
+    { url: '/tr/bildirim-sorgu-sonuc', status: 200, note: 'bos member= ile 404 kabugu; gecerli OID ile calisir (kullanilmiyor)' },
   ]),
 });
 
-/** KAP'tan veri cekmeyi denemeli miyiz? */
+/** Canli bildirim akisi (kapFeed.js). */
+export const KAP_FEED_STATUS = Object.freeze({
+  available: true,
+  measuredAt: '2026-09-12',
+  route: 'POST https://www.kap.org.tr/tr/api/disclosure/list/main',
+  evidence: '3 gun: 674 bildirim / 207 hisse; THYAO (mkkMemberOid) 60 gun: 11 bildirim',
+});
+
+/** Eski insider / ozet-finansal uclarini denemeli miyiz? */
 export function isKapAvailable() {
   return KAP_STATUS.available === true;
 }
 
-/** Kullanicidan/logdan gorunecek tek satirlik sebep. */
+/** Bildirim akisini kullanabilir miyiz? */
+export function isKapFeedAvailable() {
+  return KAP_FEED_STATUS.available === true;
+}
+
+/** Kullanicidan/logdan gorunecek tek satirlik sebep (eski uclar icin). */
 export function kapUnavailableNote() {
-  return `KAP verisi kullanilamiyor (${KAP_STATUS.measuredAt}): ${KAP_STATUS.reason}`;
+  return `KAP iceriden-ogrenen / ozet-finansal verisi yok (${KAP_STATUS.measuredAt} olcumu) — bildirim akisi ayri calisiyor.`;
 }
 
 /**
@@ -52,10 +63,10 @@ export function kapUnavailableNote() {
  * Dizi olmasi cagiranlarin `.length`/`.map` beklentisini korur; `unavailable`
  * bayragi "veri yok" ile "olumsuz veri" ayrimini mumkun kilar.
  */
-export function kapUnavailableDisclosures() {
+export function kapUnavailableDisclosures(reason = KAP_STATUS.reason) {
   const arr = [];
   arr.unavailable = true;
-  arr.reason = KAP_STATUS.reason;
+  arr.reason = reason;
   return arr;
 }
 

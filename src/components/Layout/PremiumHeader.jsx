@@ -38,7 +38,7 @@ function formatClock(d) {
   return { date, time };
 }
 
-export default function PremiumHeader({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze, onTabChange }) {
+export default function PremiumHeader({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze, onTabChange, brokerConfig, setBrokerConfig }) {
   const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMobileProfile, setShowMobileProfile] = useState(false);
@@ -199,6 +199,8 @@ export default function PremiumHeader({ badge, notifications, alertLog, advisor,
         <MobileProfilePage
           notifications={notifications}
           portfolio={portfolio}
+          brokerConfig={brokerConfig}
+          setBrokerConfig={setBrokerConfig}
           onTabChange={(tab) => { setShowMobileProfile(false); onTabChange?.(tab); }}
           onClose={() => setShowMobileProfile(false)}
         />

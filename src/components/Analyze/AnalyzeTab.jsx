@@ -6,6 +6,7 @@ import { analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js
 import { buildTradePlan } from '../../utils/tradePlan.js';
 import { fetchIsYatirimFinancials } from '../../utils/isyatirimEngine.js';
 import { fetchKAPDisclosures, calcKAPSentiment } from '../../utils/kapEngine.js';
+import { isKapCatalystScoringEnabled } from '../../utils/dataLayerPolicy.js';
 import { runMonteCarloAsync } from '../../utils/monteCarlo.js';
 import Chart from '../Chart/Chart.jsx';
 import BacktestPanel from '../Backtest/BacktestPanel.jsx';
@@ -89,9 +90,11 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
         setBadge({ text: 'Hata', cls: 'err' });
         return;
       }
-      // Calculate KAP sentiment for signal integration
+      // v31.38: KAP artik gercek veri donduruyor. Kullanici karari (dataLayerPolicy):
+      // KAP olaylari skora GIRMEZ — KAP panelinde gorunur, sinyallerde olculur.
+      // Sentiment genSignal'a (±3 puan) yalniz politika acilirsa verilir.
       const kapSentiment = calcKAPSentiment(kapDisclosures);
-      const extraContext = { kapSentiment };
+      const extraContext = isKapCatalystScoringEnabled() ? { kapSentiment } : {};
       const { ind, sig } = getUnifiedAnalysis(s, data, extraContext);
 
       // ── Foreign Ratio Fetch (skorlama: pure computeForeignFlowScore — advisor ile AYNI) ──

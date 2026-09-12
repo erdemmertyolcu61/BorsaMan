@@ -57,8 +57,10 @@ graphify explain <node>        # Bir node + komsulari aciklama
 - **Backend**: `proxy/` — Vercel Serverless CORS proxy (10 domain whitelist + `/api/claude`)
 - **Python kopru**: `bist_bridge.py` — borsa-mcp server'i ile TradingAgents arasingi
 - **Terminal estetigi**: Koyu tema (#0a0e17), JetBrains Mono + Space Grotesk
-- **Sekmeler (v31.22)**: Tekil Analiz (varsayilan), Intraday Trade, Sinyal Takibi, Paper Trading,
-  Gercek Portfoy, Istihbarat. Pano ve sanal Portfoy sekmeleri kaldirildi (portfoy state'i headless durur).
+- **Sekmeler (v31.22 → v31.38)**: Tekil Analiz (varsayilan), Intraday Trade, Sinyal Takibi, Paper Trading,
+  Gercek Portfoy, Istihbarat, Piyasa Nabzi (v31.38). Pano ve sanal Portfoy sekmeleri kaldirildi (portfoy
+  state'i headless durur). **Mobil (v31.38)**: Analiz · Sinyal · Paper · Portfoy · Piyasa — Intraday ve
+  Istihbarat mobilde mount edilmez; ayarlar Profil › Ayarlar'da.
 - **Sabit paneller**: AIAdvisorPanel (sol), AIAdvisorDetailPanel (alt, collapsible), SignalsTab (Sinyal Takibi — 4 alt-sekme)
 
 ## Teknik Ozellikler (v8)
@@ -301,7 +303,10 @@ Terminalin "Portföy" sekmesi **sanal** paper hesaptır; bu sekme **gerçek** ç
 ## Proxy Server (`proxy/`)
 - **Vercel Serverless**: `proxy/api/proxy.js`, `vercel.json`
 - **Route**: `/api/proxy?source=yahoo|bigpara|isyatirim|...&symbol=...`
-- **Whitelist**: 10 domain (Yahoo, BigPara, IsYatirim, KAP, TCMB, vb.) — Foreks whitelist'te ama dead
+- **Whitelist**: Yahoo, BigPara, IsYatirim, KAP, TCMB (evds2 + evds3), RSS kaynaklari vb. — Foreks whitelist'te ama dead
+- **POST rotalari (v31.38)**: `source=kap_disclosures&days=N[&oid=<32 hex>]` (KAP bildirim akisi, ince format) ve
+  `source=isy_foreign` (Is Yatirim hisse bazli yabanci orani + goreli getiri); `tcmb_evds` artik evds3 + `key` basligi.
+  Tarayici bu uclara cross-origin POST atamaz, proxy cagirir. Yeni kaynak adlari icin proxy yeniden deploy edilmeli.
 - **Cache**: `s-maxage=120, stale-while-revalidate=600` edge cache
 - **Claude endpoint**: `/api/claude` — Anthropic API'ye x-api-key ile proxy; `anthropic-beta` header'ini upstream'e pass etmeli
 - **Deploy**: `cd proxy && vercel --prod`
@@ -1496,6 +1501,100 @@ kirmizi kaliyor.
   kucuk, duzeltilmedi.
 
 Test 672 pass (48 dosya), 0 lint error (80 warning, ratchet 90), build temiz.
+
+## Mobil Sadeleştirme + KAP / Yabancı Oranı / Momentum Veri Katmanı (v31.38)
+
+Kullanıcı: "Mobilde çok fazla ekran ve sekme var, gerekli olmayanları kaldıralım" + "KAP haberleri,
+yabancı para girişi, momentum gibi değerleri nasıl alıp kullanabiliriz — araştır, entegre et."
+
+### A — Mobil (kullanıcı seçimi; masaüstü değişmedi)
+- **Kaldırılan sekmeler (yalnız mobil)**: Trade (15 dk intraday, veri 15-30 dk gecikmeli) ve Haber (AI
+  istihbarat; Gemini anahtarı ister, telefonda hiç güncellenmemişti). Mobilde **mount bile edilmezler**
+  (gizli bir TradesTab 15 dk bar çekmeye devam ederdi). Yerlerine **📡 Piyasa** geldi. Alt bar:
+  Analiz · Sinyal · Paper · Portföy · Piyasa. Döndürme/boyut değişiminde kaldırılmış sekmede kalınırsa
+  `App` düşürür (trades→analyze, intel→market).
+- **Ayarlar Portföy'den Profil › Ayarlar'a taşındı** (mobil): aracı kurum + Claude/Gemini/EVDS
+  anahtarları + arka plan bildirimi + proxy tek yerde (`MobileProfilePage` → `BrokerSettings`).
+- Kullanıcının **tutmayı seçtikleri**: alttaki AI FIRSATLAR paneli, standart paper motoru, Tahmin İsabeti
+  kutusu, Analiz'deki backtest/makro takvim, Sinyal'deki CSV/Kaynak/Hisse.
+- Masaüstüne **📡 Piyasa Nabzı** sekmesi eklendi (İstihbarat ve Intraday duruyor).
+
+### B — Araştırma (canlı ölçüm, 2026-09-12) — iki "ölü kaynak" kararı YANLIŞTI
+1. **KAP bildirimleri — ÇALIŞIYOR.** `POST https://www.kap.org.tr/tr/api/disclosure/list/main`,
+   gövde `{fromDate, toDate: 'dd.mm.yyyy', disclosureTypes: null, memberTypes: ['IGS'], mkkMemberOid}`.
+   3 gün 674 bildirim / 207 hisse; proxy ince formatı 7 gün 1087 bildirim = 50 KB gzip. 2026-09-07'deki
+   "API yolu yok" kararı eksik ölçümdü (yalnız ilk JS parçalarına bakılmıştı; uç adları ayrı bir sabitler
+   parçasındaydı). Eski `kapEngine`'in gömülü OID tablosu da **hatalıydı** (THYAO farklı kimlik).
+   Hâlâ ölü (bugün yeniden ölçüldü): `iceridiogrenenler` ve `ozetFinansalBilgiler` → 404.
+2. **Hisse bazlı yabancı oranı — ÇALIŞIYOR.** İş Yatırım hisse tarama
+   (`POST .../StockInfo/CompanyInfoAjax.aspx/getScreenerDataNEW`): kriter 40 yabancı oranı, 44/45 1H/1A
+   değişim, 8 piyasa değeri, 22/23 1H/1A göreli getiri. 603 hisse, ~150-300 ms, çerez gerekmez; borsapy
+   kütüphanesinden bulundu. Birim: İş "Baz" diyor ama dağılım **yüzde puan** gibi davranıyor (603 satırda
+   hiçbir artış mevcut oranı aşmıyor; büyüklük oranla birlikte artıyor).
+3. **TCMB EVDS — üç yerden bozuktu.** evds2 `/service/evds` artık evds3 SPA'ya 302; anahtar URL'de değil
+   `key` başlığında (TCMB, 2024-04-05); seri kodu `TP.SI.YABANCI.HS.NET` hiç yoktu. Doğrusu (anonim
+   katalogdan): `TP.MKNETHAR.M7` = yurt dışı yerleşiklerin haftalık net hisse alımı (mn $). Anahtar
+   ücretsiz ama bu makinede yok → **anahtarlı yanıt ayrıştırması doğrulanmadı.**
+4. **Momentum**: ayrı kaynak gerekmedi; İş taramasındaki 1H/1A göreli getiri Piyasa ekranında gösteriliyor.
+
+### C — Proxy (iki kopya eşit: `proxy/api/proxy.js` = `api/proxy.js`)
+- `source=kap_disclosures&days=N[&oid=<32 hex>]` — POST'u sunucu yapar, ince format döner (test kaydı
+  atılır, özet 280 karakter). Piyasa geneli `s-maxage=300`, tek şirket `1800`; days 1-14 (oid ile 180).
+- `source=isy_foreign` — kompakt `{fields, rows}` (26 KB ham / 12 KB gzip), `s-maxage=3600`.
+- `tcmb_evds` → evds3 + `key` başlığı (istemcinin `evds_key`'i ya da `EVDS_API_KEY` env).
+- Handler yerelde gerçek uçlara karşı çalıştırıldı: KAP 7 gün 200/1087, THYAO 60 gün 11, İş 603, EVDS
+  anahtarsız 403 "key header" (doğru uç), yabancı origin 403, geçersiz kaynak 400.
+- Yerel geliştirme: Vite `/api/kap` (mevcut) + yeni `/api/isyatirim-screener` kuralı.
+- **Deploy gerekli**: eski dağıtım yeni kaynak adlarını tanımaz; istemci bunu "boş" değil
+  `proxy_outdated` olarak raporlar ("proxy klasörünü yeniden deploy et").
+
+### D — Veri katmanı (saf + test edilmiş)
+- `kapFeed.js` (29 test): tarih/ticker ayrıştırma, **sınıflandırma** (risk / caution / event / info /
+  noise), sembol indeksi, OID çözümleme (canlı akıştan öğrenilen > `src/data/kapMemberOids.json`, 788
+  kod), fetch (proxy / Vite).
+  - **risk (AL'dan çıkarır)**: Borsa İstanbul "tedbir" (VBTS, yatırımcı bazında), işlem sırası kapatma,
+    gerçekleşmeyen itfa/kupon, ODA'da konkordato/iflas. Sonradan **yeniden açılan** işlem sırası risk
+    sayılmaz (ölçüldü: TRILC 09:20 kapandı, 11:27 açıldı — yoksa bir hafta AL dışı kalırdı).
+  - **caution (göster, filtreleme)**: devre kesici (yükselişte de tetiklenir), "SPK İşlem Yasağı Nedeniyle
+    Pay Duyurusu" (**tek duyuruda THYAO/AKBNK/GARAN dahil 68 hisse** — yatırımcı bazlı, hisseye tedbir
+    değil; sert filtre blue-chip'leri günlerce silerdi), tipe dönüşüm, dava, sözleşme feshi.
+  - **noise**: borçlanma aracı ihracı, formlar, bültenler (7 günde 1087 bildirimin 476'sı).
+  - Şirket bildirimi yalnız **şirketin kendisine** indekslenir (bir portföy yönetim şirketinin "Pay Alım
+    Satım" bildirimi relatedStocks'ta 29 hisse listeliyordu).
+- `foreignFlowEngine.js`: İş kaynağı ilk sırada; `summarizeForeignBreadth`, `topRelativeMomentum`,
+  `parseEvdsWeeklyFlow`. Breaker kaydı `v: FOREIGN_SOURCES_VERSION` taşır — ölü kaynakların açtığı 24
+  saatlik breaker yeni kaynağı denemeden bloklamasın (önizlemede eski breaker ile ölçüldü, İş denendi).
+- `dataLayerPolicy.js` (3 test): **kullanıcı kararı "göster + ölç, sonra aç"** — `foreignFlowScoring:
+  false`, `kapCatalystScoring: false`, `kapRiskGuard: true`; dondurulmuş.
+- `dataLayerEdge.js` (7 test): kayıtlı AL sinyallerini yabancı (giriş/nötr/çıkış, ±0,3 p) ve KAP
+  (olay/diğer/yok/tedbir) kovalarına ayırır; liveEdge ile aynı getiri zinciri ve MIN_SAMPLE (8).
+
+### E — Bağlantılar (skoru değiştirmeden)
+- `useAIAdvisor`: KAP akışı **seçimden önce** tüm `results`'a yazılır (`kapChecked/kapCount/
+  kapCategories/kapRisk`); tedbirli hisse buyPicks, fallbackBuys, lastResort, panel listesi, tek çıkış
+  kapısı ve `ensureBestOfDay` havuzunun **hepsinden** çıkar. Yabancı alanları picks + results'a yazılır;
+  **hiç ölçülmemiş** yabancı akış kuralları (confidence ±8, tomorrowPotential ±18, iki sert eleme) bayrak
+  kapalıyken no-op. `sourceHealth`'e `kap-bildirim` ve `yabanci-oran` eklendi.
+- `PaperTradeEngine`: tedbirli pick açılmaz (ikinci savunma). `AnalyzeTab`: KAP sentiment genSignal'a (±3)
+  verilmez. `KAPPanel`: yeni uçla çalışıyor; JARVIS yorumu artık **istek üzerine** (KAP yeniden veri
+  döndürdüğü için her analizde otomatik Claude isteği API maliyeti yaratırdı).
+- Sinyal kaydı (`App.recordAdvisorPick`) ve `bist_last_ai_picks` KAP/yabancı alanlarını taşır → ölçüm.
+- AIAdvisorPanel: `📢 KAP olayı` / `⛔ tedbir` rozetleri; yabancı rozet ipucundaki sahte "Gün +0.00" kalktı.
+- Piyasa ekranı: "Önemli" ve "Takibim" yalnız işlem gören hisseleri gösterir (İş'in 603 hissesi, yoksa
+  KAP anlık görüntüsü); momentum ve yabancı hareket listelerinde tedbirli hisse ⛔ işaretli.
+- ProxySettings / MacroPanel metinleri düzeltildi (EVDS anahtarı politika faizi çekmiyordu; hisse bazlı
+  yabancı oranı artık anahtarsız).
+
+### Doğrulama
+- Test **742 pass (53 dosya)**, 0 lint error, build temiz.
+- Önizleme (375px, gerçek modüller, Vite proxy üzerinden canlı veri): 5 sekmeli bar; Trade/İstihbarat
+  mount edilmiyor; Piyasa ekranında 10 tedbirli hisse, KAP akışı, 317↑/199↓ yabancı genişliği, momentum
+  listesi; Portföy'de ayar yok, Profil › Ayarlar'da hepsi var.
+- **Doğrulanamayanlar (dürüst)**: masaüstü dalı (önizleme paneli compose etmediği için `innerWidth` 0 ve
+  matchMedia mobil okuyor — v31.23'teki sınır); EVDS anahtarlı yanıt; deploy edilmiş proxy (kullanıcı
+  deploy edene kadar üretim `proxy_outdated` gösterir).
+- **Sınır**: İş taraması yalnız GÜNCEL değer veriyor → yabancı akış için geçmiş backtest mümkün değil;
+  kanıt yalnız ileriye doğru birikir. Hiçbir bayrak ölçüm olmadan açılmamalı.
 
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ

@@ -129,6 +129,7 @@ function GroupBlock({ title, positions, currency }) {
 }
 
 export default function RealPortfolioTab({ portfolio, updatePortfolio, brokerConfig, setBrokerConfig, livePrice, watchlist, setWatchlist }) {
+  const isMobile = useIsMobile();
   const { positions, setPositions, refresh, loading, lastUpdate, usdTry, totals, alerts } = useRealPortfolio();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -252,7 +253,15 @@ export default function RealPortfolioTab({ portfolio, updatePortfolio, brokerCon
 
       <VirtualPositionsPanel portfolio={portfolio} updatePortfolio={updatePortfolio} />
       <WatchlistPanel watchlist={watchlist} setWatchlist={setWatchlist} livePrice={livePrice} />
-      <BrokerSettings brokerConfig={brokerConfig} setBrokerConfig={setBrokerConfig} />
+      {/* v31.38 (kullanici karari): mobilde ayarlar Profil › Ayarlar'a tasindi —
+          portfoy sekmesi yalniz portfoy. Masaustunde yerinde duruyor. */}
+      {isMobile ? (
+        <div style={{ fontSize: 10, color: 'var(--t3)', textAlign: 'center', padding: '10px 0', lineHeight: 1.5 }}>
+          ⚙ Aracı kurum, API anahtarları ve bildirim ayarları: sağ üstteki Profil › Ayarlar
+        </div>
+      ) : (
+        <BrokerSettings brokerConfig={brokerConfig} setBrokerConfig={setBrokerConfig} />
+      )}
     </div>
   );
 }

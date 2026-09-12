@@ -8,6 +8,7 @@ import { useNotifications } from './hooks/useNotifications.jsx';
 import { usePaperTrading } from './hooks/usePaperTrading.js';
 import { usePaperTradeML } from './hooks/usePaperTradeML.js';
 import { useForwardTestJournal } from './hooks/useForwardTestJournal.js';
+import { useIsMobile } from './hooks/useIsMobile.js';
 import { runFreshRegimeReset } from './utils/resetStorage.js';
 import PremiumHeader from './components/Layout/PremiumHeader.jsx';
 import AnalyzeTab from './components/Analyze/AnalyzeTab.jsx';
@@ -21,6 +22,12 @@ import MobilePicksStrip from './components/MobileNav/MobilePicksStrip.jsx';
 import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
 import RealPortfolioTab from './components/RealPortfolio/RealPortfolioTab.jsx';
 import MarketIntelPanel from './components/MarketIntel/MarketIntelPanel.jsx';
+import MarketPulsePanel from './components/MarketPulse/MarketPulsePanel.jsx';
+
+// v31.38 (user decision): tabs removed on mobile → where to land instead.
+// Desktop keeps both. On mobile they are not even mounted: a hidden TradesTab
+// would keep pulling 15-minute bars in the background (battery + data).
+const MOBILE_REMOVED_TABS = { trades: 'analyze', intel: 'market' };
 
 export default function App() {
   const state = useAppState();
@@ -38,6 +45,13 @@ export default function App() {
   useEffect(() => {
     window.__bistForwardJournal = forwardJournal;
   }, [forwardJournal]);
+  const isMobile = useIsMobile();
+  const { activeTab, setActiveTab } = state;
+  // A rotation / resize can leave a phone on a tab it no longer has.
+  useEffect(() => {
+    const fallback = isMobile ? MOBILE_REMOVED_TABS[activeTab] : null;
+    if (fallback) setActiveTab(fallback);
+  }, [isMobile, activeTab, setActiveTab]);
   const [watchlist, setWatchlist] = useState(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem('bist_watchlist') || '[]');
@@ -120,6 +134,17 @@ export default function App() {
       mlConfidenceBoost: pick.mlConfidenceBoost,
       mlMatchedCount: pick.mlMatchedCount,
       mlBestRule: pick.mlBestRule,
+      // v31.38: veri katmani olcumu (dataLayerEdge). Skoru etkilemez; sinyalin
+      // sonucu belli olunca "yabanci girisi / KAP olayi olan AL'lar ne yapti?"
+      // sorusunu bu alanlar cevaplar. kapChecked=false → o gun akis yoktu.
+      foreignRatio: pick.foreignRatio ?? null,
+      foreignChangeWeek: pick.foreignChangeWeek ?? null,
+      foreignChangeMonth: pick.foreignChangeMonth ?? null,
+      kapChecked: pick.kapChecked === true,
+      kapCount: pick.kapCount ?? null,
+      kapCategories: Array.isArray(pick.kapCategories) ? pick.kapCategories : [],
+      kapCautions: Array.isArray(pick.kapCautions) ? pick.kapCautions : [],
+      kapRisk: pick.kapRisk || null,
     });
     if (opts.notify && (pick.score >= 7.5 || pick.confidence >= 75)) {
       notifications.notifyAdvisorPick(pick);
@@ -225,7 +250,7 @@ export default function App() {
     const handler = (e) => {
       const { opportunities } = e.detail || {};
       if (!opportunities?.length) return;
-      
+
       for (const opp of opportunities) {
         if (opp.score >= 40) {
           signalTracker.recordSignal({
@@ -297,6 +322,8 @@ export default function App() {
         scanHistory={scanHistory}
         onAnalyze={handleAIAnalyze}
         onTabChange={state.setActiveTab}
+        brokerConfig={state.brokerConfig}
+        setBrokerConfig={state.setBrokerConfig}
       />
 
       <div className="desktop-only-panel">
@@ -312,8 +339,22 @@ export default function App() {
 
       <Tabs activeTab={state.activeTab} onTabChange={state.setActiveTab} />
 
-      <div className={`tab-content ${state.activeTab === 'intel' ? 'active' : ''}`}>
-        <MarketIntelPanel />
+      {!isMobile && (
+        <div className={`tab-content ${state.activeTab === 'intel' ? 'active' : ''}`}>
+          <MarketIntelPanel />
+        </div>
+      )}
+
+      {/* v31.38: KAP + yabanci orani + goreli momentum. Yalniz aktifken mount
+          edilir — veri modul onbelleginde durdugu icin sekme degisimi ucuz. */}
+      <div className={`tab-content ${state.activeTab === 'market' ? 'active' : ''}`}>
+        {state.activeTab === 'market' && (
+          <MarketPulsePanel
+            signals={signalTracker.signals}
+            watchlist={watchlist}
+            onAnalyze={handleAIAnalyze}
+          />
+        )}
       </div>
 
       <div className={`tab-content ${state.activeTab === 'analyze' ? 'active' : ''}`}>
@@ -330,15 +371,17 @@ export default function App() {
         />
       </div>
 
-      <div className={`tab-content ${state.activeTab === 'trades' ? 'active' : ''}`}>
-        <TradesTab
-          addToPortfolio={state.addToPortfolio}
-          portfolio={state.portfolio}
-          signalTracker={signalTracker}
-          advisorData={advisor}
-          onScanComplete={onTradesScanComplete}
-        />
-      </div>
+      {!isMobile && (
+        <div className={`tab-content ${state.activeTab === 'trades' ? 'active' : ''}`}>
+          <TradesTab
+            addToPortfolio={state.addToPortfolio}
+            portfolio={state.portfolio}
+            signalTracker={signalTracker}
+            advisorData={advisor}
+            onScanComplete={onTradesScanComplete}
+          />
+        </div>
+      )}
 
       <div className={`tab-content ${state.activeTab === 'realport' ? 'active' : ''}`}>
         <RealPortfolioTab

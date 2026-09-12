@@ -2,18 +2,20 @@
  * MobileNav — bottom tab bar.
  *
  * v31.22: Pano and the virtual Portfoy tab were removed, which left the overflow
- * sheet holding exactly ONE entry. A "Daha" button that hides a single item costs
- * a tap and a modal for nothing, so every tab now lives in the bar itself and the
- * sheet is gone. Six items fit 375px without horizontal scroll (measured).
+ * sheet holding exactly ONE entry, so every tab moved into the bar itself.
+ *
+ * v31.38 (user decision): Trade (15-minute intraday on 15-30 min delayed data)
+ * and Haber (AI market intel — needs a Gemini key, never refreshed on the phone)
+ * are gone from mobile. Their place is taken by Piyasa: KAP disclosures,
+ * per-stock foreign ownership and relative momentum. Desktop keeps every tab.
  */
 export default function MobileNav({ activeTab, onTabChange }) {
   const tabs = [
     { id: 'analyze',  label: 'Analiz',  icon: '◎' },
-    { id: 'trades',   label: 'Trade',   icon: '★' },
     { id: 'signals',  label: 'Sinyal',  icon: '◈' },
     { id: 'paper',    label: 'Paper',   icon: '📄' },
     { id: 'realport', label: 'Portföy', icon: '💼' },
-    { id: 'intel',    label: 'Haber',   icon: '🌍' },
+    { id: 'market',   label: 'Piyasa',  icon: '📡' },
   ];
 
   return (

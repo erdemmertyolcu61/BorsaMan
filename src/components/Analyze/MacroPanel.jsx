@@ -79,12 +79,18 @@ export default function MacroPanel() {
           {/* Foreign Flow Section */}
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
-              <span>Yabancı Para Girişi (TCMB EVDS)</span>
-              {foreignFlow && !foreignFlow.error && <span style={{ color: foreignFlow.latestWeeklyFlow >= 0 ? 'var(--green)' : 'var(--red)' }}>Son Hafta: {foreignFlow.latestWeeklyFlow > 0 ? '+' : ''}{foreignFlow.latestWeeklyFlow}M $</span>}
+              <span>Yabancı Net Hisse Alımı (TCMB, haftalık)</span>
+              {foreignFlow && !foreignFlow.error && Number.isFinite(foreignFlow.latestWeeklyFlow) && (
+                <span style={{ color: foreignFlow.latestWeeklyFlow >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                  Son Hafta: {foreignFlow.latestWeeklyFlow > 0 ? '+' : ''}{foreignFlow.latestWeeklyFlow.toFixed(1)} mn $
+                </span>
+              )}
             </div>
             {!foreignFlow ? (
-              <div style={{ fontSize: 10, color: 'var(--t3)', padding: '10px', textAlign: 'center', background: 'var(--bg3)', borderRadius: 8 }}>
-                Veri bekleniyor... (API anahtarı girilmemiş olabilir)
+              <div style={{ fontSize: 10, color: 'var(--t3)', padding: '10px', textAlign: 'center', background: 'var(--bg3)', borderRadius: 8, lineHeight: 1.5 }}>
+                {/* v31.38: eskiden "Veri bekleniyor..." diyordu — anahtar yoksa hic gelmeyecek bir veriyi beklemek yok. */}
+                EVDS anahtarı yok — Ayarlar&apos;dan eklenince görünür (ücretsiz: evds3.tcmb.gov.tr).
+                Hisse bazlı yabancı oranı anahtarsız: Piyasa sekmesi.
               </div>
             ) : foreignFlow.error ? (
               <div style={{ fontSize: 10, color: 'var(--red)', padding: '10px', textAlign: 'center', background: 'rgba(248, 113, 113, 0.1)', borderRadius: 8 }}>

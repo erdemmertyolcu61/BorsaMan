@@ -4,6 +4,7 @@ import { isMarketOpen, isMarketClosedForDay } from '../../hooks/useAIAdvisor.js'
 import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
 import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices, fetchBigParaQuote } from '../../utils/fetchEngine.js';
 import { getForeignFlowStatus } from '../../utils/foreignFlowEngine.js';
+import { KAP_TYPE_LABELS } from '../../utils/kapFeed.js';
 import { deriveDisplayPicks } from '../../utils/displayPicks.js';
 
 function DataFreshnessBadge() {
@@ -1263,14 +1264,36 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       border: p.foreignFlowScore <= -3 ? '1px solid rgba(239,68,68,0.4)' : 'none',
                       letterSpacing: 0.3,
                     }} title={[
-                      `🌍 Yabancı ${p.foreignFlowLabel}`,
+                      `🌍 Yabancı ${p.foreignFlowLabel} (İş Yatırım verisi)`,
                       `Oran: %${(p.foreignRatio || 0).toFixed(1)}`,
-                      `Gün: ${(p.foreignChangeDay || 0) > 0 ? '+' : ''}${(p.foreignChangeDay || 0).toFixed(2)}`,
-                      `Hafta: ${(p.foreignChangeWeek || 0) > 0 ? '+' : ''}${(p.foreignChangeWeek || 0).toFixed(2)}`,
-                      `Ay: ${(p.foreignChangeMonth || 0) > 0 ? '+' : ''}${(p.foreignChangeMonth || 0).toFixed(2)}`,
-                      `Akış skoru: ${p.foreignFlowScore > 0 ? '+' : ''}${p.foreignFlowScore}`,
+                      // v31.38: bu kaynakta günlük değişim yok — "+0.00" yazmak veri uydurmak olurdu.
+                      ...(Number.isFinite(p.foreignChangeDay) ? [`Gün: ${p.foreignChangeDay > 0 ? '+' : ''}${p.foreignChangeDay.toFixed(2)} puan`] : []),
+                      `Hafta: ${(p.foreignChangeWeek || 0) > 0 ? '+' : ''}${(p.foreignChangeWeek || 0).toFixed(2)} puan`,
+                      `Ay: ${(p.foreignChangeMonth || 0) > 0 ? '+' : ''}${(p.foreignChangeMonth || 0).toFixed(2)} puan`,
+                      'Skoru etkilemez — kaydedilip ölçülüyor',
                     ].join('\n')}>
                       🌍 {p.foreignFlowLabel}
+                    </span>
+                  )}
+                  {/* v31.38 KAP rozetleri — görünür + ölçülür, skora girmez (dataLayerPolicy) */}
+                  {p.kapRisk && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: '#7f1d1d', color: '#fca5a5', border: '1px solid #ef4444', letterSpacing: 0.3,
+                    }} title={`⛔ ${p.kapRiskLabel || 'İşlem tedbiri'} — KAP, son 7 gün. Bu hisse AL listesine alınmaz.`}>
+                      ⛔ {KAP_TYPE_LABELS[p.kapRisk] || 'TEDBİR'}
+                    </span>
+                  )}
+                  {!p.kapRisk && Array.isArray(p.kapCategories) && p.kapCategories.length > 0 && (
+                    <span style={{
+                      fontSize: 8, fontWeight: 800, padding: '1px 5px', borderRadius: 2,
+                      background: 'rgba(0,229,255,0.12)', color: 'var(--cyan)', border: '1px solid rgba(0,229,255,0.35)', letterSpacing: 0.3,
+                    }} title={[
+                      `📢 KAP (son 7 gün): ${p.kapCategories.map(c => KAP_TYPE_LABELS[c] || c).join(', ')}`,
+                      p.kapHeadline ? `Son bildirim: ${p.kapHeadline}` : '',
+                      'Yönü belirsiz şirket olayı — skoru etkilemez, ölçülüyor',
+                    ].filter(Boolean).join('\n')}>
+                      📢 {KAP_TYPE_LABELS[p.kapCategories[0]] || 'KAP'}{p.kapCategories.length > 1 ? ` +${p.kapCategories.length - 1}` : ''}
                     </span>
                   )}
                   {/* ML ENGINE MATCH rozeti — self-learning rule discovery match */}

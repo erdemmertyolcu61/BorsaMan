@@ -149,20 +149,21 @@ export default function ProxySettings() {
       </div>
       {pushMsg && <div style={{ fontSize: 9, color: 'var(--t2)', marginBottom: 16 }}>{pushMsg}</div>}
 
-      {/* v31.22: TCMB EVDS anahtari - foreignFlowEngine bu anahtari zaten okuyordu
-          ama girecek bir alan yoktu, bu yuzden piyasa geneli yabanci akisi hep
-          null donuyordu. Anahtar ucretsiz (evds2.tcmb.gov.tr kaydi gerektirir). */}
+      {/* v31.38: TCMB EVDS anahtari. EVDS evds3'e tasindi; anahtar artik URL'de degil
+          `key` basliginda gider (proxy halleder). Yalniz haftalik yabanci net hisse
+          alimi icin kullanilir — politika faizi bu anahtarla CEKILMIYORDU (eski metin
+          yanlisti). Hisse bazli yabanci orani ANAHTARSIZ gelir (Is Yatirim). */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 14 }}>🏦</span>
         <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
-          TCMB EVDS Anahtari (Yabanci Akis + Politika Faizi)
+          TCMB EVDS Anahtarı (Haftalık Yabancı Akış)
         </span>
       </div>
 
       <div style={{ fontSize: 9, color: 'var(--t3)', lineHeight: 1.5, marginBottom: 6 }}>
-        Ucretsiz: evds2.tcmb.gov.tr adresinden kayit olup &quot;API Anahtari&quot; alin. Anahtarsiz
-        piyasa geneli yabanci akisi ve guncel TCMB politika faizi cekilemez (statik yedek kullanilir).
-        Hisse-bazli yabanci takas orani icin ucretsiz kaynak yok - o ayri bir mesele.
+        Ücretsiz: evds3.tcmb.gov.tr → kayıt ol → Benim Sayfam → API Anahtarı. Anahtarla TCMB&apos;nin
+        haftalık yabancı net hisse alımı (mn $) Piyasa ekranında görünür. Hisse bazlı yabancı oranı
+        için anahtar gerekmez — İş Yatırım&apos;dan gelir.
       </div>
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 16 }}>

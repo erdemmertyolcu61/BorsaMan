@@ -1,10 +1,11 @@
-import { smartFetch } from './fetchEngine.js';
-import { isKapAvailable, kapUnavailableDisclosures } from './kapAvailability.js';
+import { isKapAvailable, isKapFeedAvailable, kapUnavailableDisclosures } from './kapAvailability.js';
+import { fetchKapForSymbol, describeKapFailure } from './kapFeed.js';
 
 // ============================================================
 // KAP SENTIMENT SCORING ENGINE
-// Analyzes KAP disclosures and produces a sentiment score
-// that feeds directly into the signal engine
+// Analyzes KAP disclosures and produces a sentiment score.
+// v31.38: whether that score may reach genSignal is decided by
+// dataLayerPolicy (currently NO — display and measurement only).
 // ============================================================
 
 // Keyword-based sentiment analysis for KAP disclosures
@@ -86,215 +87,40 @@ export function calcKAPSentiment(disclosures) {
   };
 }
 
-const OID_CACHE_KEY = 'kap_oid_map_v1';
-
-function getOidCache() {
-  try {
-    const saved = localStorage.getItem(OID_CACHE_KEY);
-    return saved ? JSON.parse(saved) : {};
-  } catch { return {}; }
-}
-
-function saveOidCache(map) {
-  try { localStorage.setItem(OID_CACHE_KEY, JSON.stringify(map)); } catch {}
-}
-
-const PRE_MAPPING = {
-  'ASELS': '4028e4a140f2ed090140f3408f650041',
-  'THYAO': '4028e4a140f2ed090140f33967060002',
-  'TUPRS': '4028e4a140f2ed090140f340ba70004c',
-  'EREGL': '4028e4a140f2ed090140f33bb694001c',
-  'AKBNK': '4028e4a140f2ed090140f33887010001',
-  'GARAN': '4028e4a140f2ed090140f33bce300021'
-};
-
-async function resolveMemberOid(symbol) {
-  if (PRE_MAPPING[symbol]) return PRE_MAPPING[symbol];
-  const cache = getOidCache();
-  if (cache[symbol]) return cache[symbol];
-
-  const listUrl = 'https://www.kap.org.tr/tr/bist-sirketler';
-  
-  // Try local proxy first
-  let html = null;
-  if (typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-    try {
-      const res = await fetch('/api/kap/tr/bist-sirketler');
-      if (res.ok) html = await res.text();
-    } catch {}
-  }
-  
-  if (!html) {
-    html = await smartFetch(listUrl, 15000);
-  }
-  if (!html) return null;
-
-  const re = /"mkkMemberOid":"([^"]+)","[^"]*stockCode":"([^"]+)"/g;
-  let match;
-  let foundOid = null;
-  const newMap = { ...cache };
-  
-  while ((match = re.exec(html)) !== null) {
-    newMap[match[2]] = match[1];
-    if (match[2] === symbol) foundOid = match[1];
-  }
-  
-  saveOidCache(newMap);
-  return foundOid;
-}
-
-export async function fetchKAPDisclosures(symbol) {
-  // v31.33: bkz. kapAvailability.js — tum KAP rotalari olu (olculdu 2026-09-07).
-  if (!isKapAvailable()) return kapUnavailableDisclosures();
-  try {
-    const oid = await resolveMemberOid(symbol);
-    if (!oid) return [];
-
-    const drillUrl = `https://www.kap.org.tr/tr/bildirim-sorgu-sonuc?member=${oid}`;
-    
-    let html = null;
-    if (typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-      try {
-        const res = await fetch(`/api/kap/tr/bildirim-sorgu-sonuc?member=${oid}`);
-        if (res.ok) html = await res.text();
-      } catch {}
-    }
-    
-    if (!html) {
-      html = await smartFetch(drillUrl, 12000);
-    }
-    if (!html) return [];
-
-    // Improved regex to capture subject/summary if available
-    // Fields: publishDate, disclosureIndex, title, subject
-    const discRe = /"publishDate":"([^"]+)".*?"disclosureIndex":(\d+).*?"title":"([^"]+)".*?"subject":"([^"]*)"/g;
-    const results = [];
-    let match;
-    let count = 0;
-
-    while ((match = discRe.exec(html)) !== null && count < 6) {
-      const pubDate = match[1];
-      const index = match[2];
-      const title = match[3];
-      const subject = match[4] || '';
-
-      let dateObj = new Date();
-      try {
-        const parts = pubDate.split(' ');
-        const dp = parts[0].split('.');
-        const tp = parts[1].split(':');
-        dateObj = new Date(parseInt(dp[2]), parseInt(dp[1]) - 1, parseInt(dp[0]), parseInt(tp[0]), parseInt(tp[1]), parseInt(tp[2]));
-      } catch {}
-
-      results.push({
-        id: index,
-        date: dateObj.toISOString(),
-        title: title.replace(/\\"/g, '"'),
-        summary: subject ? subject.replace(/\\"/g, '"') : `Detayli bilgi için linke tıklayın.`,
-        link: `https://www.kap.org.tr/tr/bildirim/${index}`
-      });
-      count++;
-    }
-
-    // Fallback if the subject-extended regex didn't match anything (older format)
-    if (results.length === 0) {
-      const simpleRe = /"publishDate":"([^"]+)".*?"disclosureIndex":(\d+).*?"title":"([^"]+)"/g;
-      let sMatch;
-      while ((sMatch = simpleRe.exec(html)) !== null && count < 6) {
-        results.push({
-          id: sMatch[2],
-          date: new Date().toISOString(), // fallback date
-          title: sMatch[3].replace(/\\"/g, '"'),
-          summary: `KAP Bildirimi (ID: ${sMatch[2]})`,
-          link: `https://www.kap.org.tr/tr/bildirim/${sMatch[2]}`
-        });
-        count++;
-      }
-    }
-
-    return results;
-  } catch (err) {
-    console.error('KAP integration failed:', err);
-    return [];
-  }
+/**
+ * One company's recent KAP disclosures.
+ *
+ * v31.38: rebuilt on kapFeed (KAP's JSON list endpoint, queried by mkkMemberOid).
+ * The old path scraped the HTML result page with a hard-coded OID table — and
+ * that table was WRONG (THYAO's real mkkMemberOid is a different id), which is
+ * part of why this panel stayed empty. Routine filings (bond issuance, forms)
+ * are dropped. On failure the array is flagged `unavailable` with a reason, so
+ * the UI never presents "could not reach KAP" as "no disclosures".
+ */
+export async function fetchKAPDisclosures(symbol, { days = 30, limit = 12 } = {}) {
+  if (!isKapFeedAvailable()) return kapUnavailableDisclosures();
+  const res = await fetchKapForSymbol(symbol, { days });
+  if (!res.ok) return kapUnavailableDisclosures(describeKapFailure(res.reason));
+  return res.items
+    .filter(it => it.cls?.kind !== 'noise')
+    .slice(0, limit)
+    .map(it => ({
+      id: it.id,
+      date: new Date(it.ts).toISOString(),
+      title: it.title,
+      summary: it.summary || it.title,
+      link: it.url,
+      kind: it.cls?.kind || 'info',
+      label: it.cls?.label || '',
+    }));
 }
 
 /**
- * fetchKAPSummaryFinancials - Fetches structured financial highlights from KAP JSON API
- * @param {string} symbol - BIST stock code
+ * fetchKAPSummaryFinancials — structured financial highlights from KAP.
+ * The `api/ozetFinansalBilgiler` route returned 404 (measured 2026-09-07) and no
+ * replacement has been found, so this reports "no data" instead of guessing.
  */
 export async function fetchKAPSummaryFinancials(symbol) {
-  // v31.33: api/ozetFinansalBilgiler 404 — temel analiz artik yalniz Yahoo bacagi.
-  if (!isKapAvailable()) return null;
-  try {
-    const oid = await resolveMemberOid(symbol);
-    if (!oid) return null;
-
-    // KAP Summary Financials API
-    const apiUrl = `https://www.kap.org.tr/tr/api/ozetFinansalBilgiler?mkkSirketOid=${oid}`;
-    
-    let text = null;
-    if (typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-      try {
-        const res = await fetch(`/api/kap/tr/api/ozetFinansalBilgiler?mkkSirketOid=${oid}`);
-        if (res.ok) text = await res.text();
-      } catch {}
-    }
-    
-    if (!text) {
-      text = await smartFetch(apiUrl, 15000);
-    }
-    if (!text) return null;
-
-    const data = JSON.parse(text);
-    if (!data || !data.ozetFinansalBilgiList) return null;
-
-    const list = data.ozetFinansalBilgiList;
-    const periods = data.donemler || []; // e.g. ["2022/12", "2023/12", "2024/12", "2025/12"]
-
-    const findItem = (label) => list.find(item => item.kalemAd && item.kalemAd.toLowerCase().includes(label.toLowerCase()));
-
-    // Map Turkish labels to standard keys
-    const revenueItem = findItem('Hasılat') || findItem('Satış Gelirleri');
-    const netIncItem = findItem('Net Dönem Karı (Zararı)') || findItem('Net Dönem Karı');
-    const equityItem = findItem('Ana Ortaklığa Ait Özkaynaklar') || findItem('Toplam Özkaynaklar');
-    const assetsItem = findItem('Toplam Varlıklar');
-    const liabItem = findItem('Toplam Yükümlülükler');
-
-    // Values in degerler: [P1, P2, P3, P4] (P4 is latest)
-    const getVal = (item, idx) => {
-      if (!item || !item.degerler || !item.degerler[idx]) return 0;
-      // Convert "106.118.918" -> 106118918
-      const raw = item.degerler[idx].replace(/\./g, '');
-      return parseFloat(raw) || 0;
-    };
-
-    const latestIdx = periods.length - 1;
-    const prevIdx = latestIdx - 1;
-
-    if (latestIdx < 0) return null;
-
-    // Scale factor: KAP often uses "1000TL" unit
-    const scale = data.paraBirimi === '1000TL' ? 1000 : 1;
-
-    return {
-      source: 'KAP (Official)',
-      periods: periods.slice(-2),
-      latest: {
-        revenue: getVal(revenueItem, latestIdx) * scale,
-        netIncome: getVal(netIncItem, latestIdx) * scale,
-        equity: getVal(equityItem, latestIdx) * scale,
-        assets: getVal(assetsItem, latestIdx) * scale,
-        liabilities: getVal(liabItem, latestIdx) * scale,
-      },
-      previous: {
-        revenue: getVal(revenueItem, prevIdx) * scale,
-        netIncome: getVal(netIncItem, prevIdx) * scale,
-        equity: getVal(equityItem, prevIdx) * scale,
-      }
-    };
-  } catch (err) {
-    console.error('KAP Summary fetch failed:', err);
-    return null;
-  }
+  if (!isKapAvailable() || !symbol) return null;
+  return null;
 }

@@ -20,6 +20,7 @@
 import { applyEntryCost, applyExitCost, liquiditySlippagePct } from './tradingCosts.js';
 import { resolveExitPrice } from './exitFill.js';
 import { computeLiveEdge } from './liveEdge.js';
+import { isKapRiskGuardEnabled } from './dataLayerPolicy.js';
 
 const STORAGE_KEY = 'bist_paper_ml_engine_v1';
 const START_CAPITAL = 100_000;
@@ -227,8 +228,12 @@ export class PaperTradeEngine {
     // All buy-eligible picks not already held. v31.13: skip _watchOnly picks —
     // in a DÜŞÜŞ regime buys are surfaced for awareness but are NOT tradeable longs
     // (measured -3.4% / 18.8% WR), so auto-trade must not open positions on them.
+    // v31.38: a KAP trading measure on the stock itself (VBTS, halted order book,
+    // missed coupon) keeps it out. The scan already drops these from the buy list;
+    // this is the second layer for picks drawn from the raw results pool.
     const eligible = picks.filter(p =>
-      p.cls === 'buy' && !p._watchOnly && !existingSymbols.has(p.symbol)
+      p.cls === 'buy' && !p._watchOnly && !(p.kapRisk && isKapRiskGuardEnabled())
+      && !existingSymbols.has(p.symbol)
     );
     console.log('[PaperTrade] Buy-eligible picks (cls=buy, not held):', eligible.length, eligible.map(p => p.symbol));
 

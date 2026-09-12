@@ -9,6 +9,8 @@ import { gradeFromConfidence, tierFromConfidence } from '../utils/confidenceGrad
 import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { isKapAvailable, kapUnavailableNote } from '../utils/kapAvailability.js';
+import { fetchKapFeed, buildKapIndex, attachKapFields, isKapBuyBlocked, KAP_SCAN_DAYS } from '../utils/kapFeed.js';
+import { isForeignFlowScoringEnabled } from '../utils/dataLayerPolicy.js';
 import { createSourceHealth, formatSilentWarning } from '../utils/sourceHealth.js';
 import { isUnsafeForTomorrow, calcContinuationProbability } from '../utils/pumpGuard.js';
 
@@ -485,15 +487,19 @@ function calcTomorrowPotential(result) {
   if (result.hasRecentInsiderBuy) tpScore += 5; // Son 14 gunde herhangi bir insider buy
 
   // ── YABANCI AKIS ETKISI ──
-  // Yabanci yatirimci giris/cikis trendi yarinki potansiyeli etkiler
-  if (result.foreignFlowScore != null) {
-    tpScore += Math.round(result.foreignFlowScore * 1.2); // [-18, +18] arasi
-  } else if (result.foreignChangeWeek != null) {
-    const cw = result.foreignChangeWeek;
-    if (cw >= 1.5) tpScore += 10;
-    else if (cw >= 0.5) tpScore += 4;
-    else if (cw <= -1.5) tpScore -= 10;
-    else if (cw <= -0.5) tpScore -= 4;
+  // v31.38: veri geri geldi (Is Yatirim hisse tarama) ama bu agirliklar HIC
+  // olculmedi. Kullanici karari: goster + olc, sonra ac (dataLayerPolicy).
+  // Bayrak kapaliyken no-op — veri yalniz rozet ve olcum icin tasinir.
+  if (isForeignFlowScoringEnabled()) {
+    if (result.foreignFlowScore != null) {
+      tpScore += Math.round(result.foreignFlowScore * 1.2); // [-18, +18] arasi
+    } else if (result.foreignChangeWeek != null) {
+      const cw = result.foreignChangeWeek;
+      if (cw >= 1.5) tpScore += 10;
+      else if (cw >= 0.5) tpScore += 4;
+      else if (cw <= -1.5) tpScore -= 10;
+      else if (cw <= -0.5) tpScore -= 4;
+    }
   }
 
   // KAP sentiment da hesaba kat
@@ -1505,6 +1511,33 @@ export function useAIAdvisor(portfolio) {
         }
       }
 
+      // ── v31.38 KAP BILDIRIM AKISI (secimden ONCE) ────────────────────────────
+      // Tek istek tum hisselerin son 7 gunluk bildirimini getirir (kapFeed.js).
+      // Kullanici karari (dataLayerPolicy): KAP olaylari skora GIRMEZ — satirlara
+      // yazilir (rozet + sinyal kaydi + olcum). Tek istisna hissenin KENDISINE
+      // uygulanan islem tedbiri: o hisse AL listesinin hicbir yolundan gecmez.
+      // Secimden once calismak zorunda, yoksa tedbirli hisse bir slot kapar.
+      try {
+        phase('KAP bildirimleri');
+        const kapResult = await Promise.race([
+          fetchKapFeed({ days: KAP_SCAN_DAYS }),
+          new Promise(res => setTimeout(() => res(null), 9_000)),
+        ]);
+        if (kapResult?.ok) {
+          const kapIndex = buildKapIndex(kapResult.items);
+          const kapTagged = attachKapFields(results, kapIndex);
+          const kapBlocked = results.filter(r => isKapBuyBlocked(r)).length;
+          pushLog({ type: 'info', msg: `KAP: ${kapResult.items.length} bildirim, ${kapTagged} hissede güncel kayıt${kapBlocked ? ` · ${kapBlocked} hisse işlem tedbiri nedeniyle AL dışı` : ''}` });
+          _sourceHealth.record('kap-bildirim', kapResult.items.length);
+        } else {
+          const _kh = _sourceHealth.record('kap-bildirim', 0);
+          if (_kh.shouldWarn) pushLog({ type: 'warn', msg: formatSilentWarning('kap-bildirim', _kh.streak) });
+          if (kapResult?.reason === 'proxy_outdated') {
+            pushLog({ type: 'warn', msg: 'KAP: proxy yeni veri yolunu tanımıyor — proxy klasörünü yeniden deploy et.' });
+          }
+        }
+      } catch { /* KAP best-effort — secim KAP olmadan da devam eder */ }
+
       let buyPicks = results
         .filter(r => {
           // v24: atrPct 1.2 → 0.8 — blue-chip hisseler (THYAO, SISE, ASELS) 1.0-1.2 arasi
@@ -1515,6 +1548,8 @@ export function useAIAdvisor(portfolio) {
           // volRatio 0.8 altinda veya 3- type'da TUT kalir; score>=45 makul setup
           if (r.cls === 'sell') return false;
           if (r.cls !== 'buy' && (r.score || 0) < 45) return false;
+          // v31.38: hissenin kendisine islem tedbiri (VBTS, islem sirasi kapatma...) → AL degil.
+          if (isKapBuyBlocked(r)) return false;
 
           const volTL = r.avgVolumeTL || 0;
 
@@ -1593,13 +1628,15 @@ export function useAIAdvisor(portfolio) {
           if (isWeakRally && r.score < 55) return false;
 
           // ── YABANCI CIKIS GUARD ──
-          // Guclu yabanci cikisi + zayif teknik = yarinki risk cok yuksek
-          // Yabanci takas orani yuksek (>40%) ve haftalik cikis agir (-2%+)
-          // ise bu hissenin yarinki potansiyeli cok dusuk
-          if (r.foreignFlowScore != null && r.foreignFlowScore <= -8 && r.score < 60) return false;
-          // Orta seviye cikis + distribution = teyitli risk
-          if (r.foreignFlowScore != null && r.foreignFlowScore <= -5
-            && r.obvTrend === 'distribution' && r.score < 65) return false;
+          // v31.38: bu iki sert eleme HIC olculmedi ve veri geri geldigi icin artik
+          // gercekten tetiklenebilir. Kullanici karari (dataLayerPolicy): olcum
+          // birikene kadar KAPALI. (Bugun foreignFlowScore secimden SONRA yaziliyor,
+          // yani zaten uyuyorlar — bayrak, biri veriyi one tasirsa sessizce acilmasin diye.)
+          if (isForeignFlowScoringEnabled()) {
+            if (r.foreignFlowScore != null && r.foreignFlowScore <= -8 && r.score < 60) return false;
+            if (r.foreignFlowScore != null && r.foreignFlowScore <= -5
+              && r.obvTrend === 'distribution' && r.score < 65) return false;
+          }
 
           // ── TAVAN/EXHAUSTION GUARD (v19.1 — hard reject, allowance yok) ──
           if (isUnsafeForTomorrow(r)) return false;
@@ -1851,6 +1888,7 @@ export function useAIAdvisor(portfolio) {
             // v24: fallback da sell eleme, ama TUT kabul (score>=42)
             if (r.cls === 'sell') return false;
             if (r.cls !== 'buy' && (r.score || 0) < 42) return false;
+            if (isKapBuyBlocked(r)) return false; // v31.38: KAP islem tedbiri
             if ((r.atrPct || 0) < 0.8) return false;
             if (existingSyms.has(r.symbol)) return false;
             const volTL = r.avgVolumeTL || 0;
@@ -1941,6 +1979,7 @@ export function useAIAdvisor(portfolio) {
         const eligible = results
           .filter(r => {
             if (existingSyms2.has(r.symbol)) return false;
+            if (isKapBuyBlocked(r)) return false; // v31.38: KAP islem tedbiri
             if ((r.avgVolumeTL || 0) < MIN_DAILY_VOLUME_TL * 0.5) return false; // 1M TL min
             if ((r.atrPct || 0) < 0.8) return false;
             // STRICT: lastResort'ta tavan/exhausted hisselere allowance YOK
@@ -2771,23 +2810,39 @@ export function useAIAdvisor(portfolio) {
           }
         })(), enrichTimeout),
 
-        // [2] Foreign flow — derinlemesine analiz (skorlama: pure computeForeignFlowScore)
+        // [2] Foreign flow — v31.38: kaynak Is Yatirim hisse tarama (calisiyor).
+        // Kullanici karari (dataLayerPolicy): goster + olc, skora GIRME. Alanlar
+        // hem picks'e hem results'a yazilir (ensureBestOfDay ve paper havuzu da
+        // results'tan secebilir; olcum her kaydi gorsun). confidence yalniz
+        // politika acilirsa oynar.
         _withTimeout((async () => {
           const { fetchAllForeignRatios, computeForeignFlowScore } = await import('../utils/foreignFlowEngine.js');
           const foreignMap = await fetchAllForeignRatios();
-          for (const p of picks) {
-            const fr = foreignMap[p.symbol];
-            if (!fr) continue;
-            p.foreignRatio = fr.ratio;
-            p.foreignChangeDay = fr.changeDay;
-            p.foreignChangeWeek = fr.changeWeek;
-            p.foreignChangeMonth = fr.changeMonth;
-
+          const scoring = isForeignFlowScoringEnabled();
+          const apply = (row, allowScore) => {
+            const fr = row && foreignMap[row.symbol];
+            if (!fr) return false;
+            row.foreignRatio = fr.ratio;
+            row.foreignChangeDay = fr.changeDay;
+            row.foreignChangeWeek = fr.changeWeek;
+            row.foreignChangeMonth = fr.changeMonth;
             const { score, label, confDelta } = computeForeignFlowScore(fr);
-            p.foreignFlowScore = score;
-            p.foreignFlowLabel = label;
-            p.confidence = Math.max(0, Math.min(100, (p.confidence || 50) + confDelta));
-            if (p.confidenceBreakdown) p.confidenceBreakdown.foreignFlow = confDelta;
+            row.foreignFlowScore = score;
+            row.foreignFlowLabel = label;
+            if (allowScore && scoring) {
+              row.confidence = Math.max(0, Math.min(100, (row.confidence || 50) + confDelta));
+              if (row.confidenceBreakdown) row.confidenceBreakdown.foreignFlow = confDelta;
+            }
+            return true;
+          };
+          let taggedPicks = 0;
+          for (const p of picks) if (apply(p, true)) taggedPicks++;
+          for (const r of (Array.isArray(results) ? results : [])) apply(r, false);
+          const foreignCount = Object.keys(foreignMap).length;
+          const _fh = _sourceHealth.record('yabanci-oran', foreignCount);
+          if (_fh.shouldWarn) pushLog({ type: 'warn', msg: formatSilentWarning('yabanci-oran', _fh.streak) });
+          if (foreignCount) {
+            pushLog({ type: 'info', msg: `Yabancı oranı: ${foreignCount} hisse (İş Yatırım) · ${taggedPicks} pick'e eklendi — skoru etkilemez, ölçülüyor` });
           }
         })(), enrichTimeout),
 
@@ -2887,6 +2942,17 @@ export function useAIAdvisor(portfolio) {
       // picks buy-odakli liste (setTopPicks → panel "AI FIRSATLAR"). BEAR'da
       // buy'lari cikar → panel DUSUS bos-state gosterir. NEUTRAL'da sadece
       // score>=75. Ayrica asagida finalPicks (dispatch) ayni kapiden gecer.
+      // ── v31.38 KAP ISLEM TEDBIRI — panel listesi ─────────────────────────────
+      // buyPicks filtresi tedbirli hisseyi zaten eliyor; fallbackBuys / lastResort
+      // yollari results'tan yeniden cekebilir. Panel/state listesine girmeden cikar.
+      {
+        const before = picks.length;
+        picks = picks.filter(p => p.cls === 'sell' || !isKapBuyBlocked(p));
+        if (before !== picks.length) {
+          pushLog({ type: 'warn', msg: `KAP işlem tedbiri: ${before - picks.length} AL adayı listeden çıkarıldı` });
+        }
+      }
+
       {
         const before = picks.length;
         picks = applyRegimeGate(picks, marketRegime);
@@ -2962,6 +3028,9 @@ export function useAIAdvisor(portfolio) {
               foreignRatio: p.foreignRatio, foreignChangeDay: p.foreignChangeDay,
               foreignChangeWeek: p.foreignChangeWeek, foreignChangeMonth: p.foreignChangeMonth,
               foreignFlowScore: p.foreignFlowScore, foreignFlowLabel: p.foreignFlowLabel,
+              // v31.38: KAP alanlari — rozet + acilista tohumlanan sinyal kaydi (olcum) icin
+              kapChecked: p.kapChecked, kapCount: p.kapCount, kapCategories: p.kapCategories,
+              kapCautions: p.kapCautions, kapHeadline: p.kapHeadline, kapRisk: p.kapRisk, kapRiskLabel: p.kapRiskLabel,
               convictionTier: p.convictionTier, convictionLabel: p.convictionLabel,
               _thematicBoost: p._thematicBoost, _thematicReasons: p._thematicReasons,
               _liveEdge: p._liveEdge,
@@ -3063,6 +3132,9 @@ export function useAIAdvisor(portfolio) {
       // Burasi finalPicks'in TUM kaynaklardan birlestigi tek nokta — dispatch oncesi.
       // Olcum: AL pick'leri SADECE YUKSELIS'te pozitif; YATAY -1.7%, DUSUS -3.4%.
       {
+        // v31.38: KAP islem tedbiri — tek cikis kapisi. finalPicks yedek dallardan
+        // (buyPicks+sellPicks, ham results) da dolabilir; tedbirli AL buradan gecmez.
+        finalPicks = finalPicks.filter(p => !p || p.cls === 'sell' || !isKapBuyBlocked(p));
         const before = finalPicks.length;
         finalPicks = applyRegimeGate(finalPicks, marketRegime);
         if (before !== finalPicks.length) {
@@ -3077,7 +3149,9 @@ export function useAIAdvisor(portfolio) {
       // adayi secer, ⭐ GUNUN EN IYISI (+ rejim disiysa ⚠) rozetiyle.
       {
         const beforeGuarantee = finalPicks.some(p => p && p.cls === 'buy');
-        finalPicks = ensureBestOfDay(finalPicks, results, marketRegime);
+        // v31.38: garanti havuzu da tedbirli hisseyi goremez — yoksa "gunun en iyisi" o olabilirdi.
+        const guaranteePool = (Array.isArray(results) ? results : []).filter(r => !isKapBuyBlocked(r));
+        finalPicks = ensureBestOfDay(finalPicks, guaranteePool, marketRegime);
         if (!beforeGuarantee && finalPicks.some(p => p._bestOfDay)) {
           const bod = finalPicks.find(p => p._bestOfDay);
           console.info(`[AI Advisor] GUNUN EN IYISI garantisi: ${bod?.symbol} (score ${bod?.score}, ${bod?._earlyPick ? 'erken birikim' : 'en yuksek skor'})`);

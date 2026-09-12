@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { getForeignFlowStatus, computeForeignFlowScore } from '../foreignFlowEngine.js';
+import { getForeignFlowStatus, computeForeignFlowScore, FOREIGN_SOURCES_VERSION } from '../foreignFlowEngine.js';
 
 describe('v29.4 computeForeignFlowScore (shared advisor/analyze scoring)', () => {
   it('strong weekly inflow → GUCLU GIRIS + positive confDelta', () => {
@@ -35,6 +35,11 @@ describe('v29.4 computeForeignFlowScore (shared advisor/analyze scoring)', () =>
     expect(lowRatioEntry.score).toBeGreaterThan(highRatioExit.score);
   });
 
+  it('a missing daily change (İş Yatırım has none) is neutral, not an error', () => {
+    const r = computeForeignFlowScore({ ratio: 23.68, changeDay: null, changeWeek: 3.06, changeMonth: 0.7 });
+    expect(r.label).toBe('GUCLU GIRIS');
+  });
+
   it('is defensive against null', () => {
     const r = computeForeignFlowScore(null);
     expect(r).toEqual({ score: 0, label: 'NOTR', confDelta: 0 });
@@ -58,15 +63,23 @@ describe('v29 Foreign Flow circuit breaker — getForeignFlowStatus', () => {
 
   it('reports no_source while the breaker is open', () => {
     const until = Date.now() + 1000 * 60 * 60; // 1h in the future
-    localStorage.setItem(BREAKER_KEY, JSON.stringify({ failures: 1, until }));
+    localStorage.setItem(BREAKER_KEY, JSON.stringify({ failures: 1, until, v: FOREIGN_SOURCES_VERSION }));
     const s = getForeignFlowStatus();
     expect(s.available).toBe(false);
     expect(s.reason).toBe('no_source');
     expect(s.retryAt).toBe(until);
   });
 
+  it('v31.38: ignores a breaker opened by the OLD source list', () => {
+    // A phone that scanned for weeks against the dead BigPara/IsYatirim pages
+    // carries an open 24h breaker. Without the version check the new working
+    // source would not even be tried until it expired.
+    localStorage.setItem(BREAKER_KEY, JSON.stringify({ failures: 5, until: Date.now() + 1000 * 60 * 60 * 20 }));
+    expect(getForeignFlowStatus().reason).toBe('unknown');
+  });
+
   it('reports unknown (retryable) once the breaker window has expired', () => {
-    localStorage.setItem(BREAKER_KEY, JSON.stringify({ failures: 3, until: Date.now() - 1000 }));
+    localStorage.setItem(BREAKER_KEY, JSON.stringify({ failures: 3, until: Date.now() - 1000, v: FOREIGN_SOURCES_VERSION }));
     const s = getForeignFlowStatus();
     expect(s.reason).toBe('unknown'); // expired → will retry on next fetch
   });
@@ -76,7 +89,7 @@ describe('v29 Foreign Flow circuit breaker — getForeignFlowStatus', () => {
       ts: Date.now(),
       data: { ratios: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`SYM${i}`, { ratio: 30 }])) },
     }));
-    localStorage.setItem(BREAKER_KEY, JSON.stringify({ failures: 1, until: Date.now() + 100000 }));
+    localStorage.setItem(BREAKER_KEY, JSON.stringify({ failures: 1, until: Date.now() + 100000, v: FOREIGN_SOURCES_VERSION }));
     const s = getForeignFlowStatus();
     expect(s.available).toBe(true);
     expect(s.reason).toBe('ok');
