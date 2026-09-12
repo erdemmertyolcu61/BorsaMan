@@ -1606,6 +1606,37 @@ yabancı para girişi, momentum gibi değerleri nasıl alıp kullanabiliriz — 
 - **Sınır**: İş taraması yalnız GÜNCEL değer veriyor → yabancı akış için geçmiş backtest mümkün değil;
   kanıt yalnız ileriye doğru birikir. Hiçbir bayrak ölçüm olmadan açılmamalı.
 
+## Deploy Onarımı — Proxy ve PWA İkisi de Düşüyordu (v31.39)
+
+Kullanıcı: "vercel deploy failed verdi". **İki ayrı** başarısız production deploy vardı; ikisi de ölçüldü.
+
+1. **Proxy** (`proxy` projesi): `vercel --prod --cwd proxy` kökten çalıştırıldı. CLI dosyaları proxy/'den
+   yükledi ama `vercel.json`'u KÖKTEN aldı (`vercel inspect` rotalarında kökün SPA rewrite'ı vardı) →
+   `npm run build` → "Missing script: build". Çözüm: kökte `npm run deploy:proxy` (bkz. Proxy Server).
+   **Deploy edildi, canlı doğrulandı**: isy_foreign 603 hisse, kap_disclosures 673 bildirim, THYAO 60 gün
+   11, yahoo OK, EVDS anahtar başlığı istiyor, `/` artık kaynak kodu servis etmiyor.
+2. **PWA** (`bist-terminal-project`, git push ile tetiklenen build): v31.38 `Could not resolve
+   "../data/kapMemberOids.json"` ile düştü → telefon 3 günlük v31.37'de kaldı. Dosya commit'teydi. Sebep:
+   kök `.vercelignore`'daki çıplak `data` satırı gitignore semantiğinde HER derinlikteki `data/`'yı eşler
+   → `src/data/` build'den siliniyordu. Git deploy'ları da `.vercelignore`'a uyuyor.
+
+**Aynı satırın iki aylık sessiz yan etkisi (ölçüldü):** `mlRules.json` da `src/data/`'da. Eski `prebuild`,
+dosya yoksa sessizce `{rules: []}` yazıyordu → build yeşil kaldı. Yayındaki `assets/mlRules-*.js` chunk'ında
+"empty fallback" metni vardı, 120 kuralın izi yoktu. Yani **v29 "web/mobil ML paritesi" 2026-07-11'den beri
+production'da hiç çalışmadı**; telefondaki ML boost'u ve ML motoru bu kurallardan beslenemiyordu. Bu
+düzeltmeyle 120 kural PWA'ya ilk kez gidiyor → mobildeki ML eşleşmeleri ve ML paper işlemleri **değişebilir**.
+Tasarlanan davranış bu: masaüstüyle aynı kurallar + v29 rejim kapısı.
+
+- **Kök `.vercelignore`**: üst düzey klasörler `/` ile çapalandı (+ `/release`, `/dist`). Çapalama, `data`'nın
+  tesadüfen sakladığı bir dosyayı açığa çıkarırdı: gitignore'lu `src/data/realPortfolio.local.json`. CLI
+  `.gitignore`'u okumaz ve Vite (`import.meta.glob`) dosyayı herkese açık pakete gömerdi. Bu yüzden açıkça
+  hariç tutuldu (+ `*.local.json`, `.env*`). Simülasyon (`ignore` paketi, CLI ile aynı semantik): git
+  görünümünde yalnız 3 kayıtlı `src/data` dosyası geri geliyor; CLI görünümünde gerçek portföy ve
+  `proxy/.env` hariç.
+- **`scripts/ensure-ml-rules.mjs`** (prebuild): Vercel/CI'da dosya yoksa **build düşer**; yalnız yerelde boş
+  yedek yazar ve bunu söyler. Build'i yeşil tutan yedek, `catch {}`'in build-zamanı versiyonuydu.
+- **Ders**: web'e giden bir değişikliği depoda değil, **yayındaki pakette** doğrula.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

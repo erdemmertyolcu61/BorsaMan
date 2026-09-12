@@ -1,17 +1,36 @@
 node_modules
 .git
-android
-ios
-electron
-data
-_recovery
-.kombai
-.claude
-coverage
-graphify-out
-dist-test
-dist-final-verify
-borsa_bot_backtest
+
+# Ust duzey klasorler. Bastaki '/' SART (v31.39): yalniz `data` yazmak HER
+# derinlikteki data/ klasorunu eslestiriyordu → src/data/ build'den siliniyordu.
+# Sonuc: v31.38 build'i "Could not resolve ../data/kapMemberOids.json" ile dustu,
+# 2026-07'den beri de PWA prebuild'in yazdigi BOS mlRules.json ile yayinlandi.
+# Git deploy'lari da bu dosyaya uyuyor (dosya depodaydi, build'de yoktu).
+/android
+/ios
+/electron
+/data
+/_recovery
+/.kombai
+/.claude
+/.codex
+/coverage
+/graphify-out
+/dist-test
+/dist-final-verify
+/borsa_bot_backtest
+/.replay-cache
+/release
+/dist
+
+# Kisisel / yerel dosyalar. Vercel CLI .gitignore'u OKUMAZ: burada listelenmezse
+# kokten `vercel` deploy'u bunlari yukler ve Vite (import.meta.glob) GERCEK
+# portfoyu herkese acik PWA paketine gomer. Git deploy'lari zaten icermez.
+src/data/realPortfolio.local.json
+*.local.json
+.env
+.env.*
+
 *.db
 *.sqlite
 *.exe
