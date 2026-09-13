@@ -259,9 +259,12 @@ ${kapEvidencePromptNote()}
 HABER[kategori]=borsa haberleri sentiment'i. Kategoriler:
   fund_inflow=yabanci/kurumsal alim, fundamental_rank=cari oran/F-K/karlilik siralamasi,
   buyback=geri alim, insider_buy=iceriden alim, dividend=temettu, upgrade=tavsiye yukselt,
-  downgrade=tavsiye dusur, contract=sozlesme/ihale, risk=dava/sorusturma/ceza.
+  downgrade=tavsiye dusur, contract=sozlesme/ihale/siparis, catalyst_event=olay (transfer, ortaklik, satin alma),
+  risk=dava/sorusturma/ceza.
 Kategoriler kurulum kalitesini tartmada AGIR rol oynamali — fund_inflow + fundamental_rank
 birlesince A notu icin onemli teyittir; risk kategorisi C notuna dusurur.
+contract ve catalyst_event bilgi amaclidir, TEYIT SAYILMAZ: HABER skoru pozitif gorunse de KAP olcumunde
+yeni is anlasmasi ve birlesme/edinim alinabildigi anda fiyatlanmis cikti; sistem bunlara guven artisi vermez.
 
 Her hisseyi A/B/C notuyla derecelendir:
 - A = guclu kurulum (skor>=70, net R/R>=2, teknik+temel uyumlu, hacim destekli)

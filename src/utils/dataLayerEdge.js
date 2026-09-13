@@ -8,6 +8,10 @@
 //
 // Skor bu olcume henuz BAGLI DEGIL. Bir kova guvenilir hale gelip anlamli bir
 // fark gosterdiginde dataLayerPolicy'deki bayrak acilir — tahminle degil.
+//
+// v31.41: pay geri alimi 24 aylik olay calismasiyla acildi (+3 guven). Olcum
+// DURMAZ: `kapEvents` geri alim ve yeni is tasiyan AL'lari ayri izler — acilan
+// kararin ve kapali kalan kararin canli sonucu. Bu iki kova ortusebilir.
 
 import { realizedReturn, perfCheckpoint } from './signalPerfHistory.js';
 import { learningReturn } from './planSimulation.js';
@@ -15,6 +19,9 @@ import { MIN_SAMPLE } from './liveEdge.js';
 
 /** Haftalik yabanci orani degisimi bu esigin disindaysa giris/cikis sayilir (puan). */
 export const FOREIGN_FLOW_BAND_PP = 0.3;
+
+/** Tek tek izlenen KAP olay turleri (v31.41). */
+export const KAP_TRACKED_EVENTS = Object.freeze(['buyback', 'new_business']);
 
 const FOREIGN_BUCKETS = ['inflow', 'flat', 'outflow'];
 const KAP_BUCKETS = ['event', 'other', 'none', 'risk'];
@@ -64,11 +71,13 @@ function finalize(cell, minSample) {
  * @param {object[]} signals useSignalTracker kayitlari
  * @returns {{ settled: number, withForeign: number, withKap: number, minSample: number,
  *   foreign: Object<string, {n, winRate, avgReturn, reliable}>,
- *   kap: Object<string, {n, winRate, avgReturn, reliable}> }}
+ *   kap: Object<string, {n, winRate, avgReturn, reliable}>,
+ *   kapEvents: Object<string, {n, winRate, avgReturn, reliable}> }}
  */
 export function computeDataLayerEdge(signals, { minSample = MIN_SAMPLE } = {}) {
   const foreign = Object.fromEntries(FOREIGN_BUCKETS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
   const kap = Object.fromEntries(KAP_BUCKETS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
+  const kapEvents = Object.fromEntries(KAP_TRACKED_EVENTS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
   const add = (cell, ret) => { cell.n++; cell.sum += ret; if (ret > 0) cell.wins++; };
   let settled = 0;
   let withForeign = 0;
@@ -82,12 +91,20 @@ export function computeDataLayerEdge(signals, { minSample = MIN_SAMPLE } = {}) {
     const fb = foreignBucket(s);
     if (fb !== 'unknown') { withForeign++; add(foreign[fb], ret); }
     const kb = kapBucket(s);
-    if (kb !== 'unknown') { withKap++; add(kap[kb], ret); }
+    if (kb !== 'unknown') {
+      withKap++;
+      add(kap[kb], ret);
+      // 'event' kovasi kapCategories'in dolu bir dizi ve hissenin tedbirsiz oldugunu garanti eder.
+      if (kb === 'event') {
+        for (const t of KAP_TRACKED_EVENTS) if (s.kapCategories.includes(t)) add(kapEvents[t], ret);
+      }
+    }
   }
 
   return {
     settled, withForeign, withKap, minSample,
     foreign: Object.fromEntries(FOREIGN_BUCKETS.map((k) => [k, finalize(foreign[k], minSample)])),
     kap: Object.fromEntries(KAP_BUCKETS.map((k) => [k, finalize(kap[k], minSample)])),
+    kapEvents: Object.fromEntries(KAP_TRACKED_EVENTS.map((k) => [k, finalize(kapEvents[k], minSample)])),
   };
 }

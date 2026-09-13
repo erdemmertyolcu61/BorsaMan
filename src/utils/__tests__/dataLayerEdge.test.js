@@ -60,6 +60,20 @@ describe('dataLayerEdge — computeDataLayerEdge', () => {
     expect(edge.kap.none.n).toBe(1);
   });
 
+  it('tracks buyback and new-business signals in their own, overlapping buckets (v31.41)', () => {
+    const edge = computeDataLayerEdge([
+      sig({ planReturn: 3, kapChecked: true, kapCount: 2, kapCategories: ['buyback'] }),
+      sig({ planReturn: -1, kapChecked: true, kapCount: 2, kapCategories: ['buyback', 'new_business'] }),
+      sig({ planReturn: 2, kapChecked: true, kapCount: 1, kapCategories: ['dividend'] }),
+      // a trading measure outranks the event: counted as risk, not as a buyback
+      sig({ planReturn: 5, kapChecked: true, kapCount: 1, kapRisk: 'trading_measure', kapCategories: ['buyback'] }),
+    ], { minSample: 2 });
+    expect(edge.kapEvents.buyback).toEqual({ n: 2, winRate: 50, avgReturn: 1, reliable: true });
+    expect(edge.kapEvents.new_business).toEqual({ n: 1, winRate: 0, avgReturn: -1, reliable: false });
+    expect(edge.kap.event.n).toBe(3);
+    expect(edge.kap.risk.n).toBe(1);
+  });
+
   it('is defensive', () => {
     expect(computeDataLayerEdge(null).settled).toBe(0);
   });

@@ -145,6 +145,8 @@ export default function App() {
       kapCategories: Array.isArray(pick.kapCategories) ? pick.kapCategories : [],
       kapCautions: Array.isArray(pick.kapCautions) ? pick.kapCautions : [],
       kapRisk: pick.kapRisk || null,
+      // v31.41: KAP geri alim guven artisi uygulandi mi (0 = hayir) — olcum ayirabilsin.
+      kapBuybackBoost: pick._kapBuybackBoost || 0,
       // v31.40: seans disinda kaydedilen sinyal bir sonraki seansin acilisinda dolar.
       marketOpen: isMarketOpen(),
       sessionDay: pick._sessionDay || null,

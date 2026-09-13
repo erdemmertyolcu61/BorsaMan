@@ -417,6 +417,11 @@ export default function MarketPulsePanel({ signals = [], watchlist = [], onAnaly
           title="KAP (son 7 gün)"
           rows={[['Şirket olayı var', edge.kap.event], ['Diğer bildirim', edge.kap.other], ['Bildirim yok', edge.kap.none], ['İşlem tedbiri', edge.kap.risk]]}
         />
+        {/* v31.41: geri alım artışı açıldı, yeni iş kapalı kaldı — ikisi de ölçülmeye devam ediyor */}
+        <EdgeTable
+          title="KAP olay türü (örtüşebilir)"
+          rows={[['Pay geri alımı', edge.kapEvents.buyback], ['Yeni iş anlaşması', edge.kapEvents.new_business]]}
+        />
       </Section>
     </div>
   );

@@ -5,6 +5,8 @@ import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp 
 import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices, fetchBigParaQuote } from '../../utils/fetchEngine.js';
 import { getForeignFlowStatus } from '../../utils/foreignFlowEngine.js';
 import { KAP_TYPE_LABELS, kapEvidenceNote } from '../../utils/kapFeed.js';
+import { NEWS_CATEGORY_LABELS } from '../../utils/marketNewsEngine.js';
+import { NEWS_UNSCORED_CATEGORIES } from '../../utils/newsConfidence.js';
 import { deriveDisplayPicks } from '../../utils/displayPicks.js';
 
 function DataFreshnessBadge() {
@@ -939,6 +941,15 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
             tooltipLines.push(`  • Giriş kalitesi: ${breakdown.entry}`);
             tooltipLines.push(`  • Likidite: ${breakdown.liquidity}`);
             if (breakdown.foreignFlow) tooltipLines.push(`  • Yabancı akış: ${breakdown.foreignFlow > 0 ? '+' : ''}${breakdown.foreignFlow}`);
+            if (breakdown.kapBuyback) tooltipLines.push(`  • KAP geri alım: +${breakdown.kapBuyback}`);
+          }
+          // v31.41: haber kartta görünür kalsın; sözleşme / olay haberi güvene artı vermez.
+          if (p.newsCount > 0 && Array.isArray(p.newsCategories)) {
+            const newsCats = p.newsCategories.slice(0, 3).map(c => NEWS_CATEGORY_LABELS[c] || c).join(', ');
+            tooltipLines.push(`📰 Haber (${p.newsCount})${newsCats ? ` [${newsCats}]` : ''}${p.newsHeadline ? `: ${String(p.newsHeadline).slice(0, 60)}` : ''}`);
+            if (p.newsCategories.some(c => NEWS_UNSCORED_CATEGORIES.includes(c))) {
+              tooltipLines.push('  Sözleşme / olay haberi güveni artırmaz (KAP ölçümü: alınabildiğinde fiyatlanmış)');
+            }
           }
           // Yabancı yatırımcı detayı
           if (p.foreignRatio != null) {
@@ -1323,7 +1334,12 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                       p.kapHeadline ? `Son bildirim: ${p.kapHeadline}` : '',
                       // v31.40: olculmus tarihsel etki (24 aylik KAP olay calismasi)
                       ...p.kapCategories.map(c => kapEvidenceNote(c)).filter(Boolean),
-                      'Skoru etkilemez — ölçülüyor',
+                      // v31.41: geri alım tek istisna — AL adayına sınırlı güven artışı
+                      p._kapBuybackBoost > 0
+                        ? `Geri alım: güven +${p._kapBuybackBoost} (ölçülmüş olay) · diğer KAP olayları skoru etkilemez`
+                        : p._newsBuybackCredited && p.kapCategories.includes('buyback')
+                          ? 'Geri alım haberde de geçiyor — artısı haberden verildi, iki kez sayılmaz'
+                          : 'Skoru etkilemez — ölçülüyor',
                     ].filter(Boolean).join('\n')}>
                       📢 {KAP_TYPE_LABELS[p.kapCategories[0]] || 'KAP'}{p.kapCategories.length > 1 ? ` +${p.kapCategories.length - 1}` : ''}
                     </span>

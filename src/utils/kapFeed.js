@@ -25,7 +25,7 @@
 // yalniz hissenin KENDISINE uygulanan islem tedbirleri icindir.
 
 import { PROXY_BASE_URL } from './fetchEngine.js';
-import { isKapRiskGuardEnabled } from './dataLayerPolicy.js';
+import { isKapRiskGuardEnabled, isKapBuybackBoostEnabled } from './dataLayerPolicy.js';
 
 export const KAP_DISCLOSURE_URL = 'https://www.kap.org.tr/tr/Bildirim/';
 /** Tarama bu kadar gunluk akisi ceker (Pazartesi Cuma'yi da kapsasin). */
@@ -177,7 +177,8 @@ export const KAP_EVENT_TYPES = Object.freeze([
 
 // v31.40: 24 AYLIK OLAY CALISMASI (scripts/kap-event-study.mjs — 2024-09 → 2026-08, likit
 // hisseler, giris = bildirimden SONRAKI ilk seansin AOF'u, maliyet %0,3, kiyas = ayni gun
-// ayni kuralla tum likit hisseler). SKORA GIRMEZ (dataLayerPolicy); rozet ipucuna ve
+// ayni kuralla tum likit hisseler). SKORA GIRMEZ (dataLayerPolicy) — tek istisna pay geri
+// alimi (v31.41, kapBuybackBoost asagida); rozet ipucuna ve
 // Claude'un gunluk not istemine "bu tur olay tarihsel olarak ne yapti" bilgisini verir.
 // En onemli bulgu: "yeni is anlasmasi" haberi sistemin alabildigi anda cogunlukla
 // fiyatlanmis ve SONRASINDA piyasanin gerisinde kaliyor. Yeniden olcmek icin betigi calistir.
@@ -203,6 +204,29 @@ export const KAP_EVENT_EVIDENCE = Object.freeze({
 /** Olay turu icin olculmus tarihsel etki notu (yoksa bos). */
 export function kapEvidenceNote(type) {
   return KAP_EVENT_EVIDENCE[type]?.note || '';
+}
+
+// v31.41 KULLANICI KARARI (2026-09-13): olculmus TEK olumlu KAP olayi — pay geri alimi —
+// AL adayina sinirli guven artisi verir. Yeni is / bedelsiz / bedelli / birlesme skora
+// girmez (yukaridaki kanit: fiyatlanmis ya da negatif). Kapatmak: dataLayerPolicy.
+export const KAP_BUYBACK_CONFIDENCE_BOOST = 3;
+
+/**
+ * Son KAP_SCAN_DAYS gunde geri alim bildirimi olan AL adayinin guven artisi.
+ * Sell, islem tedbirli ve verisi oturumdan geride kalan hisse artis almaz. Ayni geri
+ * alim haberde de gectiyse haber deltasi onu +5 ile zaten saymistir
+ * (`_newsBuybackCredited`, newsConfidence.js) → ikinci kez eklenmez.
+ * @returns {{ delta: number, reason: 'applied'|'disabled'|'not_buy'|'blocked'|'no_buyback'|'news_credited' }}
+ */
+export function kapBuybackBoost(row, { enabled = isKapBuybackBoostEnabled() } = {}) {
+  if (!enabled) return { delta: 0, reason: 'disabled' };
+  if (!row || row.cls === 'sell') return { delta: 0, reason: 'not_buy' };
+  if (row.kapRisk || row._staleSession === true) return { delta: 0, reason: 'blocked' };
+  if (!Array.isArray(row.kapCategories) || !row.kapCategories.includes('buyback')) {
+    return { delta: 0, reason: 'no_buyback' };
+  }
+  if (row._newsBuybackCredited === true) return { delta: 0, reason: 'news_credited' };
+  return { delta: KAP_BUYBACK_CONFIDENCE_BOOST, reason: 'applied' };
 }
 
 /**

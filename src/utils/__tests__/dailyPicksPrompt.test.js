@@ -25,4 +25,10 @@ describe('buildDailyPicksPrompt — KAP reaches Claude with the measured evidenc
     expect(txt).toMatch(/- ASTOR \[[A-D]\] AL skor=72\.0 .*RSI=55\n/);
     expect(txt).not.toMatch(/ASTOR.*KAP\[/);
   });
+
+  it('shows deal news but tells Claude it is not a confirmation (v31.41)', () => {
+    const txt = buildDailyPicksPrompt([{ ...base, newsCount: 1, newsScore: 6.6, newsCategories: ['contract'], newsHeadline: 'Yeni siparis' }]);
+    expect(txt).toContain('HABER[contract]=+6.6(1) "Yeni siparis"');
+    expect(txt).toContain('contract ve catalyst_event bilgi amaclidir, TEYIT SAYILMAZ');
+  });
 });

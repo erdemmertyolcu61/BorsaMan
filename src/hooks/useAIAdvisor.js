@@ -7,9 +7,13 @@ import { getStockList, SECTORS } from '../utils/constants.js';
 import { calcSectorMetrics, rankSectors, normalizeSectorTilt } from '../utils/sectorEngine.js';
 import { gradeFromConfidence, tierFromConfidence } from '../utils/confidenceGrade.js';
 import { fetchMarketNews, indexBySymbol } from '../utils/marketNewsEngine.js';
+import { newsConfidenceDelta } from '../utils/newsConfidence.js';
 import { fetchInsiderBatch } from '../utils/insiderEngine.js';
 import { isKapAvailable, kapUnavailableNote } from '../utils/kapAvailability.js';
-import { fetchKapFeed, buildKapIndex, attachKapFields, isKapBuyBlocked, KAP_SCAN_DAYS } from '../utils/kapFeed.js';
+import {
+  fetchKapFeed, buildKapIndex, attachKapFields, isKapBuyBlocked, KAP_SCAN_DAYS,
+  kapBuybackBoost, KAP_BUYBACK_CONFIDENCE_BOOST,
+} from '../utils/kapFeed.js';
 import { isForeignFlowScoringEnabled } from '../utils/dataLayerPolicy.js';
 import { createSourceHealth, formatSilentWarning } from '../utils/sourceHealth.js';
 import { isUnsafeForTomorrow, calcContinuationProbability } from '../utils/pumpGuard.js';
@@ -1614,6 +1618,7 @@ export function useAIAdvisor(portfolio) {
       // yazilir (rozet + sinyal kaydi + olcum). Tek istisna hissenin KENDISINE
       // uygulanan islem tedbiri: o hisse AL listesinin hicbir yolundan gecmez.
       // Secimden once calismak zorunda, yoksa tedbirli hisse bir slot kapar.
+      // v31.41: pay geri alimi ayrica sinirli +3 guven alir (asagida, haber gecisinden sonra).
       try {
         phase('KAP bildirimleri');
         const kapResult = await Promise.race([
@@ -2666,7 +2671,6 @@ export function useAIAdvisor(portfolio) {
           ]).catch(() => null);
           if (preNews) {
             newsIndex = indexBySymbol(preNews);
-            const CATALYST = ['insider_buy', 'buyback', 'fund_inflow', 'contract', 'catalyst_event'];
             // (a) TÜM taranan hisselere haber alanlarını enjekte et — `picks` map ile
             // YENİ nesneler ürettiği için results'a yazmak picks'e yansımaz; ikisi de
             // ayrı dolduruluyor. Böylece UI/dispatch her hissenin haberini görebilir.
@@ -2697,13 +2701,13 @@ export function useAIAdvisor(portfolio) {
               r.newsHeadline = e.topItem?.title || '';
               r.newsHighImpact = e.highImpact;
               // Confidence haber DELTASI — enhancePick newsScore=0 bazini almisti, ustune ekle.
-              let d = (e.score || 0) * 1.5;
-              const cats = e.categories || [];
-              if (cats.some(c => CATALYST.includes(c))) d += 5;   // guclu kataliz
-              if (cats.includes('upgrade')) d += 3;
-              if (cats.includes('risk')) d -= 8;                  // dava/sorusturma/ceza
-              d = Math.max(-15, Math.min(15, d));
-              if (r.cls === 'sell') d = -d;                       // sell icin ters yon
+              // v31.41: delta newsConfidence.js'te (saf, test edilmis). Kullanici karari:
+              // sozlesme/ihale (`contract`) ve olay (`catalyst_event`) haberi guvene ARTI
+              // VERMEZ — ne +5 bonus ne haber skorundaki payi (yalniz +5'i silmek ~+10
+              // birakirdi). Haber alanlari yukarida pick'e yazildi (Claude istemi, kart ipucu).
+              const { delta: d, catalystCategories } = newsConfidenceDelta(e, { cls: r.cls });
+              // Ayni geri alim KAP'ta da varsa asagidaki KAP artisi onu ikinci kez saymasin.
+              r._newsBuybackCredited = catalystCategories.includes('buyback');
               r._newsSelectionBoost = Math.round(d);
               r.confidence = Math.max(0, Math.min(100, (r.confidence || 50) + d));
               if (r.confidenceBreakdown) {
@@ -2716,6 +2720,29 @@ export function useAIAdvisor(portfolio) {
           }
         }
       } catch { /* haber best-effort — secim haber olmadan da devam eder */ }
+
+      // ── v31.41 KAP PAY GERI ALIMI → SINIRLI GUVEN ARTISI ─────────────────────
+      // Kullanici karari (2026-09-13): olculmus tek olumlu KAP olayi (24 ay, n=1063:
+      // 10 seansta piyasanin %1,16 ustunde, iki donemde de pozitif). Son 7 gunde geri
+      // alim bildirimi olan AL adayina +3; sell / tedbirli / haberde zaten sayilmis olana
+      // yok (kapFeed.kapBuybackBoost). Haber cekimi dusse de uygulanir. Temel kalite
+      // kapisi ve siralamadan ONCE — secimi etkiler. Kapatmak: dataLayerPolicy.
+      {
+        let _kapBoosted = 0;
+        for (const r of picks) {
+          const { delta } = kapBuybackBoost(r);
+          if (!delta) continue;
+          r._kapBuybackBoost = delta;
+          r.confidence = Math.max(0, Math.min(100, (r.confidence || 50) + delta));
+          if (r.confidenceBreakdown) r.confidenceBreakdown.kapBuyback = delta;
+          r.grade = gradeFromConfidence(r.confidence);
+          r.tier = tierFromConfidence(r.confidence);
+          _kapBoosted++;
+        }
+        if (_kapBoosted) {
+          pushLog({ type: 'info', msg: `KAP geri alım: ${_kapBoosted} AL adayına güven +${KAP_BUYBACK_CONFIDENCE_BOOST} (ölçülmüş olay)` });
+        }
+      }
 
       // ── v31.10 TEMEL KALİTE KAPISI (pre-selection) ──────────────────────────
       // 25 yillik masa: cop bilancolu (asiri borc / agir likidite riski / agir
@@ -3128,6 +3155,10 @@ export function useAIAdvisor(portfolio) {
               // v31.38: KAP alanlari — rozet + acilista tohumlanan sinyal kaydi (olcum) icin
               kapChecked: p.kapChecked, kapCount: p.kapCount, kapCategories: p.kapCategories,
               kapCautions: p.kapCautions, kapHeadline: p.kapHeadline, kapRisk: p.kapRisk, kapRiskLabel: p.kapRiskLabel,
+              // v31.41: KAP geri alim artisi + haber alanlari — kart ipucu yeniden yuklemede de dogru olsun
+              _kapBuybackBoost: p._kapBuybackBoost, _newsBuybackCredited: p._newsBuybackCredited,
+              newsScore: p.newsScore, newsCount: p.newsCount, newsCategories: p.newsCategories,
+              newsHeadline: p.newsHeadline, _newsSelectionBoost: p._newsSelectionBoost,
               convictionTier: p.convictionTier, convictionLabel: p.convictionLabel,
               _thematicBoost: p._thematicBoost, _thematicReasons: p._thematicReasons,
               _liveEdge: p._liveEdge,

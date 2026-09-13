@@ -251,7 +251,10 @@ export function classifyNewsItem(item) {
   const recencyMul = daysAgo <= 1 ? 1.5 : daysAgo <= 3 ? 1.2 : daysAgo <= 7 ? 1.0 : 0.5;
   const finalSent = Math.max(-10, Math.min(10, sentiment * recencyMul));
   const impact = Math.abs(sentiment) >= 6 ? 'high' : Math.abs(sentiment) >= 3 ? 'medium' : 'low';
-  return { categories, sentiment: +finalSent.toFixed(2), impact, daysAgo: +daysAgo.toFixed(1) };
+  // v31.41: recencyMul is carried so symbolNewsScore can take a category's share out and
+  // rebuild the item with the SAME multiplier (re-deriving it from the rounded daysAgo
+  // would drift at the 1/3/7-day boundaries).
+  return { categories, sentiment: +finalSent.toFixed(2), impact, daysAgo: +daysAgo.toFixed(1), recencyMul };
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -316,6 +319,55 @@ export function indexBySymbol(enrichedNews) {
     e.topItem = e.items.sort((a, b) => Math.abs(b.sentiment) - Math.abs(a.sentiment))[0] || null;
   }
   return idx;
+}
+
+// ──────────────────────────────────────────────────────────────
+// symbolNewsScore — per-symbol score with some categories taken out (v31.41)
+// ──────────────────────────────────────────────────────────────
+// Each category is defined once in CATEGORY_RULES, so its weight is unambiguous.
+const CATEGORY_WEIGHTS = Object.freeze(Object.fromEntries(CATEGORY_RULES.map(r => [r.cat, r.weight])));
+
+/** Turkish display labels for news categories (tooltips). */
+export const NEWS_CATEGORY_LABELS = Object.freeze({
+  fund_inflow: 'Para girişi', fundamental_rank: 'Temel sıralama', buyback: 'Geri alım',
+  insider_buy: 'İçeriden alım', dividend: 'Temettü', upgrade: 'Tavsiye yükseldi',
+  downgrade: 'Tavsiye düştü', contract: 'Sözleşme / sipariş', risk: 'Risk',
+  earnings_miss: 'Kâr düşüşü', dilution: 'Sermaye artırımı', mgmt_change: 'Yönetim değişikliği',
+  sector_bear: 'Sektörel düşüş', sector_bull: 'Sektörel yükseliş', catalyst_event: 'Olay',
+});
+
+/**
+ * The symbol's aggregate news score with the given categories' contribution
+ * removed. Built exactly like indexBySymbol: per item clamp(sum of weights ×
+ * recency, ±10) × source weight, total clamped to ±10. Items that carry none of
+ * the excluded categories keep their stored sentiment, so excluding a category
+ * no item carries returns entry.score unchanged.
+ *
+ * Used so the confidence delta gives no plus for deal/event news while the
+ * pick keeps the full score for the Claude prompt.
+ */
+export function symbolNewsScore(entry, { exclude = [] } = {}) {
+  if (!entry) return 0;
+  const score = Number(entry.score) || 0;
+  if (!exclude.length) return score;
+  const items = Array.isArray(entry.items) ? entry.items : [];
+  if (!items.length) {
+    // Without items the categories can't be separated: keep a minus, drop a plus.
+    const cats = Array.isArray(entry.categories) ? entry.categories : [];
+    return cats.some(c => exclude.includes(c)) ? Math.min(0, score) : score;
+  }
+  let total = 0;
+  for (const item of items) {
+    const cats = (item.categories || []).map(c => (typeof c === 'string' ? c : c?.cat)).filter(Boolean);
+    let sent = Number(item.sentiment) || 0;
+    if (cats.some(c => exclude.includes(c))) {
+      const raw = cats.reduce((s, c) => s + (exclude.includes(c) ? 0 : (CATEGORY_WEIGHTS[c] || 0)), 0);
+      const mul = Number.isFinite(item.recencyMul) ? item.recencyMul : 1;
+      sent = +Math.max(-10, Math.min(10, raw * mul)).toFixed(2);
+    }
+    total += sent * (item.sourceWeight || 1);
+  }
+  return Math.max(-10, Math.min(10, +total.toFixed(2)));
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -1719,8 +1719,56 @@ ORZAX, QUICK…). İş tarama listesi (603) de tek başına evren olamaz (BRKO, 
   Üretim yolu ayrıca ölçüldü (623/623).
 - Olay çalışması günlük bar çözünürlüğünde; seansın ilk dakikasında alan biri farklı sonuç görebilir. Sinyal
   motorunu değil KAP olaylarını ölçer.
-- RSS haber katmanındaki `contract` / `catalyst_event` +5 güven artışı DEĞİŞTİRİLMEDİ. Ölçüm bu artışın zararlı
-  olabileceğini düşündürüyor; kaldırmak kullanıcı kararı.
+- RSS haber katmanındaki `contract` / `catalyst_event` +5 güven artışı bu sürümde DEĞİŞTİRİLMEDİ; kullanıcı kararıyla
+  v31.41'de kaldırıldı (aşağıda).
+
+## KAP Geri Alım Artışı + Anlaşma Haberine Artı Yok (v31.41)
+
+v31.40 ölçümünden sonra kullanıcıya iki karar soruldu (2026-09-13):
+- "Pay geri alımı KAP bildirimi AL skoruna eklensin mi?" → **Evet, küçük artı**.
+- "Haberlerdeki sözleşme / kataliz +5 güven artışı?" → **Kaldır**.
+
+### A — Geri alım: sınırlı +3 (`kapFeed.kapBuybackBoost`, 6 test)
+- Ölçülmüş TEK olumlu KAP olayı (24 ay, n=1.063: 10 seansta piyasanın %1,16 üstünde, iki yarıda da pozitif).
+- Son 7 günde geri alım bildirimi olan AL adayına güven **+3** (`confidenceBreakdown.kapBuyback`, kart ipucu, KAP
+  rozeti ipucu). Sell, işlem tedbirli ve günü geride kalan hisse almaz.
+- **Aynı olay iki kez sayılmaz**: geri alım haberde de geçiyorsa haber deltası onu zaten +5 ile saymıştır
+  (`_newsBuybackCredited`) → KAP artısı eklenmez; rozet ipucu bunu söyler.
+- Haber geçişinden sonra, temel kalite kapısı ve sıralamadan ÖNCE uygulanır (seçimi etkiler); haber çekimi düşse
+  de çalışır.
+- Bayrak `dataLayerPolicy.kapBuybackBoost` (dondurulmuş, testli). `kapCatalystScoring` (diğer KAP olayları) ve
+  `foreignFlowScoring` KAPALI kaldı.
+- Ölçüm sürüyor: sinyal kaydı `kapBuybackBoost` taşır; Piyasa › ÖLÇÜM'de yeni **KAP olay türü** tablosu
+  (`dataLayerEdge.kapEvents`: geri alım / yeni iş; örtüşebilen kovalar). Kova güvenilir olunca +3 yeniden
+  değerlendirilmeli.
+
+### B — Sözleşme / olay haberi güvene artı vermez (`newsConfidence.js`, 8 test)
+- Haber → güven deltası kancadan saf modüle taşındı (daha önce testsizdi).
+- **Bulgu**: artı İKİ yoldan geliyordu. Açık +5 bonusun yanında haber skorunun kendisi: `contract` ağırlığı +4 ×
+  yenilik 1,5 × kaynak ağırlığı 1,1 → skor +6,6 → delta ×1,5 ≈ **+10**. Yalnız +5'i silmek artının yarısından
+  fazlasını bırakırdı. `symbolNewsScore(entry, { exclude })` bu kategorilerin payını çıkarıp maddeyi AYNI yenilik
+  çarpanıyla yeniden kurar (`classifyNewsItem` artık `recencyMul` taşır).
+- Sonuç: yalnız sözleşme/olay haberi olan hissenin deltası **0** (önce ≈ +15). Aynı başlıkta/hissede başka kategori
+  (tavsiye yükseltme, geri alım) aynen sayılır; olumsuz haber (risk) aynen düşürür. `insider_buy` / `buyback` /
+  `fund_inflow` +5'i değişmedi (karar konusu değildi).
+- Haber görünür kalır: skor, kategori ve başlık pick'te durur; Claude istemi `HABER[contract]=+6.6` görmeye devam
+  eder, lejant "bilgi amaçlıdır, TEYİT SAYILMAZ" der. Kart ipucuna 📰 haber satırı eklendi.
+- **Düzeltme**: karar sorusunda "haber rozeti görünmeye devam eder" yazmıştım — panelde ayrı bir haber rozeti
+  YOKTU (haber yalnız güven kırılımında sayı olarak görünüyordu). Bilgi artık kart ipucunda; haber alanları
+  `bist_last_ai_picks`'e de yazılıyor (yeniden yüklemede kaybolmasın).
+- Seçim filtrelerindeki `contract` istisnaları (tavan / yorgunluk, yarın potansiyeli, top-10 potansiyeli) tarama
+  sırasında haber henüz gelmediği için zaten haber görmüyordu; dokunulmadı.
+
+### Doğrulama (dürüst)
+- Test **812 pass (61 dosya)**, 0 lint error (79 warning, ratchet 90), build temiz.
+- Gerçek veri (Node, gerçek modüller, 13.09.2026 Pazar): KAP 06–13.09 → 1.089 bildirim; 623'lük evrende **14 hissede
+  geri alım** (AL adayı olurlarsa +3), 10 hissede yeni iş (artı yok), 9 hisse işlem tedbirli (artı yok). RSS: 4 kaynak,
+  80 haber, 3 hisse eşleşti; bugün hisseye eşleşen sözleşme/olay haberi YOK → B bugün hiçbir hissenin puanını
+  oynatmıyor; davranış sınıflandırılmış gerçekçi haberlerle birim testte kilitli.
+- Önizleme (masaüstü): sentetik bir pick'in ipucunda `KAP geri alım: +3`, 📰 satırı ve "güveni artırmaz" notu; KAP
+  rozetinde "Geri alım: güven +3"; Piyasa Nabzı › ÖLÇÜM'de yeni tablo görünüyor. Sentetik kayıt sonra geri alındı.
+- Sınır: +3'ün dayanağı olay çalışmasıdır; advisor seçimleri üzerinde ileriye dönük etkisi henüz ölçülmedi —
+  `kapEvents.buyback` kovası bunu biriktirecek.
 
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
