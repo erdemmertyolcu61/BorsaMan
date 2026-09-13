@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getPaperTradeEngine } from '../utils/PaperTradeEngine.js';
-import { fetchBigParaBatchPrices } from '../utils/fetchEngine.js';
+import { fetchBigParaBatchPrices, isBistOpenNow } from '../utils/fetchEngine.js';
 
 const MONITOR_MS = 30_000; // 30s price check
 
@@ -107,7 +107,8 @@ export function usePaperTradeML() {
 
       console.log('[PaperTrade] Forwarding', picks.length, 'picks to engine.processScanResults()',
         picks.filter(p=>(p.mlMatchedCount||0)>0).map(p => `${p.symbol}(ML+${(p.mlConfidenceBoost||0).toFixed(1)})`));
-      engine.processScanResults(picks).catch(err => {
+      // v31.40: seans disindaki taramada emir bir sonraki seansin acilisini bekler.
+      engine.processScanResults(picks, { marketOpen: isBistOpenNow(), sessionDay: scanData.sessionDay || null }).catch(err => {
         console.warn('[PaperML] processScanResults error:', err?.message, err);
       });
     };
@@ -123,7 +124,7 @@ export function usePaperTradeML() {
       if (!engine) return;
 
       const state = engine.getState();
-      if (!state?.openTrades?.length) return;
+      if (!state?.openTrades?.length && !engine.hasPendingOrders()) return;
 
       try {
         const prices = await fetchBigParaBatchPrices();

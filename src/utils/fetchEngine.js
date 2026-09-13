@@ -20,6 +20,7 @@ export function setProxyBaseUrl(url) {
 }
 import { fetchKAPSummaryFinancials } from './kapEngine.js';
 import { logError } from './errorLogger.js';
+import { mergeLiveQuote, parseSessionDate } from './liveSession.js';
 
 const _isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
 
@@ -373,6 +374,9 @@ export async function fetchBigParaBatchPrices() {
             high: parseFloat(item.high || 0),
             low: parseFloat(item.low || 0),
             open: parseFloat(item.open || 0),
+            // v31.40: fiyatin ait oldugu OTURUM ("2026-09-11T18:09:47.000+03"). Hafta sonu
+            // ve acilistan once liste son oturumu gosterir; birlestirme buna bakar.
+            sessionDate: parseSessionDate(item.updateDate),
           };
         } else {
           // BigPara format (fallback if another proxy returned it)
@@ -864,7 +868,10 @@ if (!text) {
       volume: parseFloat(h.hacimlot),
       change: parseFloat(h.yuzdedegisim),
       prevClose: parseFloat(h.dunkukapanis),
-      date: parseTurkishDate(h.tarih)
+      date: parseTurkishDate(h.tarih),
+      // v31.40: tarih yoksa parseTurkishDate "simdi" doner; oturum zamani olarak
+      // kullanilamaz (hafta sonu yeni gun sanilir). Yalniz gercek tarih iletilir.
+      sessionDate: h.tarih ? parseTurkishDate(h.tarih) : null,
     };
     console.log(`[BigPara] ${code}: ${result.price} TL (${h.tarih})`);
     return result;
@@ -1553,7 +1560,77 @@ async function _doFetchSingle(symbol, range, interval, ck, ms, scanMode) {
 // Hedged daily/weekly fetch — IsYatirim head-start, Yahoo as backup hedge.
 // Pattern from Google's "Tail at Scale" — 95th percentile latency drops dramatically.
 // ══════════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+// v31.40 BIRLESIK GUNLUK BAR — proxy `source=bars`
+// Is Yatirim gunluk verisi ACILIS tasimaz; parseIsYatirim yerine AOF (gunun agirlikli
+// ortalamasi) koyar. Olculdu (122 hisse x 20 gun): gercek acilisa gore mum formasyonlari
+// gunlerin %47'sinde, skor %7,9'unda >=5 puan, sinyal sinifi %2,8'inde degisiyordu.
+// Yahoo gercek acilisi tasir ama gun kacirir (07.09.2026). Proxy ikisini birlestirir:
+// gunler/kapanis/hacim Is Yatirim'dan, acilis Yahoo'dan; Yahoo'nun olmadigi gun
+// `_openApprox` isaretli kalir. Tek istek — tarama yuku artmaz.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** Proxy bars cevabi → bar dizisi (saf). En az 10 bar yoksa null (eski yola dus). */
+export function parseBarsPayload(json) {
+  if (!json?.ok || !Array.isArray(json.rows) || !Array.isArray(json.fields)) return null;
+  const ix = (k) => json.fields.indexOf(k);
+  const iD = ix('d'), iO = ix('o'), iH = ix('h'), iL = ix('l'), iC = ix('c'), iV = ix('v'), iW = ix('vwap'), iF = ix('of');
+  if (iD < 0 || iC < 0) return null;
+  const out = [];
+  for (const row of json.rows) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(row?.[iD] || ''));
+    const close = Number(row?.[iC]);
+    if (!m || !(close > 0)) continue;
+    const high = Math.max(Number(row[iH]) || close, close);
+    const low = Math.min(Number(row[iL]) || close, close);
+    const openRaw = Number(row[iO]);
+    const bar = {
+      date: new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])),
+      open: openRaw > 0 ? Math.min(Math.max(openRaw, low), high) : close,
+      high,
+      low,
+      close,
+      volume: Number(row[iV]) || 0,
+    };
+    if (iW >= 0 && Number(row[iW]) > 0) bar.vwap = Number(row[iW]);
+    if (iF >= 0 && row[iF] === 'a') bar._openApprox = true;
+    out.push(bar);
+  }
+  return out.length >= 10 ? out : null;
+}
+
+// Eski proxy dagitimi `bars` kaynagini tanimaz (400 Invalid source) — oturum boyunca
+// bir daha denenmez, mevcut Is Yatirim / Yahoo yoluna dusulur.
+let _barsEndpointOutdated = false;
+
+async function fetchMergedBars(symbol, range, ms = 9000) {
+  if (_barsEndpointOutdated || !PROXY_BASE_URL) return null;
+  const url = `${PROXY_BASE_URL}/api/proxy?source=bars&symbol=${encodeURIComponent(symbol)}&days=${rangeToDays(range)}`;
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const tid = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
+  try {
+    const resp = await fetch(url, { headers: { Accept: 'application/json' }, signal: ctrl?.signal });
+    if (resp.status === 400) {
+      const t = await resp.text().catch(() => '');
+      if (/invalid source/i.test(t)) _barsEndpointOutdated = true;
+      return null;
+    }
+    if (!resp.ok) return null;
+    return parseBarsPayload(await resp.json());
+  } catch {
+    return null;
+  } finally {
+    if (tid) clearTimeout(tid);
+  }
+}
+
 async function _hedgedDailyFetch(symbol, range, interval, ms) {
+  // v31.40: once birlesik bar ucu (gercek acilis). Yerel gelistirmede proxy yok.
+  if (interval === '1d' && PROXY_BASE_URL && !isLocalDev()) {
+    const merged = await fetchMergedBars(symbol, range, Math.min(ms, 9000));
+    if (merged && merged.length > 0) return { p: merged, source: 'IsYatirim+Yahoo' };
+  }
+
   // PWA mode: both IsYatirim and Yahoo go through self-proxy (no CORS direct).
   // Run them sequentially (IsYatirim first) to avoid doubling proxy load.
   if (_isPWA) {
@@ -1629,7 +1706,9 @@ export async function applyLiveOverlay(r, symbol) {
         volume: bd.volume || 0,
         change: bd.change || 0,
         prevClose: bd.prevClose || 0,
-        date: new Date(),
+        // v31.40: fiyat kaydinin KENDI oturum zamani. Eskiden `new Date()` yaziliyordu:
+        // Pazartesi 08:00'de Cuma'nin fiyati "Pazartesi" sayilip yeni bar ekleniyordu.
+        sessionDate: bd.sessionDate || null,
       };
     }
     // Fallback: per-symbol fetch if batch cache miss or stale
@@ -1641,65 +1720,23 @@ export async function applyLiveOverlay(r, symbol) {
     const lastBar = r.prices[r.prices.length - 1];
     if (!lastBar || typeof lastBar.close !== 'number') return r;
 
-    const liveKey = istanbulDayKey(live.date);
-    const lastKey = istanbulDayKey(lastBar.date);
-    if (!liveKey || !lastKey) return r;
-
     const delta = Math.abs(live.price - lastBar.close) / lastBar.close * 100;
     r.divergencePct = delta;
 
-    if (liveKey === lastKey) {
-      // Same Istanbul day — merge live quote into last bar
-      lastBar.close = live.price;
-      if (live.high && live.high > lastBar.high) lastBar.high = live.high;
-      if (live.low && live.low < lastBar.low) lastBar.low = live.low;
-      if (live.open && live.open > 0) lastBar.open = live.open;
-      if (live.volume && live.volume > 0) lastBar.volume = live.volume;
+    // v31.40: OTURUM gunune gore birlestir (bkz. liveSession.js). Eskiden takvim gunu
+    // karsilastiriliyordu ve toplu fiyat kaydinin tarihi `new Date()` idi: hafta ici
+    // acilistan once ya da tatilde son oturum YENI gune ikinci kez ekleniyordu.
+    // Toplu kayit `sessionDate` (Is Yatirim updateDate), tek-sembol BigPara teklifi
+    // kendi `tarih`ini tasir. Tarih yoksa prevClose ile konumlanir, o da yetmezse
+    // hicbir sey eklenmez.
+    const merged = mergeLiveQuote(r.prices, live, { marketOpen: isBistOpenNow() });
+    if (merged.action === 'merge') {
       r.lastPriceSource = 'BigPara';
-    } else if (liveKey > lastKey) {
-      // Newer Istanbul day — append a fresh bar ONLY if we have real OHLC data.
-      // A raw quote with no open/high/low (H=L=C) creates a zero-range candle that
-      // distorts ATR, Bollinger Bands, and can generate false buy signals.
-      if (!isBistWeekend(live.date)) {
-        const marketOpen = isBistOpenNow();
-        const hasRealOpen = live.open > 0;
-        const hasRealHL = live.high > 0 && live.low > 0 && live.high > live.low;
-
-        // ── v23 FIX: Market kapaliyken bile gercek OHLC varsa append et ──
-        // Onceden: market kapali ise hicbir sey yapmiyordu → Yahoo/IsYatirim 1-2 gun
-        // gecikmeli olunca yeni gun mumu (orn. 14 Mayis) kayip kaliyordu.
-        // Yeni: gercek OHLC varsa append; market acik → forming, kapali → completed.
-        if (hasRealOpen && hasRealHL) {
-          const isForming = marketOpen; // Market acikken forming, kapaliyken tamamlanmis
-          const prevLast = r.prices[r.prices.length - 1];
-          const prevKey = prevLast ? istanbulDayKey(prevLast.date) : null;
-          if (prevLast?._isForming && prevKey === liveKey) {
-            // Ayni gunun forming bar'i zaten var → guncelle
-            prevLast.close = live.price;
-            if (live.high > prevLast.high) prevLast.high = live.high;
-            if (live.low < prevLast.low) prevLast.low = live.low;
-            if (live.volume > 0) prevLast.volume = live.volume;
-            // Market kapandi ise forming bayragini kaldir (tamamlanmis bar)
-            if (!isForming) delete prevLast._isForming;
-            r.lastPriceSource = isForming ? 'BigPara+Update' : 'BigPara+Finalize';
-          } else {
-            const [y, m, day] = liveKey.split('-').map(n => parseInt(n, 10));
-            const newBar = {
-              date: new Date(Date.UTC(y, m - 1, day)),
-              open: live.open,
-              high: live.high,
-              low: live.low,
-              close: live.price,
-              volume: live.volume || 0,
-            };
-            if (isForming) newBar._isForming = true; // Sadece market acikken forming
-            r.prices.push(newBar);
-            r.lastPriceSource = isForming ? 'BigPara+New' : 'BigPara+Completed';
-          }
-        }
-      }
+    } else if (merged.action === 'append') {
+      r.lastPriceSource = r.prices[r.prices.length - 1]._isForming ? 'BigPara+New' : 'BigPara+Completed';
     }
-    if (delta > 5 && liveKey >= lastKey) r.dataConfidence = 'low';
+    if (merged.action !== 'ignore') r.sessionDay = merged.sessionKey;
+    if (delta > 5 && merged.action !== 'ignore') r.dataConfidence = 'low';
   } catch (e) {
     logError('fetch', 'BigPara overlay failed', e, { severity: 'warn', silent: true });
   }

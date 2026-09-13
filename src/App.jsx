@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAppState } from './hooks/useAppState.js';
-import { useAIAdvisor } from './hooks/useAIAdvisor.js';
+import { useAIAdvisor, isMarketOpen } from './hooks/useAIAdvisor.js';
 import { useAlertLog } from './hooks/useAlertLog.js';
 import { useLivePrices } from './hooks/useLivePrices.js';
 import { useSignalTracker, setSignalNotificationHandler } from './hooks/useSignalTracker.js';
@@ -145,6 +145,9 @@ export default function App() {
       kapCategories: Array.isArray(pick.kapCategories) ? pick.kapCategories : [],
       kapCautions: Array.isArray(pick.kapCautions) ? pick.kapCautions : [],
       kapRisk: pick.kapRisk || null,
+      // v31.40: seans disinda kaydedilen sinyal bir sonraki seansin acilisinda dolar.
+      marketOpen: isMarketOpen(),
+      sessionDay: pick._sessionDay || null,
     });
     if (opts.notify && (pick.score >= 7.5 || pick.confidence >= 75)) {
       notifications.notifyAdvisorPick(pick);

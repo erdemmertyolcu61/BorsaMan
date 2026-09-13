@@ -21,6 +21,8 @@ import { applyEntryCost, applyExitCost, liquiditySlippagePct } from './tradingCo
 import { resolveExitPrice } from './exitFill.js';
 import { computeLiveEdge } from './liveEdge.js';
 import { isKapRiskGuardEnabled } from './dataLayerPolicy.js';
+import { decidePendingFill } from './sessionEntry.js';
+import { latestSessionDayKey } from './liveSession.js';
 
 const STORAGE_KEY = 'bist_paper_ml_engine_v1';
 const START_CAPITAL = 100_000;
@@ -37,6 +39,22 @@ const TIME_EXIT_DAYS = 3;         // rotate stagnant positions after 3 trading d
 const TIME_EXIT_MIN_GAIN_PCT = 1; // keep only if gross P&L >= +1% at day 3
 const MIN_ML_BOOST = 0;           // mlConfidenceBoost > 0 (any ML match)
 const MIN_ENTRY_TL = 3_000;       // minimum position size
+
+// v31.40: seans DISINDA gelen AL son kapanistan alinamaz; bir sonraki seansin gercek
+// acilisinda dolmak uzere bekler (bkz. sessionEntry.js). Bekleyen emirler Electron ve
+// web modunda ayni yerde (localStorage) tutulur.
+const PENDING_KEY = 'bist_paper_ml_pending_v1';
+const PENDING_PICK_FIELDS = ['symbol', 'stop', 'target', 't1', 'liquidity', '_positionSizeMult',
+  'mlConfidenceBoost', 'mlBestRule', 'mlMatchedCount', 'confidence', 'grade', 'tier', 'convictionTier',
+  'convictionLabel', 'score', 'rr', 'sector', 'firedSignals', 'atrPct', 'rsi', 'regime', '_regime', 'kapRisk'];
+
+function loadPending() {
+  try { const v = JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+function savePending(list) {
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify(list || [])); } catch {}
+}
 
 // ── Helpers ──
 
@@ -202,6 +220,7 @@ export class PaperTradeEngine {
       peakEquity: s.peakEquity,
       // ML specific
       mlBuckets: s.stats?.mlBuckets || [],
+      pendingOrders: loadPending(),
       // Live edge — win-rate/expectancy per convictionTier × regime, last 120 closes.
       // The paper-trade truth layer: what the advisor's picks ACTUALLY did.
       liveEdge: computeLiveEdge(closed, { limit: 120 }),
@@ -210,7 +229,7 @@ export class PaperTradeEngine {
 
   // ── Process Scan Results (TOP 3 ML picks) ──
 
-  async processScanResults(picks) {
+  async processScanResults(picks, opts = {}) {
     if (!this._initialized) {
       console.log('[PaperTrade] Engine not initialized — initializing now...');
       await this.init();
@@ -222,7 +241,8 @@ export class PaperTradeEngine {
     }
 
     const s = this._state;
-    const existingSymbols = new Set(s.openTrades.map(t => t.symbol));
+    const pending = loadPending();
+    const existingSymbols = new Set([...s.openTrades.map(t => t.symbol), ...pending.map(o => o.symbol)]);
     console.log('[PaperTrade] State: cash=', s.cash, '| openTrades=', s.openTrades.length, '| existingSymbols=', [...existingSymbols]);
 
     // All buy-eligible picks not already held. v31.13: skip _watchOnly picks —
@@ -260,13 +280,32 @@ export class PaperTradeEngine {
       fallbackPicks.map(p => ({ sym: p.symbol, score: p.score })));
 
     // ML picks first, then fallback — take TOP 3 within available slots
-    const slotsAvailable = MAX_POSITIONS - s.openTrades.length;
+    const slotsAvailable = MAX_POSITIONS - s.openTrades.length - pending.length;
     const queue = [...mlPicks, ...fallbackPicks];
     const toOpen = queue.slice(0, Math.min(3, slotsAvailable));
     console.log('[PaperTrade] Queue:', queue.map(p => p.symbol), '| slots=', slotsAvailable, '| willOpen=', toOpen.map(p => p.symbol));
 
     if (!toOpen.length) {
       console.warn('[PaperTrade] ABORT — no candidates after filtering or no slots (slotsAvailable=', slotsAvailable, ')');
+      return;
+    }
+
+    // v31.40: seans disinda (aksam gun-sonu taramasi, hafta sonu, acilis oncesi) son
+    // kapanistan ALINAMAZ — emir bir sonraki seansin acilisinda dolmak uzere bekler.
+    if (opts.marketOpen === false) {
+      const fallbackSession = opts.sessionDay || latestSessionDayKey(Date.now());
+      for (const pick of toOpen) {
+        const slim = {};
+        for (const k of PENDING_PICK_FIELDS) if (pick[k] !== undefined) slim[k] = pick[k];
+        pending.push({
+          id: `${pick.symbol}-${Date.now()}`, symbol: pick.symbol, createdAt: Date.now(),
+          afterSession: pick._sessionDay || fallbackSession, pick: slim,
+          refPrice: pick.currentPrice || pick.price || pick.entry || null,
+        });
+      }
+      savePending(pending);
+      this._emit();
+      console.log('[PaperTrade] Queued for the next session open:', toOpen.map(p => p.symbol));
       return;
     }
 
@@ -393,7 +432,8 @@ export class PaperTradeEngine {
       rr:           pick.rr || 0,
       sector:       pick.sector || '',
       firedSignals: pick.firedSignals || [],
-      openedAt:     Date.now(),
+      openedAt:     Number.isFinite(pick._openedAt) ? pick._openedAt : Date.now(),
+      fillBasis:    pick._fillBasis || 'live',
       entryAtrPct:  pick.atrPct || null,
       entryRsi:     pick.rsi || null,
       entryRegime:  typeof pick.regime === 'string' ? pick.regime : (pick.regime?.regime || pick._regime || null),
@@ -498,10 +538,41 @@ export class PaperTradeEngine {
     console.log(`[PaperML] Closed: ${trade.symbol} @ ${exitPrice} | ${reason} | PnL: ${pnlTl > 0 ? '+' : ''}${pnlTl.toFixed(0)} TL`);
   }
 
+  // ── v31.40: Bekleyen emirler (bir sonraki seansin acilisi) ──
+
+  hasPendingOrders() {
+    return loadPending().length > 0;
+  }
+
+  async _fillPendingOrders(priceMap) {
+    const pending = loadPending();
+    if (!pending.length) return;
+    const keep = [];
+    let changed = false;
+    for (const order of pending) {
+      const d = decidePendingFill(order, priceMap?.[order.symbol], Date.now());
+      if (d.action === 'wait') { keep.push(order); continue; }
+      changed = true;
+      if (d.action === 'fill') {
+        await this._openTrade({ ...order.pick, currentPrice: d.price, _openedAt: d.openedAt, _fillBasis: 'session_open' });
+        console.log(`[PaperTrade] Pending filled at the ${d.sessionKey} open:`, order.symbol, d.price);
+      } else {
+        console.warn('[PaperTrade] Pending order cancelled:', order.symbol, d.reason, d);
+      }
+    }
+    if (changed) {
+      savePending(keep);
+      this._persist();
+      this._emit();
+    }
+  }
+
   // ── Price Monitor (check stop/target) ──
 
   async checkPrices(priceMap) {
-    if (!this._initialized || !this._state?.openTrades?.length) return;
+    if (!this._initialized) return;
+    await this._fillPendingOrders(priceMap);
+    if (!this._state?.openTrades?.length) return;
 
     const s = this._state;
     let changed = false;
@@ -564,6 +635,7 @@ export class PaperTradeEngine {
   // ── Reset ──
 
   async reset() {
+    savePending([]);
     if (this._isElectron) {
       await this._api.reset();
     }

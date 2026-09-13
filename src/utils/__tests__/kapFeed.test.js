@@ -45,6 +45,48 @@ describe('kapFeed — dates and codes', () => {
   });
 });
 
+describe('kapFeed — deals written in general material-event filings (v31.40, 24 months measured)', () => {
+  const oda = (summary) => classifyKapItem({
+    company: 'ORNEK A.Ş.', klass: 'ODA', title: 'Özel Durum Açıklaması (Genel)', summary,
+  });
+
+  it('signed contracts, received orders and won tenders are new business', () => {
+    for (const s of [
+      'Yeni Siparişin Alınması Hk.',
+      'Savunma Sanayii Başkanlığı ile Zırhlı Otobüs Tedarik Sözleşmesi İmzalanması',
+      'Amazon Web Servisleri (AWS) Ürünlerine İlişkin İş Ortaklığı Çerçeve Sözleşmesi İmzalanması',
+      'Konya Ereğli Fabrikası Yeni İş İlişkisi Hakkında',
+      'Şirketimizin otel yapısı satış ihalesini kazanması',
+      'Turkcell Grup Şirketlerinden Alınan Sipariş hk.',
+    ]) {
+      expect(oda(s), s).toMatchObject({ kind: 'event', type: 'new_business' });
+    }
+  });
+
+  it('look-alikes found in the same 24 months are not deals', () => {
+    for (const s of [
+      'Kat Karşılığı Sözleşme Akdedilmesine İlişkin Görüşmelere Başlama Bildirimi Hak.',
+      'Esas Sözleşme Tadiline İlişkin Yönetim Kurulu Kararı Hk',
+      'Sendikasyon kredisi anlaşması imzalanması',
+      'İhale sonrası Devir ve Temlik İşlemlerinin tamamlanması hk.',
+      'Yeni Uçak Siparişi',
+      'Üretim Faaliyetlerinden Elde Edilen Kazançlara Uygulanan Kurumlar Vergisi Oranının Düşürülmesi',
+    ]) {
+      expect(oda(s).type, s).not.toBe('new_business');
+    }
+  });
+
+  it('a cancelled contract in the summary is a caution, not a deal', () => {
+    expect(oda('X ile imzalanan tedarik sözleşmesinin feshedilmesi hk.'))
+      .toMatchObject({ kind: 'caution', type: 'contract_cancel' });
+  });
+
+  it('the title rule still decides "Yeni İş İlişkisi" filings', () => {
+    expect(classifyKapItem({ klass: 'ODA', title: 'Yeni İş İlişkisi', summary: 'Sözleşme İmzalanması' }))
+      .toMatchObject({ kind: 'event', type: 'new_business' });
+  });
+});
+
 describe('kapFeed — classifyKapItem (rules measured on 14 days of real titles)', () => {
   it('flags a volatility-based trading measure on the stock as RISK', () => {
     const c = classifyKapItem({

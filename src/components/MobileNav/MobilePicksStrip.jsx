@@ -72,6 +72,16 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
                 <span className="m-advisor-count red">{sells} SAT</span>
               </>
             )}
+            {/* v31.40: tarama kapsami + verinin ait oldugu oturum gunu */}
+            {advisor.coverage?.total > 0 && (
+              <span
+                className="m-advisor-count"
+                title={`Kapsama ${advisor.coverage.scanned}/${advisor.coverage.total} · veri günü ${advisor.coverage.sessionDay || '?'}`}
+                style={{ color: advisor.coverage.scanned / advisor.coverage.total >= 0.98 ? 'var(--green)' : 'var(--yellow)' }}
+              >
+                ◎ {advisor.coverage.scanned}/{advisor.coverage.total}
+              </span>
+            )}
           </div>
         )}
 

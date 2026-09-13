@@ -4,7 +4,7 @@ import { isMarketOpen, isMarketClosedForDay } from '../../hooks/useAIAdvisor.js'
 import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
 import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices, fetchBigParaQuote } from '../../utils/fetchEngine.js';
 import { getForeignFlowStatus } from '../../utils/foreignFlowEngine.js';
-import { KAP_TYPE_LABELS } from '../../utils/kapFeed.js';
+import { KAP_TYPE_LABELS, kapEvidenceNote } from '../../utils/kapFeed.js';
 import { deriveDisplayPicks } from '../../utils/displayPicks.js';
 
 function DataFreshnessBadge() {
@@ -113,6 +113,34 @@ function StaleWarningBadge() {
   );
 }
 
+// v31.40: TARAMA KAPSAMI — "tum hisseleri taradik mi, veriler dogru gunun mu?"
+// Sayilar son taramadan (useAIAdvisor.coverage). Eskiden yalniz log'daydi.
+function CoveragePill({ coverage }) {
+  if (!coverage || !(coverage.total > 0)) return null;
+  const ratio = coverage.scanned / coverage.total;
+  const lagging = coverage.laggingDay?.length || 0;
+  const color = ratio >= 0.98 && !lagging ? 'var(--green)' : ratio >= 0.9 ? 'var(--yellow)' : 'var(--red)';
+  const fmtDay = (k) => (k ? `${k.slice(8, 10)}.${k.slice(5, 7)}` : '?');
+  const title = [
+    `Taranan: ${coverage.scanned}/${coverage.total} hisse`,
+    coverage.verified
+      ? `Evren doğrulandı: yeni listelenen ${coverage.added?.length || 0}, işlem görmeyen ${coverage.dropped?.length || 0}`
+      : 'Evren doğrulanamadı (fiyat listesi alınamadı) — sabit liste kullanıldı',
+    coverage.added?.length ? `Yeni: ${coverage.added.slice(0, 20).join(', ')}` : '',
+    coverage.dropped?.length ? `Çıkarılan: ${coverage.dropped.slice(0, 20).join(', ')}` : '',
+    `Veri günü: ${fmtDay(coverage.sessionDay)}`,
+    lagging ? `Günü geride kalan (${lagging}): ${coverage.laggingDay.slice(0, 20).join(', ')}` : '',
+    coverage.missing?.length ? `Veri vermeyen (${coverage.missing.length}): ${coverage.missing.slice(0, 20).join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+  return (
+    <div title={title} style={{ display: 'flex', alignItems: 'center', gap: 4, borderLeft: '1px solid var(--border)', paddingLeft: 10, cursor: 'help' }}>
+      <span style={{ fontSize: 10, color: 'var(--t3)' }}>Kapsama:</span>
+      <span style={{ fontSize: 10, fontWeight: 600, color }}>{coverage.scanned}/{coverage.total}</span>
+      <span style={{ fontSize: 9, color: 'var(--t3)' }}>{fmtDay(coverage.sessionDay)}</span>
+    </div>
+  );
+}
+
 export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio, onAnalyze }) {
   const {
     globalMarket = [],
@@ -125,6 +153,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
     manualScan = null,
     scanResults = [],
     marketRegime = null,
+    coverage = null,
   } = advisor;
   const [intradayCount, setIntradayCount] = useState(0);
 
@@ -168,6 +197,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
         {!scanning && lastUpdate && <span style={{ color: 'var(--t3)' }}>{new Date(lastUpdate).toLocaleTimeString('tr-TR')}</span>}
         <DataFreshnessBadge />
         <SourceHealthBadge />
+        {!scanning && <CoveragePill coverage={coverage} />}
         <StaleWarningBadge />
       </div>
 
@@ -1291,7 +1321,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                     }} title={[
                       `📢 KAP (son 7 gün): ${p.kapCategories.map(c => KAP_TYPE_LABELS[c] || c).join(', ')}`,
                       p.kapHeadline ? `Son bildirim: ${p.kapHeadline}` : '',
-                      'Yönü belirsiz şirket olayı — skoru etkilemez, ölçülüyor',
+                      // v31.40: olculmus tarihsel etki (24 aylik KAP olay calismasi)
+                      ...p.kapCategories.map(c => kapEvidenceNote(c)).filter(Boolean),
+                      'Skoru etkilemez — ölçülüyor',
                     ].filter(Boolean).join('\n')}>
                       📢 {KAP_TYPE_LABELS[p.kapCategories[0]] || 'KAP'}{p.kapCategories.length > 1 ? ` +${p.kapCategories.length - 1}` : ''}
                     </span>

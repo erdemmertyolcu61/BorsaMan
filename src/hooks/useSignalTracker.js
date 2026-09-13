@@ -10,6 +10,7 @@ import {
 import { fetchSingle } from '../utils/fetchEngine.js';
 import { evaluateOutcomeFromBars, isClosingOutcome } from '../utils/signalOutcome.js';
 import { simulatePlanReturn } from '../utils/planSimulation.js';
+import { planEntry, isEntryPending, settlementView, resolveNextSessionFill } from '../utils/sessionEntry.js';
 
 let globalNotificationHandler = null;
 
@@ -327,6 +328,13 @@ export function useSignalTracker() {
         // or nothing (bucket simply stays unfilled).
         regime: (typeof signalData.regime === 'string' ? signalData.regime : signalData.regime?.regime)
           || signalData._regime || null,
+        // v31.40: seans DISINDA kaydedilen tarama sinyali bir sonraki seansin ACILISINDA dolar
+        // (bkz. sessionEntry.js). marketOpen yalniz tarama kaydinda gelir; manuel/canli
+        // kaynaklar eskisi gibi o anki fiyattan girer.
+        ...(signalData.marketOpen === false
+          ? planEntry({ marketOpen: false, sessionDay: signalData.sessionDay })
+          : { entryBasis: 'live', entryAfterSession: null }),
+        entrySlippagePct: slippagePct,
       };
       return [newSignal, ...prev].slice(0, MAX_HISTORY);
     });
@@ -488,6 +496,9 @@ export function useSignalTracker() {
 
         const priceNow = quotes[sig.symbol];
         if (!priceNow) continue;
+        // v31.40: seans disi sinyalin girisi henuz olmadi (sonraki seansin acilisi) — o
+        // gelene kadar getiri, sonuc ve gun-gun nokta hesaplanmaz.
+        if (isEntryPending(sig)) continue;
 
         // v29: currentReturn her zaman güncellenir — UI'da "% kaç ilerledi" göstergesi
         // Önceki: ageDays < 0.5 ise tüm signal güncellemesi atlanıyordu → günlük takip yok
@@ -629,7 +640,17 @@ export function useSignalTracker() {
               updates[sig.id] = { dailyPerfTries: (sig.dailyPerfTries || 0) + 1 };
               continue;
             }
-            const merged = mergeDailyPerf(sig.dailyPerf, backfillDailyPerf(sig, bars));
+            // v31.40: seans disi sinyal bir sonraki seansin ACILISINDA dolar. O seansin bari
+            // yoksa bekler: seri/sonuc/plan hesaplanmaz, gun damgasi ilerler (sonra yeniden secilir).
+            const view = settlementView(sig, bars);
+            if (!view) {
+              updates[sig.id] = { dailyPerfSettledThrough: settledDay, dailyPerfTries: 0 };
+              continue;
+            }
+            const fill = (sig.entryBasis === 'next_session' && !sig.entryFillDay)
+              ? resolveNextSessionFill(sig, bars)
+              : null;
+            const merged = mergeDailyPerf(sig.dailyPerf, backfillDailyPerf(view, bars));
 
             // v31.26: SONUCU DA BARLARDAN BELIRLE.
             // Bu barlar zaten elimizde ama sonuc yalniz canli fiyat kontrolunde
@@ -639,7 +660,7 @@ export function useSignalTracker() {
             // sinyal kapanmadigi icin guvenilirlik de formulun sifir-orneklem
             // tabani olan 15'te sikisip kaliyordu.
             const barOutcome = (!sig.outcome || sig.outcome === 'OPEN')
-              ? evaluateOutcomeFromBars(sig, bars)
+              ? evaluateOutcomeFromBars(view, bars)
               : null;
 
             // v31.28: PLANA UYULSAYDI NE OLURDU.
@@ -649,10 +670,11 @@ export function useSignalTracker() {
             // hesaplanir (barlardan turevi oldugu icin idempotent, bar geldikce
             // yakinsar). Simulasyon uretemezse alan hic yazilmaz → learningReturn
             // eski checkpoint getirisine duser, veri kaybi olmaz.
-            const plan = simulatePlanReturn(sig, bars);
+            const plan = simulatePlanReturn(view, bars);
 
             updates[sig.id] = {
               dailyPerf: merged,
+              ...(fill ? { entryPrice: view.entryPrice, entryFillDay: fill.day, entryFillApprox: fill.approx } : {}),
               ...(plan ? {
                 planReturn: plan.planReturn,
                 planExitReason: plan.exitReason,

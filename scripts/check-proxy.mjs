@@ -40,6 +40,13 @@ const CHECKS = [
     verify: j => (j?.ok === true && Array.isArray(j.items)
       ? `${j.count} bildirim (${j.fromDate} - ${j.toDate})` : null),
   },
+  {
+    // v31.40: birlesik gunluk barlar (Is Yatirim gunleri + Yahoo gercek acilislari)
+    name: 'bars (gunluk bar + gercek acilis)',
+    path: '/api/proxy?source=bars&symbol=THYAO&days=60',
+    verify: j => (j?.ok === true && j.count >= 20
+      ? `${j.count} bar, gercek acilis ${j.openReal} / yaklasik ${j.openApprox} (${j.source})` : null),
+  },
 ];
 
 async function probe(path) {

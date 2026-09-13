@@ -256,7 +256,7 @@ function MLForwardTestPanel({ paperML }) {
     cash, startCapital, totalEquity, totalEquityPct, totalPnl, totalPnlPct,
     winRate, wins, losses, totalTrades, avgWinPct, avgLossPct,
     expectancy, profitFactor, maxDrawdown, openTrades, closedTrades, mlBuckets,
-    liveEdge,
+    liveEdge, pendingOrders = [],
   } = snapshot;
 
   // v31.34: gercekten pozisyonda olan sermaye — acik islemlerin buyukluk toplami.
@@ -366,6 +366,21 @@ function MLForwardTestPanel({ paperML }) {
           </div>
         )}
       </div>
+
+      {/* v31.40: seans disinda gelen AL — bir sonraki seansin gercek acilisinda dolar */}
+      {pendingOrders.length > 0 && (
+        <div style={{
+          margin: '0 0 12px', padding: '8px 12px', borderRadius: 8, fontSize: 10,
+          background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)', color: '#06b6d4',
+        }}>
+          <b>⏳ Açılışta alınacak ({pendingOrders.length}):</b>{' '}
+          {pendingOrders.map(o => `${o.symbol}${o.refPrice ? ` (ref ${Number(o.refPrice).toFixed(2)})` : ''}`).join(' · ')}
+          <div style={{ color: 'var(--t3)', marginTop: 3 }}>
+            Seans dışında gelen AL son kapanıştan değil, bir sonraki seansın gerçek açılışından doldurulur.
+            Açılış stop altındaysa emir iptal edilir.
+          </div>
+        </div>
+      )}
 
       {/* LIVE EDGE MATRIX — the paper-trade truth layer */}
       <LiveEdgeMatrix liveEdge={liveEdge} />

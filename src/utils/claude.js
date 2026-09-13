@@ -13,6 +13,7 @@
 import { logError } from './errorLogger.js';
 import { buildMacroPromptLine } from './macroContextEngine.js';
 import { PROXY_BASE_URL } from './fetchEngine.js';
+import { KAP_EVENT_EVIDENCE } from './kapFeed.js';
 
 const API_KEY_STORAGE = 'claude_api_key';
 const PROXY_CLAUDE_ENDPOINT = '/api/claude'; // relative — served by proxy server
@@ -190,6 +191,21 @@ Her uyariyi cevabinda ACIKCA ele al. Uyari varsa confidence'i >=20 puan dusur. H
 }
 
 // ── Daily Picks Prompt (A/B/C grades) ──────────────────────────────────────
+// v31.40: KAP olay turlerinin OLCULMUS etkisi (kapFeed.KAP_EVENT_EVIDENCE, 24 ay). "Yeni is
+// anlasmasi" haberi sistemin alabildigi anda cogunlukla fiyatlanmis ve sonrasinda piyasanin
+// gerisinde kaliyor; bu bilgi olmadan model "anlasma = kovala" sezgisiyle A notu verebilirdi.
+function kapEvidencePromptNote() {
+  const pct = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+  const parts = ['new_business', 'buyback', 'bonus_issue', 'capital_increase']
+    .map((t) => {
+      const e = KAP_EVENT_EVIDENCE[t];
+      return e ? `${t}: once ${pct(e.preMovePct)}, 5 seans ${pct(e.h5ExcessPct)}, 10 seans ${pct(e.h10ExcessPct)} (n=${e.n})` : '';
+    })
+    .filter(Boolean);
+  return `KAP 24 aylik olcum (girisden sonra, piyasaya gore): ${parts.join('; ')}. `
+    + 'Yeni is/sozlesme haberi tek basina A notu gerekcesi DEGILDIR (cogunlukla fiyatlanmis, kovalama riski); geri alim olumlu teyittir.';
+}
+
 export function buildDailyPicksPrompt(picks = [], market = {}) {
   const ctx = market.marketSentiment || market.sentiment || {};
   const header = `Piyasa: ${ctx.sentiment || '-'}  AL:${ctx.buys || 0} SAT:${ctx.sells || 0}  RSI ort: ${ctx.avgRSI?.toFixed(0) || '-'}`;
@@ -197,9 +213,15 @@ export function buildDailyPicksPrompt(picks = [], market = {}) {
 
   const rows = picks.slice(0, 8).map(p => {
     const grade = gradeSetup(p);
-    // KAP haberleri (varsa)
+    // v31.40: KAP olaylari (kapFeed, son 7 gun). Eski `kapSentiment` alani olu KAP
+    // katmanindandi ve hic dolmuyordu — Claude KAP'i hic gormuyordu.
     let kapStr = '';
-    if (p.kapSentiment != null && p.kapCount > 0) {
+    if (p.kapRisk) {
+      kapStr = ` KAP[TEDBIR:${p.kapRisk}]`;
+    } else if (Array.isArray(p.kapCategories) && p.kapCategories.length) {
+      const head = p.kapHeadline ? ` "${String(p.kapHeadline).slice(0, 40)}"` : '';
+      kapStr = ` KAP[${p.kapCategories.slice(0, 3).join(',')}]${head}`;
+    } else if (p.kapSentiment != null && p.kapCount > 0) {
       const sign = p.kapSentiment >= 0 ? '+' : '';
       const head = p.kapHeadline ? ` "${p.kapHeadline.slice(0, 40)}"` : '';
       kapStr = ` KAP=${sign}${p.kapSentiment.toFixed(1)}(${p.kapCount})${head}`;
@@ -232,7 +254,8 @@ ${header}${macroLine ? '\n' + macroLine : ''}
 ADAY LISTESI:
 ${rows}
 
-NOT: KAP=sirket bildirimleri (-10..+10).
+NOT: KAP[olay]=son 7 gunun sirket bildirimleri; KAP[TEDBIR:...]=hisseye islem tedbiri (AL listesine alinmaz).
+${kapEvidencePromptNote()}
 HABER[kategori]=borsa haberleri sentiment'i. Kategoriler:
   fund_inflow=yabanci/kurumsal alim, fundamental_rank=cari oran/F-K/karlilik siralamasi,
   buyback=geri alim, insider_buy=iceriden alim, dividend=temettu, upgrade=tavsiye yukselt,

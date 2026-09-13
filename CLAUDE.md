@@ -28,6 +28,9 @@ npm run electron:build       # NSIS installer (.exe)
 npm run deploy:proxy         # proxy/ icine girip vercel --prod + canli dogrulama
 npm run check:proxy          # Yayindaki proxy yeni kaynaklari taniyor mu (salt-okunur)
 
+# KAP olay calismasi (v31.40) — 24 ay bildirim x fiyat, onbellekli (--refresh ile yeniden indirir)
+node scripts/kap-event-study.mjs
+
 # Test
 npm test                     # Tum testleri calistir (Vitest)
 npm run test:watch           # Watch mode
@@ -1636,6 +1639,88 @@ Tasarlanan davranış bu: masaüstüyle aynı kurallar + v29 rejim kapısı.
 - **`scripts/ensure-ml-rules.mjs`** (prebuild): Vercel/CI'da dosya yoksa **build düşer**; yalnız yerelde boş
   yedek yazar ve bunu söyler. Build'i yeşil tutan yedek, `catch {}`'in build-zamanı versiyonuydu.
 - **Ders**: web'e giden bir değişikliği depoda değil, **yayındaki pakette** doğrula.
+
+## Doğru Gün + Doğru Fiyat + Tam Evren + KAP Olay Ölçümü (v31.40)
+
+Kullanıcı: "yeni özellikler AI advisor ile beraber çalışsın; yeni iş anlaşması alan hisseler; 612 hisseyi
+taradığımızdan emin olalım; hisseyi arttıracak her detay önemli; tüm hisseleri doğru fiyat ve doğru günde
+almak çok önemli." Hepsi ölçülerek ele alındı (2026-09-13, Pazar).
+
+### A — Doğru gün: hafta sonu / açılış öncesi YİNELENEN BAR (kritik bug)
+Tarama, toplu fiyat kaydını (İş TumHisseSenetleri) günlük barlarla TAKVİM gününe göre birleştiriyordu.
+Hafta sonu, açılış öncesi ve ertesi sabahki gün-sonu telafi taramasında liste hâlâ son oturumu gösterir;
+o oturum "bugün" diye İKİNCİ kez ekleniyordu. Pazar günü gerçek veriyle 5 hissede ölçüldü: bugünkü değişim
+hepsinde %0,00 (BAHKM gerçekte +%10 tavan → pumpGuard "sakin" okudu), RSI/ATR aynı günü iki kez gördü, skor
+5 puana kadar şişti (TSPOR 61,9 → 66,9). `applyLiveOverlay`'da aynı sınıf hata vardı (kaydın tarihi `new Date()`).
+- `liveSession.js` (saf, 15 test): kayıt kendi OTURUM zamanını taşır (`updateDate` "…+03"; Safari kısa ofseti
+  okumaz, normalize edilir). Oturum == son bar → birleştir; > → ekle (yalnız gerçek OHLC); < → dokunma.
+  Tarihsiz kaynakta `prevClose` ile konumlanır, yetmezse hiçbir şey eklenmez. İdempotent.
+- Bugünkü değişim artık kaydın kendi önceki kapanışından (`dayClose`); birleşen son barın açılışı gerçek
+  oturum açılışı. Önizlemede doğrulandı: Pazar taramasında `_sessionDay=2026-09-11`, değişimler gerçek.
+
+### B — Doğru fiyat: İş Yatırım günlük verisi AÇILIŞ taşımıyor
+Parser açılış yerine AOF (günün ağırlıklı ortalaması) koyuyordu. 122 hisse × 20 gün ölçüldü (gerçek açılışa
+göre): mum formasyonları günlerin %47'sinde, skor %7,9'unda ≥5 puan, sınıf %2,8'inde değişiyor. Kapanışlar İş
+ve Yahoo'da BİREBİR aynı, ama Yahoo gün kaçırıyor (07.09.2026, 22.04.2026 … tüm hisselerde).
+- Proxy `source=bars`: gün omurgası + kapanış + hacim İş'ten, açılış Yahoo'dan — yalnız aynı günün kapanışı
+  %1 içinde tutuyor ve açılış o günün aralığındaysa. Yahoo'nun olmadığı gün AOF kalır (`_openApprox`). Tek
+  istek; eski proxy dağıtımında istemci eski yola düşer (`parseBarsPayload`, round-trip testli).
+- Üretim yolu ölçüldü (PWA temposu, 15 paralel): **623/623 hisse, 0 hata**, 182 sn, p95 8,1 sn; açılışların %85'i
+  gerçek. 47 hissede İş sunucuda zaman aşımına düştü → yalnız Yahoo (gün kaçırabilir). Masaüstü sembol zaman
+  aşımı 8 → 12 sn.
+
+### C — Tam evren: "612" bayattı
+Elle yazılmış listede 5 kodun fiyatı yoktu (BEKO yanlış kod — Arçelik ARCLK olarak işleniyor ve HİÇ
+taranmıyordu; ISGLK, MARKA, NPTLR, QTEMZ); 16 işlem gören hisse yoktu (çoğu yeni halka arz: KARCL, SARAE, BETAE,
+ORZAX, QUICK…). İş tarama listesi (603) de tek başına evren olamaz (BRKO, YONGA, MTRYO gibi ~20 hisse yok).
+- Sabit liste düzeltildi (623). `scanUniverse.js` (saf, 6 test): evren = sabit ∪ İş listesi, bugün fiyatı
+  olmayanlar çıkar; fiyat listesi yoksa / küçükse / evrenin %5'inden fazlasını silecekse hiçbir şey düşmez.
+- Kapsama EKRANDA: `Kapsama 618/623 · 11.09` (masaüstü rozet, mobil çip; ipucunda eklenen / çıkarılan / veri
+  vermeyen / günü geride kalan). Verisi piyasanın oturumundan GERİDE kalan hisse AL listesine alınmaz
+  (`isBuyBlocked` = KAP tedbiri veya `_staleSession`).
+- Ana döngü bütçesi iki kademeli: veri akıyorsa (başarı ≥%50) 20 dk'ya kadar tamamlanır; yalnız veri gelmiyorsa
+  8 dk'da kesilir. Ölçüldü: sağlıklı ama yavaş bir tarama eski 8 dk'da 464/623'te kesiliyordu.
+
+### D — Seans dışı AL bir sonraki seansın AÇILIŞINDA dolar (`sessionEntry.js`, saf, 15 test)
+- Paper ML: akşam / hafta sonu taramasında pozisyon son kapanıştan açılıyordu. Artık emir bekler, bir sonraki
+  iş günü seansının gerçek açılışından dolar (açılış stop altındaysa ya da o seans kaçırılırsa iptal — tatil
+  takvimi yok, yanlış günden dolmaktansa dolmamak). Panelde "⏳ Açılışta alınacak".
+- Sinyal takibi: akşam kaydında "giriş günü" zaten kapanmış seanstı → sinyalden ÖNCE olmuş dip stop'u
+  tetikleyebiliyordu (geriye bakan hata, testte gösterildi). Artık giriş = sonraki seansın açılışı; seri, sonuç
+  ve plan o günden başlar, dolum gelene kadar hesaplanmaz ("⏳"). Seans içi ve eski sinyaller değişmedi.
+
+### E — KAP: yeni iş anlaşmaları + 24 aylık OLAY ÇALIŞMASI (`scripts/kap-event-study.mjs`)
+- KAP liste API'si geçmiş pencereleri de döndürüyor (ay başına tek POST); 24 ay = 147.711 bildirim.
+- Anlaşmaların ~%27'si "Yeni İş İlişkisi" başlığı yerine "Özel Durum Açıklaması (Genel)" ÖZETİNDE yazıyordu
+  ("Yeni Siparişin Alınması", "… Tedarik Sözleşmesi İmzalanması", "ihalesini kazanması") → artık `new_business`.
+  Benzerleri (esas sözleşme, kredi anlaşması, "görüşmelere başlama", hisse devri) hariç; özette fesih →
+  `contract_cancel`.
+- **Ölçüm** (12.645 likit olay; giriş = bildirimden sonraki ilk seansın AOF'u; maliyet %0,3; kıyas = aynı gün aynı
+  kuralla tüm likit hisseler):
+
+  | Olay | n | önceden | 5 seans | 10 seans | istikrar |
+  |---|---|---|---|---|---|
+  | Yeni iş (başlık + özet) | 1.132 | +%1,6 | **−%0,4** | −%0,5 | iki yarıda da negatif |
+  | Pay geri alımı | 1.063 | +%0,7 | **+%0,56** | **+%1,16** | iki yarıda da pozitif (t=2,4) |
+  | Bedelsiz | 510 | +%1,7 | −%0,5 | −%1,0 | negatif |
+  | Bedelli | 632 | +%0,1 | −%0,9 | −%0,4 | tutarsız |
+
+  **Sonuç: "yeni iş anlaşması" haberi, günlük tarayan bir sistemin alabildiği anda çoğunlukla fiyatlanmış ve
+  SONRASINDA piyasanın gerisinde kalıyor.** Skora eklemek haber sonrası düşüşü satın almak olurdu;
+  `kapCatalystScoring` KAPALI kaldı. Tek sağlam pozitif katalizör: pay geri alımı.
+- AI advisor ile birlikte: ölçüm `KAP_EVENT_EVIDENCE` olarak KAP rozeti ipucunda ve Claude'un günlük not
+  isteminde. **Bulunan bug**: istemin KAP satırı ölü `kapSentiment` alanını okuyordu — Claude v31.38'den beri
+  KAP'i HİÇ görmüyordu. Artık `KAP[new_business]` / `KAP[TEDBIR:…]` + ölçüm notu (4 test).
+
+### Doğrulama / sınırlar (dürüst)
+- Test 791+ pass, 0 lint error, build temiz. Proxy deploy edildi; `check:proxy` bars dahil OK.
+- Önizleme (canlı veri, Vite proxy): Pazar taramasında evren 623, veri günü 11.09, günü geride kalan 0, bugünkü
+  değişimler gerçek, kapsama rozeti görünür. Yerel geliştirme yolu yavaş: eski 8 dk bütçesiyle 464/623'te kesildi.
+  Üretim yolu ayrıca ölçüldü (623/623).
+- Olay çalışması günlük bar çözünürlüğünde; seansın ilk dakikasında alan biri farklı sonuç görebilir. Sinyal
+  motorunu değil KAP olaylarını ölçer.
+- RSS haber katmanındaki `contract` / `catalyst_event` +5 güven artışı DEĞİŞTİRİLMEDİ. Ölçüm bu artışın zararlı
+  olabileceğini düşündürüyor; kaldırmak kullanıcı kararı.
 
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ

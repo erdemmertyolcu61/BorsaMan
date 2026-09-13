@@ -13,6 +13,14 @@ import { fetchKapFeed, buildKapIndex, attachKapFields, isKapBuyBlocked, KAP_SCAN
 import { isForeignFlowScoringEnabled } from '../utils/dataLayerPolicy.js';
 import { createSourceHealth, formatSilentWarning } from '../utils/sourceHealth.js';
 import { isUnsafeForTomorrow, calcContinuationProbability } from '../utils/pumpGuard.js';
+import { mergeLiveQuote } from '../utils/liveSession.js';
+import { buildScanUniverse } from '../utils/scanUniverse.js';
+import { istanbulDayKey } from '../utils/signalPerfHistory.js';
+
+// v31.40: AL'a engel iki durum: KAP islem tedbiri ve verisi piyasanin oturumundan
+// GERIDE kalan hisse (bugun islem gormemis / durdurulmus). Gecmis oturumun sinyali
+// bugunun firsati degildir.
+const isBuyBlocked = (r) => isKapBuyBlocked(r) || r?._staleSession === true;
 
 // v31.33: TARAMALAR ARASI kaynak sagligi. Bu projede uc dis katman (RSS haber,
 // yabanci akis, KAP) sessizce oldu ve aylarca fark edilmedi — hepsi "best-effort"
@@ -666,6 +674,10 @@ export function useAIAdvisor(portfolio) {
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0, phase: '' });
   const [lastUpdate, setLastUpdate] = useState(null);
+  // v31.40: son taramanin kapsama ozeti — panelde "Kapsama 618/623 · 11.09".
+  const [coverage, setCoverage] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('bist_scan_coverage') || 'null'); } catch { return null; }
+  });
   // v26: Piyasa rejimi (BULL/NEUTRAL/BEAR) — BIST100 gunluk performansina dayanir.
   // Tarama agresifligini belirler (BEAR=3 pick, NEUTRAL=5, BULL=8).
   const [marketRegime, setMarketRegime] = useState({ regime: 'NEUTRAL', bistChangePct: 0 });
@@ -727,7 +739,8 @@ export function useAIAdvisor(portfolio) {
     let phases = null;
 
     try {
-      const symbols = getStockList(opts.universe || SCAN_UNIVERSE);
+      const universeName = opts.universe || SCAN_UNIVERSE;
+      let symbols = getStockList(universeName);
       // v31.32: FAZ GORUNURLUGU. Ana dongu bitince sayac 612/612'de kaliyor ama
       // arkasindan hala dakikalarca son-islem var (yeniden deneme 90s butce, haber,
       // temel, zenginlestirme, Claude). Kullanici bunu "dondu" olarak gordu — hakli,
@@ -758,6 +771,46 @@ export function useAIAdvisor(portfolio) {
       try {
         livePriceMap = await fetchBigParaBatchPrices();
       } catch { /* non-fatal */ }
+
+      // ── v31.40 EVREN DOGRULAMA (bkz. scanUniverse.js) ──
+      // Elle tutulan liste bayatlamisti: 5 kodun fiyati yoktu (BEKO yanlis kod —
+      // Arcelik ARCLK olarak isleniyor ve hic taranmiyordu), 16 islem goren hisse
+      // (cogu yeni halka arz) listede yoktu. Evren = sabit liste ∪ Is Yatirim hisse
+      // listesi; bugun fiyati olmayanlar cikar. Is listesi yabanci oranlariyla ayni
+      // istek (4 saat onbellek) — taramaya ek maliyeti yok.
+      let universeReport = null;
+      if (universeName === SCAN_UNIVERSE) {
+        let listed = [];
+        try {
+          const { fetchAllForeignRatios } = await import('../utils/foreignFlowEngine.js');
+          const ratios = await Promise.race([
+            fetchAllForeignRatios(),
+            new Promise(res => setTimeout(() => res({}), 8000)),
+          ]);
+          listed = Object.keys(ratios || {});
+        } catch { /* liste yoksa sabit evrenle devam */ }
+        const priced = Object.keys(livePriceMap || {}).filter(k => k !== '_meta');
+        universeReport = buildScanUniverse({
+          staticList: symbols,
+          listedSymbols: listed,
+          pricedSymbols: priced.length ? priced : null,
+        });
+        symbols = universeReport.symbols;
+        const { added, dropped, verified, suspicious, staticCount } = universeReport;
+        pushLog({
+          type: verified ? 'info' : 'warn',
+          msg: `Evren: ${symbols.length} hisse (sabit liste ${staticCount}`
+            + (added.length ? ` + yeni listelenen ${added.length}` : '')
+            + (dropped.length ? ` − bugün fiyatı olmayan ${dropped.length}` : '')
+            + ')'
+            + (verified ? '' : suspicious
+              ? ' — fiyat listesi eksik göründü, hiçbir kod çıkarılmadı'
+              : ' — fiyat listesi alınamadı, evren doğrulanmadı')
+            + (added.length ? ` · yeni: ${added.slice(0, 20).join(', ')}` : '')
+            + (dropped.length ? ` · çıkarılan: ${dropped.slice(0, 20).join(', ')}` : ''),
+        });
+        setScanProgress(prev => ({ ...prev, total: symbols.length }));
+      }
 
       // ── v26 FIX 2: MARKET REGIME DETECTION ─────────────────────────────────
       // BIST100 (XU100) endeksinin gunluk performansi sistemin agresiflig
@@ -800,7 +853,9 @@ export function useAIAdvisor(portfolio) {
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
       // Per-sembol hard timeout — tek yavaş sembol tüm chunk'ı bekletmesin.
       // fetchSingle zaten 10s ceiling'e sahip ama timeout kapısı dışarıdan daha güvenli.
-      const symTimeoutMs = _isPWAMode ? 12000 : 8000;
+      // v31.40: masaustu da 12 sn. Birlesik bar ucunda (source=bars) 623 hissenin olculen
+      // p95 gecikmesi 8,1 sn — eski 8 sn siniri her taramada ~%5'i ana geciste dusururdu.
+      const symTimeoutMs = 12000;
       const withSymTimeout = (fn, ms = symTimeoutMs) =>
         Promise.race([fn(), new Promise(r => setTimeout(() => r(null), ms))]);
 
@@ -816,33 +871,18 @@ export function useAIAdvisor(portfolio) {
               // ── BATCH OVERLAY ──
               // Per-sembol applyLiveOverlay() yerine batch'ten gelen canli fiyati uygula.
               // BigPara batch tek cagrida tum BIST'i veriyor, ~4dk scan tasarrufu sagliyor.
-              const live = livePriceMap[sym];
-              if (live && live.price > 0 && data.prices.length > 0) {
-                const lastBar = data.prices[data.prices.length - 1];
-                if (lastBar && typeof lastBar.close === 'number') {
-                  const today = new Date();
-                  const lastDate = lastBar.date instanceof Date ? lastBar.date : new Date(lastBar.date);
-                  const sameDay = today.toDateString() === lastDate.toDateString();
-                  if (sameDay) {
-                    // Same-day update: merge live close into last bar
-                    lastBar.close = live.price;
-                    if (live.high && live.high > lastBar.high) lastBar.high = live.high;
-                    if (live.low && live.low < lastBar.low) lastBar.low = live.low;
-                    if (live.volume && live.volume > 0) lastBar.volume = live.volume;
-                  } else if (live.high > 0 && live.low > 0 && live.high > live.low && live.open > 0) {
-                    // Newer day with real OHLC → append forming bar
-                    data.prices.push({
-                      date: today,
-                      open: live.open,
-                      high: live.high,
-                      low: live.low,
-                      close: live.price,
-                      volume: live.volume || 0,
-                      _isForming: true,
-                    });
-                  }
-                }
-              }
+              const rawLive = livePriceMap[sym];
+              // v31.40: OTURUM-BAZLI birlestirme (bkz. liveSession.js). Eskiden
+              // "bugun != son bar gunu" ise canli fiyat YENI bar olarak ekleniyordu.
+              // Hafta sonu, acilis oncesi ve ertesi sabahki telafi taramasinda liste
+              // hala son oturumu gosterdigi icin o oturum ikinci kez ekleniyordu
+              // (olculdu 2026-09-13: bugunku degisim her hissede %0, BAHKM +%10
+              // tavani "sakin" gorundu, skorlar 5 puana kadar sisti).
+              const liveMerge = (rawLive && rawLive.price > 0)
+                ? mergeLiveQuote(data.prices, rawLive, { marketOpen: isMarketOpen() })
+                : null;
+              // Barlardan ESKI bir fiyat kaydi (ignore) tarama degerlerine karismasin.
+              const live = liveMerge && liveMerge.action !== 'ignore' ? rawLive : null;
 
               // ── FORMING BAR HANDLING (v29) ──
               // Eskiden TÜM forming bar'lar indicator hesabından strip ediliyordu — bu
@@ -901,7 +941,11 @@ export function useAIAdvisor(portfolio) {
               const yesterdayClose = isFormingBar
                 ? (calcPrices[calcPrices.length - 1]?.close || 0)
                 : (calcPrices[calcPrices.length - 2]?.close || 0);
-              if (live && live.price > 0 && yesterdayClose > 0) {
+              if (live && Number.isFinite(liveMerge?.changePct)) {
+                // v31.40: oturumun KENDI onceki kapanisina gore (ayni fiyat kaydindan) —
+                // bar hizalamasindan bagimsiz, hafta sonu da dogru.
+                todayPumpReal = liveMerge.changePct;
+              } else if (live && live.price > 0 && yesterdayClose > 0) {
                 todayPumpReal = ((live.price - yesterdayClose) / yesterdayClose) * 100;
               }
 
@@ -1075,6 +1119,10 @@ export function useAIAdvisor(portfolio) {
                 distFromMA20,        // MA20'den % mesafe (entry quality)
                 _scanTs: Date.now(), // Bu kayit ne zaman tarandi (panel yas gostergesi)
                 _dataSource: data.source || 'unknown', // hangi kaynaktan geldi
+                // v31.40: verinin ait oldugu OTURUM gunu (fiyat kaydinin updateDate'i ya da
+                // son bar). Kapsama rozetindeki "veri gunu" ve gunu geride kalanlar buradan.
+                _sessionDay: (live && liveMerge?.sessionKey)
+                  || (lastRaw?.date ? istanbulDayKey(lastRaw.date) : null) || null,
                 // ── GİRİŞ ZAMANLAMA SKORU (entry timing) ──
                 // Doğru hisse + doğru an: MA20 destek, RSI sweet spot, sessiz çekilme
                 // UI'da "MÜKEMMEL AN / İYİ AN / NÖTR / SAKINCA" etiketi gösterir.
@@ -1145,10 +1193,26 @@ export function useAIAdvisor(portfolio) {
       // Butce cömert: saglikli tarama 2-5 dk suruyor, bu onu KESMEZ; yalnizca
       // patolojik durumu sinirlar. Kesilirse kapsama DURUSTCE raporlanir.
       const SCAN_BUDGET_MS = 8 * 60 * 1000;
+      // v31.40: "tum hisseleri taradigimizdan emin olalim". Olculdu (onizleme, 2026-09-13):
+      // saglikli ama yavas bir taramada 8 dk butcesi 464/623'te kesti — alfabetik kuyruk
+      // (OZKGY → ...) hic taranmadi, oysa basari orani yuksekti. Butce artik iki kademeli:
+      // veri AKIYORSA (basari >= %50) 20 dakikaya kadar tamamlanir; yalniz veri gelmiyorsa
+      // (patolojik ag) 8 dakikada kesilir.
+      const SCAN_HARD_BUDGET_MS = 20 * 60 * 1000;
       const scanStart = Date.now();
       let scanBudgetHit = false;
+      let budgetExtended = false;
       for (let i = 0; i < symbols.length; ) {
-        if (Date.now() - scanStart > SCAN_BUDGET_MS) { scanBudgetHit = true; break; }
+        const elapsedMs = Date.now() - scanStart;
+        const successRatio = done > 0 ? results.length / done : 1;
+        if (elapsedMs > SCAN_HARD_BUDGET_MS || (elapsedMs > SCAN_BUDGET_MS && successRatio < 0.5)) {
+          scanBudgetHit = true;
+          break;
+        }
+        if (elapsedMs > SCAN_BUDGET_MS && !budgetExtended) {
+          budgetExtended = true;
+          pushLog({ type: 'info', msg: `Tarama 8 dk'yı geçti ama veri akıyor (%${Math.round(successRatio * 100)} başarı) — tamamlanana kadar sürüyor (en fazla 20 dk)` });
+        }
         const { delayMs, concurrency } = pace.current();
         const chunk = symbols.slice(i, i + concurrency);
         const before = failedSyms.size;
@@ -1170,7 +1234,7 @@ export function useAIAdvisor(portfolio) {
         const left = symbols.length - Math.min(done, symbols.length);
         pushLog({
           type: 'warn',
-          msg: `Tarama sure butcesi doldu (${SCAN_BUDGET_MS / 60000} dk) — ${left} sembol taranmadi. `
+          msg: `Tarama sure butcesi doldu (${Math.round((Date.now() - scanStart) / 60000)} dk) — ${left} sembol taranmadi. `
              + 'Ust kaynak yavas/kisitli; sonuclar eksik ama gecerli.',
         });
       }
@@ -1230,6 +1294,39 @@ export function useAIAdvisor(portfolio) {
         pushLog({ type: 'info', msg: `Kapsama: ${results.length}/${symbols.length} sembol tarandi (tam)` });
       }
       console.info(`[AI Advisor] Kapsama: ${results.length}/${symbols.length} (basarisiz: ${failedSyms.size})`);
+      // v31.40: KAPSAMA OZETI ekranda — log'a bakmadan "hepsi tarandi mi, veriler dogru
+      // gunun mu?" cevaplanabilsin. Veri gunu = sonuclarin cogunlugunun oturum gunu;
+      // ondan GERIDE kalan hisseler (bugun islem gormemis / durdurulmus) ayrica isaretlenir
+      // ve AL listesine alinmaz — gecmis oturumun sinyali bugunun firsati degildir.
+      try {
+        const scannedSet = new Set(results.map(r => r?.symbol).filter(Boolean));
+        const dayCounts = {};
+        for (const r of results) if (r?._sessionDay) dayCounts[r._sessionDay] = (dayCounts[r._sessionDay] || 0) + 1;
+        const sessionDay = Object.entries(dayCounts)
+          .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1))[0]?.[0] || null;
+        const lagging = sessionDay ? results.filter(r => r?._sessionDay && r._sessionDay < sessionDay) : [];
+        for (const r of lagging) r._staleSession = true;
+        const cov = {
+          scanned: scannedSet.size,
+          total: symbols.length,
+          missing: symbols.filter(s => !scannedSet.has(s)).slice(0, 60),
+          added: universeReport?.added || [],
+          dropped: universeReport?.dropped || [],
+          verified: universeReport?.verified === true,
+          sessionDay,
+          laggingDay: lagging.map(r => r.symbol).slice(0, 60),
+          at: Date.now(),
+        };
+        setCoverage(cov);
+        try { localStorage.setItem('bist_scan_coverage', JSON.stringify(cov)); } catch { /* kota — kritik degil */ }
+        if (lagging.length) {
+          pushLog({
+            type: 'warn',
+            msg: `Veri günü ${sessionDay}: ${lagging.length} hissenin son verisi daha eski — AL listesine alınmaz `
+              + `(${lagging.slice(0, 15).map(r => `${r.symbol}@${r._sessionDay}`).join(', ')})`,
+          });
+        }
+      } catch { /* ozet best-effort — taramayi bozmasin */ }
 
       phase('top-10 potansiyeli');
       // ── v31.24: GUNLUK TOP-10 YUKSELEN ADAYLARI ────────────────────────
@@ -1549,7 +1646,7 @@ export function useAIAdvisor(portfolio) {
           if (r.cls === 'sell') return false;
           if (r.cls !== 'buy' && (r.score || 0) < 45) return false;
           // v31.38: hissenin kendisine islem tedbiri (VBTS, islem sirasi kapatma...) → AL degil.
-          if (isKapBuyBlocked(r)) return false;
+          if (isBuyBlocked(r)) return false;
 
           const volTL = r.avgVolumeTL || 0;
 
@@ -1888,7 +1985,7 @@ export function useAIAdvisor(portfolio) {
             // v24: fallback da sell eleme, ama TUT kabul (score>=42)
             if (r.cls === 'sell') return false;
             if (r.cls !== 'buy' && (r.score || 0) < 42) return false;
-            if (isKapBuyBlocked(r)) return false; // v31.38: KAP islem tedbiri
+            if (isBuyBlocked(r)) return false; // v31.38: KAP islem tedbiri
             if ((r.atrPct || 0) < 0.8) return false;
             if (existingSyms.has(r.symbol)) return false;
             const volTL = r.avgVolumeTL || 0;
@@ -1979,7 +2076,7 @@ export function useAIAdvisor(portfolio) {
         const eligible = results
           .filter(r => {
             if (existingSyms2.has(r.symbol)) return false;
-            if (isKapBuyBlocked(r)) return false; // v31.38: KAP islem tedbiri
+            if (isBuyBlocked(r)) return false; // v31.38: KAP islem tedbiri
             if ((r.avgVolumeTL || 0) < MIN_DAILY_VOLUME_TL * 0.5) return false; // 1M TL min
             if ((r.atrPct || 0) < 0.8) return false;
             // STRICT: lastResort'ta tavan/exhausted hisselere allowance YOK
@@ -2947,7 +3044,7 @@ export function useAIAdvisor(portfolio) {
       // yollari results'tan yeniden cekebilir. Panel/state listesine girmeden cikar.
       {
         const before = picks.length;
-        picks = picks.filter(p => p.cls === 'sell' || !isKapBuyBlocked(p));
+        picks = picks.filter(p => p.cls === 'sell' || !isBuyBlocked(p));
         if (before !== picks.length) {
           pushLog({ type: 'warn', msg: `KAP işlem tedbiri: ${before - picks.length} AL adayı listeden çıkarıldı` });
         }
@@ -3034,6 +3131,7 @@ export function useAIAdvisor(portfolio) {
               convictionTier: p.convictionTier, convictionLabel: p.convictionLabel,
               _thematicBoost: p._thematicBoost, _thematicReasons: p._thematicReasons,
               _liveEdge: p._liveEdge,
+              _sessionDay: p._sessionDay, // v31.40: verinin oturum gunu
             })),
             // ── COMPACT VERDICT MAP — ALL scanned symbols ──
             // Tekil Analiz icin kullanilir: herhangi bir hisse ne karar aldi?
@@ -3134,7 +3232,7 @@ export function useAIAdvisor(portfolio) {
       {
         // v31.38: KAP islem tedbiri — tek cikis kapisi. finalPicks yedek dallardan
         // (buyPicks+sellPicks, ham results) da dolabilir; tedbirli AL buradan gecmez.
-        finalPicks = finalPicks.filter(p => !p || p.cls === 'sell' || !isKapBuyBlocked(p));
+        finalPicks = finalPicks.filter(p => !p || p.cls === 'sell' || !isBuyBlocked(p));
         const before = finalPicks.length;
         finalPicks = applyRegimeGate(finalPicks, marketRegime);
         if (before !== finalPicks.length) {
@@ -3150,7 +3248,7 @@ export function useAIAdvisor(portfolio) {
       {
         const beforeGuarantee = finalPicks.some(p => p && p.cls === 'buy');
         // v31.38: garanti havuzu da tedbirli hisseyi goremez — yoksa "gunun en iyisi" o olabilirdi.
-        const guaranteePool = (Array.isArray(results) ? results : []).filter(r => !isKapBuyBlocked(r));
+        const guaranteePool = (Array.isArray(results) ? results : []).filter(r => !isBuyBlocked(r));
         finalPicks = ensureBestOfDay(finalPicks, guaranteePool, marketRegime);
         if (!beforeGuarantee && finalPicks.some(p => p._bestOfDay)) {
           const bod = finalPicks.find(p => p._bestOfDay);
@@ -3399,6 +3497,7 @@ export function useAIAdvisor(portfolio) {
     scanProgress,
     lastUpdate,
     marketRegime,    // v26 FIX 2: { regime: 'BULL'|'NEUTRAL'|'BEAR', bistChangePct }
+    coverage,        // v31.40: { scanned, total, missing, added, dropped, verified, sessionDay, laggingDay, at }
     manualScan,
     runScan,
     setGlobalMarket,

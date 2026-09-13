@@ -53,6 +53,8 @@ const ALLOWED_SOURCES = new Set([
   'isyatirim', 'isyatirim_fin', 'isyatirim_yabanci', 'foreks', 'tcmb_evds', 'news', 'default',
   // v31.38: server-side POST routes (see handleKapDisclosures / handleIsyForeign)
   'kap_disclosures', 'isy_foreign',
+  // v31.40: merged daily bars — Is Yatirim days + Yahoo real opens (see handleBars)
+  'bars',
 ]);
 
 const ALLOWED_ORIGINS = [
@@ -265,6 +267,139 @@ function sendUpstreamError(res, err) {
   return res.status(timeout ? 504 : 500).json({ ok: false, error: timeout ? 'upstream_timeout' : 'fetch_failed' });
 }
 
+// ── v31.40: GUNLUK BARLAR — Is Yatirim gunleri + Yahoo ACILISLARI, tek istek ──
+// OLCULDU (2026-09-13, 122 hisse x 20 gun): Is Yatirim gunluk verisi acilis TASIMAZ;
+// istemci yerine AOF (gunun agirlikli ortalamasi) koyuyordu. Gercek acilisa gore mum
+// formasyonlari gunlerin %47'sinde, skor %7,9'unda >=5 puan, sinyal sinifi %2,8'inde
+// degisiyordu. Yahoo gercek acilisi tasir ama GUN KACIRIR (07.09.2026 butun hisselerde
+// yok). Burada ikisi birlesir: gun omurgasi, kapanis ve hacim Is Yatirim'dan (tam ve
+// resmi), acilis Yahoo'dan — yalniz ayni gunun kapanisi %1 icinde tutuyor ve acilis o
+// gunun araliginda ise (farkli duzeltilmis seriden acilis alinmaz). Yahoo'nun olmadigi
+// gunde AOF kalir ve `of: 'a'` ile isaretlenir.
+
+export const BAR_FIELDS = ['d', 'o', 'h', 'l', 'c', 'v', 'vwap', 'of'];
+const BARS_MAX_DAYS = 1900;
+const round4 = (n) => Math.round(n * 1e4) / 1e4;
+
+function isyDayKey(s) {
+  const p = String(s || '').split('-');
+  return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : '';
+}
+
+function yahooDayKey(ts) {
+  return new Date(ts * 1000 + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/** Is Yatirim HisseTekil satirlari + Yahoo chart sonucu → kompakt satirlar. */
+export function mergeDailyBars(isyRows, yahooResult) {
+  const yahooByDay = new Map();
+  const q = yahooResult?.indicators?.quote?.[0];
+  if (Array.isArray(yahooResult?.timestamp) && q) {
+    yahooResult.timestamp.forEach((ts, i) => {
+      const o = q.open?.[i];
+      const c = q.close?.[i];
+      if (o > 0 && c > 0) yahooByDay.set(yahooDayKey(ts), { o, c });
+    });
+  }
+  const rows = [];
+  let openReal = 0;
+  for (const v of isyRows || []) {
+    const d = isyDayKey(v?.HGDG_TARIH);
+    const c = Number(v?.HGDG_KAPANIS);
+    if (!d || !(c > 0)) continue;
+    const h = Math.max(Number(v.HGDG_MAX) || c, c);
+    const l = Math.min(Number(v.HGDG_MIN) || c, c);
+    const vwap = Number(v.HGDG_AOF) > 0 ? Number(v.HGDG_AOF) : c;
+    const y = yahooByDay.get(d);
+    let o = Math.min(Math.max(vwap, l), h);
+    let of = 'a';
+    if (y && Math.abs(y.c - c) / c <= 0.01 && y.o >= l * 0.995 && y.o <= h * 1.005) {
+      o = Math.min(Math.max(y.o, l), h);
+      of = 'y';
+      openReal++;
+    }
+    const lots = Math.round((Number(v.HGDG_HACIM) || 0) / c);
+    rows.push([d, round4(o), round4(h), round4(l), round4(c), lots, round4(vwap), of]);
+  }
+  return { rows, openReal, openApprox: rows.length - openReal };
+}
+
+/** Is Yatirim cevap vermediginde yalniz Yahoo (gun kacirabilir — source ile belirtilir). */
+export function barsFromYahoo(yahooResult) {
+  const q = yahooResult?.indicators?.quote?.[0];
+  const rows = [];
+  if (!q || !Array.isArray(yahooResult?.timestamp)) return rows;
+  yahooResult.timestamp.forEach((ts, i) => {
+    const c = q.close?.[i];
+    if (!(c > 0)) return;
+    const h = Math.max(q.high?.[i] || c, c);
+    const l = Math.min(q.low?.[i] || c, c);
+    const hasOpen = q.open?.[i] > 0;
+    const o = hasOpen ? Math.min(Math.max(q.open[i], l), h) : c;
+    rows.push([yahooDayKey(ts), round4(o), round4(h), round4(l), round4(c), Math.round(q.volume?.[i] || 0), null, hasOpen ? 'y' : 'a']);
+  });
+  return rows;
+}
+
+async function getJsonUpstream(url, source, extraHeaders = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const r = await fetch(url, { headers: { ...getHeaders(source), ...extraHeaders }, signal: controller.signal });
+    if (!r.ok) return null;
+    return JSON.parse(await r.text());
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function handleBars(req, res) {
+  const symbol = String(req.query.symbol || '').toUpperCase();
+  if (!/^[A-Z0-9]{3,6}$/.test(symbol)) return res.status(400).json({ ok: false, error: 'symbol_required' });
+  const parsed = parseInt(req.query.days, 10);
+  const days = Number.isFinite(parsed) ? Math.min(BARS_MAX_DAYS, Math.max(10, parsed)) : 380;
+  const now = Date.now();
+  const isyUrl = 'https://www.isyatirim.com.tr/_layouts/15/Isyatirim.Website/Common/Data.aspx/HisseTekil'
+    + `?hisse=${symbol}&startdate=${formatDateISY(new Date(now - days * DAY_MS))}&enddate=${formatDateISY(new Date(now))}`;
+  let yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}.IS`
+    + `?period1=${Math.floor((now - (days + 7) * DAY_MS) / 1000)}&period2=${Math.floor(now / 1000)}&interval=1d&includePrePost=false`;
+  const auth = await getYahooAuth();
+  const yahooHeaders = {};
+  if (auth && auth.cookie) {
+    yahooHeaders.Cookie = auth.cookie;
+    yahooUrl += `&crumb=${encodeURIComponent(auth.crumb)}`;
+  }
+  const [isy, yahoo] = await Promise.all([
+    getJsonUpstream(isyUrl, 'isyatirim'),
+    getJsonUpstream(yahooUrl, 'yahoo', yahooHeaders),
+  ]);
+  const isyRows = Array.isArray(isy?.value) ? isy.value : [];
+  const yahooResult = yahoo?.chart?.result?.[0] || null;
+
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('X-Proxy-Source', 'bars');
+  if (isyRows.length) {
+    const merged = mergeDailyBars(isyRows, yahooResult);
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=900');
+    return res.status(200).json({
+      ok: true, symbol, source: merged.openReal ? 'isyatirim+yahoo' : 'isyatirim',
+      fields: BAR_FIELDS, count: merged.rows.length,
+      openReal: merged.openReal, openApprox: merged.openApprox, rows: merged.rows,
+    });
+  }
+  const yRows = barsFromYahoo(yahooResult);
+  if (yRows.length) {
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=900');
+    return res.status(200).json({
+      ok: true, symbol, source: 'yahoo', fields: BAR_FIELDS, count: yRows.length,
+      openReal: yRows.filter(r => r[7] === 'y').length, openApprox: yRows.filter(r => r[7] === 'a').length, rows: yRows,
+    });
+  }
+  return res.status(502).json({ ok: false, error: 'no_data', symbol });
+}
+
 async function handleKapDisclosures(req, res) {
   const oid = typeof req.query.oid === 'string' && /^[0-9a-f]{32}$/i.test(req.query.oid)
     ? req.query.oid.toLowerCase() : null;
@@ -411,6 +546,7 @@ export default async function handler(req, res) {
   // v31.38: POST-only upstreams — the proxy makes the call itself.
   if (rawSource === 'kap_disclosures') return handleKapDisclosures(req, res);
   if (rawSource === 'isy_foreign') return handleIsyForeign(req, res);
+  if (rawSource === 'bars') return handleBars(req, res);
 
   let targetUrl = req.query.url;
   let sourceType = rawSource;

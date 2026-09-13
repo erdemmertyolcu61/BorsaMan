@@ -91,7 +91,9 @@ function OutcomeBadge({ outcome }) {
 // Under 768px each signal becomes a card instead, with the daily series given
 // full width. Same data, same click-to-analyze; only the layout differs.
 function SignalCard({ s, onAnalyze }) {
-  const entryPrice = s.price || s.entryPrice || null;
+  // v31.40: seans disi sinyal bir sonraki seansin acilisinda dolar — dolunca giris o fiyat.
+  const entryPending = s.entryBasis === 'next_session' && !s.entryFillDay;
+  const entryPrice = s.entryFillDay ? s.entryPrice : (s.price || s.entryPrice || null);
   const targetPrice = s.target || null;
   const potentialPct = (entryPrice && targetPrice && entryPrice > 0)
     ? ((targetPrice - entryPrice) / entryPrice) * 100 : null;
@@ -128,7 +130,9 @@ function SignalCard({ s, onAnalyze }) {
 
       {/* Row 2 — the trade */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10, marginBottom: 8 }}>
-        <span style={{ color: 'var(--t3)' }}>Giriş <b style={{ color: 'var(--t1)' }}>{entryPrice ? entryPrice.toFixed(2) : '—'}</b></span>
+        <span style={{ color: 'var(--t3)' }} title={entryPending ? 'Seans dışında kaydedildi: bir sonraki seansın açılışında dolar' : s.entryFillDay ? `Açılışta doldu: ${s.entryFillDay}` : undefined}>
+          Giriş <b style={{ color: 'var(--t1)' }}>{entryPrice ? entryPrice.toFixed(2) : '—'}</b>{entryPending ? ' ⏳ açılış' : ''}
+        </span>
         <span style={{ color: 'var(--t3)' }}>Hedef <b style={{ color: 'var(--green)' }}>{targetPrice ? targetPrice.toFixed(2) : '—'}</b></span>
         {potentialPct != null && (
           <span style={{ color: potentialPct > 0 ? 'var(--green)' : 'var(--red)', fontWeight: 700 }}>
@@ -476,7 +480,8 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                   </thead>
                   <tbody>
                     {paginated.map(s => {
-                      const entryPrice = s.price || s.entryPrice || null;
+                      const entryPending = s.entryBasis === 'next_session' && !s.entryFillDay;
+                      const entryPrice = s.entryFillDay ? s.entryPrice : (s.price || s.entryPrice || null);
                       const targetPrice = s.target || null;
                       const potentialPct = (entryPrice && targetPrice && entryPrice > 0)
                         ? ((targetPrice - entryPrice) / entryPrice) * 100
@@ -496,7 +501,10 @@ export default function SignalsTab({ tracker, onAnalyze }) {
                             {s.cls?.toUpperCase() || '—'}
                           </td>
                           <td style={{ padding: '4px 6px', textAlign: 'center', fontSize: 9, color: 'var(--t3)' }}>{s.source || 'manual'}</td>
-                          <td style={{ padding: '4px 6px', textAlign: 'center', fontSize: 10 }}>{entryPrice?.toFixed(2) || '—'}</td>
+                          <td style={{ padding: '4px 6px', textAlign: 'center', fontSize: 10 }}
+                            title={entryPending ? 'Seans dışında kaydedildi: bir sonraki seansın açılışında dolar' : s.entryFillDay ? `Açılışta doldu: ${s.entryFillDay}` : undefined}>
+                            {entryPrice?.toFixed(2) || '—'}{entryPending ? ' ⏳' : ''}
+                          </td>
                           <td style={{ padding: '4px 6px', textAlign: 'center', fontSize: 10, color: 'var(--green)' }}>
                             {targetPrice ? targetPrice.toFixed(2) : '—'}
                           </td>

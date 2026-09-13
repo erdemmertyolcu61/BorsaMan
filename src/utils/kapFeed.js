@@ -123,6 +123,21 @@ const NOISE_PATTERNS = [
   /spk bulteni/, /islem iptali/, /islem gormeye baslamasi/, /genel kurul/,
 ];
 
+// v31.40: ozetteki anlasma kaliplari (24 aylik gercek bildirimlerden). "Yeni Ucak Siparisi"
+// sirketin KENDI verdigi siparistir (yatirim), alinan is degil — bu yuzden yalniz "alinan".
+const DEAL_PATTERNS = [
+  /yeni (bir )?is iliskisi/,
+  /is iliskisi kurul/,
+  /(sozlesme|anlasma|protokol)[^.]{0,50}(imzalan|imzala|akdedil)/,
+  /(imzalan|akdedil)[^.]{0,50}(sozlesme|anlasma|protokol)/,
+  /siparis(in|i|ler)? (alin|al)/,
+  /alinan siparis/,
+  /ihale[^.]{0,60}(kazan|uhde)/,
+  /(kazan|uhde)[^.]{0,40}ihale/,
+];
+const DEAL_EXCLUDE = /esas sozlesme|kredi|finansman|borclanma|vergi|fesih|feshi|iptal|sonlandir|sona er|dava|kira |kira sozlesme|kiralama|hisse devir|pay devir|devir sozlesme|hisse satis|pay satis|kefalet|teminat|garanti|sendikasyon|yeniden yapilandir|gorusme|niyet|mutabakat|degerleme|hakedis|tahsilat/;
+const DEAL_CANCEL = /(sozlesme|anlasma|is iliskisi|siparis)[^.]{0,40}(fesh|iptal|sona erdiril|sonlandir)/;
+
 export const KAP_TYPE_LABELS = Object.freeze({
   trading_measure: 'İşlem tedbiri',
   trading_halt: 'İşlem sırası kapatıldı',
@@ -159,6 +174,36 @@ export const KAP_EVENT_TYPES = Object.freeze([
   'buyback', 'insider_trade', 'new_business', 'tender', 'dividend', 'bonus_issue',
   'capital_increase', 'earnings', 'rating', 'm_and_a', 'transfer', 'index_change',
 ]);
+
+// v31.40: 24 AYLIK OLAY CALISMASI (scripts/kap-event-study.mjs — 2024-09 → 2026-08, likit
+// hisseler, giris = bildirimden SONRAKI ilk seansin AOF'u, maliyet %0,3, kiyas = ayni gun
+// ayni kuralla tum likit hisseler). SKORA GIRMEZ (dataLayerPolicy); rozet ipucuna ve
+// Claude'un gunluk not istemine "bu tur olay tarihsel olarak ne yapti" bilgisini verir.
+// En onemli bulgu: "yeni is anlasmasi" haberi sistemin alabildigi anda cogunlukla
+// fiyatlanmis ve SONRASINDA piyasanin gerisinde kaliyor. Yeniden olcmek icin betigi calistir.
+export const KAP_EVENT_EVIDENCE = Object.freeze({
+  new_business: { n: 1132, preMovePct: 1.6, h5ExcessPct: -0.44, h10ExcessPct: -0.45, stable: true,
+    note: 'Yeni iş: önceden +%1,6 fiyatlanmış; girişten sonra 5 seansta piyasanın %0,4 gerisinde (24 ay, n=1132) — kovalama' },
+  buyback: { n: 1063, preMovePct: 0.7, h5ExcessPct: 0.56, h10ExcessPct: 1.16, stable: true,
+    note: 'Pay geri alımı: 10 seansta piyasanın %1,2 üstünde, iki dönemde de pozitif (24 ay, n=1063)' },
+  bonus_issue: { n: 510, preMovePct: 1.7, h5ExcessPct: -0.49, h10ExcessPct: -1.04, stable: true,
+    note: 'Bedelsiz: önceden +%1,7 fiyatlanmış; 10 seansta piyasanın %1,0 gerisinde (24 ay, n=510)' },
+  capital_increase: { n: 632, preMovePct: 0.1, h5ExcessPct: -0.91, h10ExcessPct: -0.38, stable: false,
+    note: 'Bedelli sermaye artırımı: 5 seansta piyasanın %0,9 gerisinde, dönemler arası tutarsız (n=632)' },
+  m_and_a: { n: 520, preMovePct: 1.0, h5ExcessPct: -0.35, h10ExcessPct: -0.34, stable: false,
+    note: 'Birleşme / edinim: önceden fiyatlanmış, sonrası hafif negatif (n=520)' },
+  tender: { n: 322, preMovePct: 0.9, h5ExcessPct: -0.28, h10ExcessPct: -0.35, stable: false,
+    note: 'İhale: belirgin üstünlük yok, dönemler arası tutarsız (n=322)' },
+  dividend: { n: 2413, preMovePct: 0.4, h5ExcessPct: -0.01, h10ExcessPct: 0.06, stable: true,
+    note: 'Kâr payı: sonrası piyasayla aynı (n=2413)' },
+  earnings: { n: 4971, preMovePct: -0.2, h5ExcessPct: 0.01, h10ExcessPct: 0.07, stable: true,
+    note: 'Finansal rapor (tür olarak): sonrası piyasayla aynı (n=4971)' },
+});
+
+/** Olay turu icin olculmus tarihsel etki notu (yoksa bos). */
+export function kapEvidenceNote(type) {
+  return KAP_EVENT_EVIDENCE[type]?.note || '';
+}
 
 /**
  * Tek bildirimi siniflandir. Girdi normalizeKapItems ciktisi (veya en azindan
@@ -212,6 +257,18 @@ export function classifyKapItem(item) {
   if (/birlesme|duran varlik edinimi|pay alim teklifi/.test(t)) return event('m_and_a', 'Birleşme / satın alma');
   if (/transfer gorusme/.test(t)) return event('transfer', 'Transfer görüşmesi');
   if (/endeks sirketlerinde degisiklik/.test(t)) return event('index_change', 'Endeks değişikliği');
+
+  // v31.40: YENI IS ANLASMALARI OZETTE. 24 ayda (114.734 sirket bildirimi) 1.283 anlasma
+  // "Yeni Is Iliskisi" basligiyla geldi; ~500 kadari daha "Ozel Durum Aciklamasi (Genel)"
+  // basligi altinda yalniz OZETTE yazdi ("Yeni Siparisin Alinmasi", "... Tedarik Sozlesmesi
+  // Imzalanmasi", "... ihalesini kazanmasi") ve "ozel durum" diye kayboluyordu. Benzerleri
+  // (esas sozlesme, kredi anlasmasi, "gorusmelere baslama", hisse devri) haric tutulur.
+  if (/ozel durum aciklamasi/.test(t)) {
+    if (DEAL_CANCEL.test(s)) return caution('contract_cancel', 'Sözleşme feshi / iptal');
+    if (DEAL_PATTERNS.some((re) => re.test(s)) && !DEAL_EXCLUDE.test(s)) {
+      return event('new_business', 'Sözleşme / sipariş (özel durum)');
+    }
+  }
 
   // INFO
   if (/toptan alis satis/.test(both)) return info('block_trade', 'Toptan alış satış');

@@ -30,3 +30,5 @@ reports/replay-*.json
 
 # Parametre taramasi ciktisi (yeniden uretilebilir)
 reports/sweep-*.json
+# KAP olay calismasi ciktisi (scripts/kap-event-study.mjs, yeniden uretilebilir)
+reports/kap-event-study-*.json
