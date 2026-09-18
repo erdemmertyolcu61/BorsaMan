@@ -1,0 +1,23 @@
+[package]
+name = "bist_engine"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "BIST terminal indicator + signal core, compiled to WebAssembly. Bit-for-bit parity with src/utils/indicators.js + genSignal."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+# Deliberately no dependencies: the wasm32 build then needs only rustc + rust-lld
+# (no host C toolchain), and every numeric step is visible in this crate.
+[dependencies]
+
+[profile.release]
+# "s": 237 KB instead of 276 KB at opt-level 3, still faster than the JS engine
+# (measured with scripts/engine-parity.mjs) — the PWA downloads this once.
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

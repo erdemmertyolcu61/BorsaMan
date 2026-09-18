@@ -1,3 +1,5 @@
+import { engineCalcAll } from '../engine/engineCore.js';
+
 // Moving Average
 export function calcMA(closes, period) {
   const ma = new Array(closes.length).fill(null);
@@ -819,8 +821,15 @@ export function calcROC(closes, period = 10) {
   return roc;
 }
 
-// Main calcAll — computes all indicators
+// v31.42: Rust/WASM motoru hazirsa ayni sonuc oradan gelir (engine-rs/src/ind.rs,
+// bit duzeyinde eslik testli). Hazir degilse ya da girdi uygun degilse JS motoru.
 export function calcAll(prices) {
+  const fast = engineCalcAll(prices);
+  return fast !== null ? fast : calcAllJs(prices);
+}
+
+// Main calcAll — computes all indicators (JS reference implementation)
+export function calcAllJs(prices) {
   const closes = prices.map(p => p.close);
   const n = closes.length;
   const ma20 = calcMA(closes, 20), ma50 = calcMA(closes, 50), ma100 = calcMA(closes, 100), ma200 = calcMA(closes, 200);

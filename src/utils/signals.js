@@ -3,6 +3,7 @@ import { analyzeDetailedFinancials, getFundamentalGrade } from './fundamentalEng
 import { runWallStreetAnalysis } from './wallStreet.js';
 import { detectMarketRegime, getAdaptiveThresholds, getRegimeIndicatorWeights, detectHiddenDivergence, MarketRegime } from './adaptiveThresholds.js';
 import { applyCalibrationToScore } from './signalCalibration.js';
+import { engineSignalBegin, engineSignalFinish } from '../engine/engineCore.js';
 
 // ══════════════════════════════════════════════════════════════════
 // RELIABILITY FEEDBACK MODULE
@@ -488,7 +489,7 @@ export function detectSetups(prices, ind) {
 // Multi-timeframe context: pass higher-timeframe indicators to validate signals
 // kapSentiment: {score: -10 to +10, reasons: string[]} from KAP news analysis
 // htfContext: {trend: 'bull'|'bear'|'neutral', rsi, adx, ma200Above} from daily timeframe
-export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrength } = {}) {
+export function genSignalJs(ind, prices, { kapSentiment, htfContext, sectorStrength } = {}) {
   let score = 0;
   const reasons = [];
   const p = ind.lastClose;
@@ -1658,6 +1659,13 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
     indicators: ind
   };
 
+  return finalizeSignal(baseSig, ind, prices);
+}
+
+// Shared tail of genSignal (JS and Rust paths): Wall Street meta layer,
+// reliability hints and signal attribution. These read the clock, the locale
+// and learned JS state, so they stay in JS.
+function finalizeSignal(baseSig, ind, prices) {
   // ── WALL STREET META ANALYSIS ──
   // Rejim + veri kalitesi + likidite + edge skoru + kurulum notu
   try {
@@ -1754,6 +1762,49 @@ export function genSignal(ind, prices, { kapSentiment, htfContext, sectorStrengt
   }
 
   return baseSig;
+}
+
+// ── v31.42: RUST / WASM CEKIRDEGI ──────────────────────────────────────────
+// Motor hazirsa skorlama + siniflama + stop/hedef Rust'ta hesaplanir
+// (engine-rs/src/sig.rs). Ogrenilmis kalibrasyon modeli JS'te yasadigi icin iki
+// asamanin ARASINDA burada uygulanir (genSignalJs ile ayni kod); Wall Street /
+// guvenilirlik / atribusyon katmani finalizeSignal'de aynen kosar. Motor hazir
+// degilse, girdi uygun degilse ya da `ind` motorun bu `prices` icin urettigi
+// DOKUNULMAMIS calcAll sonucu degilse genSignalJs — sonuc bit duzeyinde ayni.
+export function genSignal(ind, prices, opts = {}) {
+  const begin = engineSignalBegin(prices, opts, ind);
+  if (!begin) return genSignalJs(ind, prices, opts);
+  let score100 = begin.score100;
+  let calibrationInfo = null;
+  let calText = null;
+  let calC = 0;
+  try {
+    const cal = applyCalibrationToScore(score100, { cls: begin.cls, regime: begin.regime ?? undefined });
+    if (cal.calibration?.applied) {
+      const before = score100;
+      score100 = cal.score100;
+      calibrationInfo = cal.calibration;
+      const delta = score100 - before;
+      if (Math.abs(delta) >= 1) {
+        const arrow = delta > 0 ? 'yukseltildi' : 'dusuruldu';
+        calText = `ML KALIBRASYON: Skor ${arrow} ${before.toFixed(0)} -> ${score100.toFixed(0)} (gecmis ${calibrationInfo.breakdown[0]?.samples || '?'} sinyal, x${calibrationInfo.multiplier})`;
+        calC = delta > 0 ? 1 : 2;
+      }
+    }
+  } catch { /* calibration is best-effort — never block signal */ }
+  const core = engineSignalFinish(score100, calText, calC);
+  if (!core) return genSignalJs(ind, prices, opts);
+  const baseSig = {
+    signal: core.signal, cls: core.cls, score: core.score, rawScore: core.rawScore, conf: core.conf, reasons: core.reasons,
+    stop: core.stop, t1: core.t1, t2: core.t2, t3: core.t3, rr: core.rr, rr2: core.rr2, rrQuality: core.rrQuality,
+    entry: core.entry, atr: core.atr, fibs: core.fibs, pivots: core.pivots,
+    holdBars: core.holdBars, holdText: core.holdText, longTermView: core.longTermView, dailyRange: core.dailyRange,
+    intradayTarget: core.intradayTarget, intradayStop: core.intradayStop, intradayRR: core.intradayRR,
+    calibration: calibrationInfo,
+    ma20pct: core.ma20pct, ma50pct: core.ma50pct, bollPct: core.bollPct,
+    indicators: ind,
+  };
+  return finalizeSignal(baseSig, ind, prices);
 }
 
 const SIGNAL_TYPE_STATS = {

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import './styles/globals.css';
 import { runFreshRegimeResetSync } from './utils/resetStorage.js';
+import { initEngine, engineStats } from './engine/engineCore.js';
 
 // v31.24: run the tracking reset BEFORE the first render. It used to live in an
 // App effect, which runs AFTER render — so one malformed tracking record crashed
@@ -10,6 +11,10 @@ import { runFreshRegimeResetSync } from './utils/resetStorage.js';
 // in-memory and SQLite halves still finish inside App; this only guarantees no
 // stale or corrupt tracking record is ever read by the first render.
 runFreshRegimeResetSync();
+
+// v31.42: Rust/WASM hesap motoru (calcAll + genSignal cekirdegi). Asenkron yuklenir;
+// hazir olana kadar ayni sonucu veren JS motoru calisir. Tani: window.__bistEngine()
+initEngine().then(() => { window.__bistEngine = engineStats; });
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

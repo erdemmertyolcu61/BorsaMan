@@ -103,7 +103,9 @@ class BistBridge:
     def __init__(
         self,
         mcp_command: str = "uvx",
-        mcp_args: tuple[str, ...] = ("saidsurucu-borsa-mcp",),
+        # borsa-mcp is not on PyPI ("saidsurucu-borsa-mcp" 404s); the project's own
+        # README runs it from GitHub. Remote alternative: https://borsa.surucu.dev/mcp
+        mcp_args: tuple[str, ...] = ("--from", "git+https://github.com/saidsurucu/borsa-mcp", "borsa-mcp"),
         cache_dir: str = ".cache/bist_bridge",
         session_factory: Optional[Callable] = None,
     ):

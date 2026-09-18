@@ -28,6 +28,10 @@ npm run electron:build       # NSIS installer (.exe)
 npm run deploy:proxy         # proxy/ icine girip vercel --prod + canli dogrulama
 npm run check:proxy          # Yayindaki proxy yeni kaynaklari taniyor mu (salt-okunur)
 
+# Rust/WASM hesap motoru (v31.42) — engine-rs/ degisince yeniden derle ve gomulu wasm'i commit'le
+npm run build:engine         # cargo → wasm32 → src/engine/bistEngineWasm.js (base64 + kaynak hash)
+npm run parity:engine        # 130 gercek seri x 5 yil: JS motoru vs Rust motoru, bit duzeyinde
+
 # KAP olay calismasi (v31.40) — 24 ay bildirim x fiyat, onbellekli (--refresh ile yeniden indirir)
 node scripts/kap-event-study.mjs
 
@@ -60,6 +64,8 @@ graphify explain <node>        # Bir node + komsulari aciklama
 - **Mobile**: Capacitor 8 (`android/`, `ios/`) — `capacitor.config.json`
 - **Backend**: `proxy/` — Vercel Serverless CORS proxy (10 domain whitelist + `/api/claude`)
 - **Python kopru**: `bist_bridge.py` — borsa-mcp server'i ile TradingAgents arasingi
+- **Hesap motoru (v31.42)**: `engine-rs/` (Rust → WebAssembly) calcAll + genSignal cekirdegini calistirir;
+  `src/engine/engineCore.js` kopru, JS referans motoru (`calcAllJs` / `genSignalJs`) yedek. Bkz. v31.42 bolumu.
 - **Terminal estetigi**: Koyu tema (#0a0e17), JetBrains Mono + Space Grotesk
 - **Sekmeler (v31.22 → v31.38)**: Tekil Analiz (varsayilan), Intraday Trade, Sinyal Takibi, Paper Trading,
   Gercek Portfoy, Istihbarat, Piyasa Nabzi (v31.38). Pano ve sanal Portfoy sekmeleri kaldirildi (portfoy
@@ -1769,6 +1775,64 @@ v31.40 ölçümünden sonra kullanıcıya iki karar soruldu (2026-09-13):
   rozetinde "Geri alım: güven +3"; Piyasa Nabzı › ÖLÇÜM'de yeni tablo görünüyor. Sentetik kayıt sonra geri alındı.
 - Sınır: +3'ün dayanağı olay çalışmasıdır; advisor seçimleri üzerinde ileriye dönük etkisi henüz ölçülmedi —
   `kapEvents.buyback` kovası bunu biriktirecek.
+
+## Rust/WASM Hesap Motoru + Borsa MCP (v31.42)
+
+Kullanıcı: "Gerekli olabilecek MCP'leri listele, bağlayalım; ayrıca uygulamayı Rust'a çevir."
+
+### A — MCP
+- `bist-mcp` (yerel kayıt) `python custom_bist_mcp.py` çalıştırıyordu; dosya HİÇBİR yerde yoktu (git geçmişi
+  dahil) → her oturumda "Connection closed". Kaldırıldı; yerine resmi **Borsa MCP uzak sunucusu** bağlandı
+  (`claude mcp add --transport http borsa https://borsa.surucu.dev/mcp -s local`; BorsaMCP v4.0.3, 28 araç:
+  bilanço/gelir/nakit akışı, finansal oranlar, KAP haberleri, sermaye artırımları, TEFAS, döviz/emtia, ekonomik
+  takvim, tahvil, TCMB/EVDS). Kullanıcı kararı: uzak sunucu (kurulumsuz; sorgulanan hisse kodları oraya gider).
+- `bist_bridge.py` varsayılanı `uvx saidsurucu-borsa-mcp` idi — bu paket PyPI'da YOK (404, ölçüldü). Proje
+  README'sindeki komuta çevrildi: `uvx --from git+https://github.com/saidsurucu/borsa-mcp borsa-mcp`.
+- Önerilen bağlayıcılar (kullanıcı arayüzden bağlar): Vercel (deploy / build olayları), Sentry (telefondaki
+  hataları görmek — uygulamaya SDK eklemek gerekir), Supabase (isteğe bağlı: sinyalleri buluta yazma / sunucu
+  taraflı tarama). Telegram eklentisi kurulu ama bot token'ı yok (`/telegram:configure`).
+
+### B — Rust/WASM hesap motoru (kullanıcı kararı: "Hesap motoru Rust/WASM")
+- **Önce ölçüldü**: 623 hissenin calcAll+genSignal'i JS'te ~1 sn (0,9–1,5 sn) = 182 sn'lik taramanın <%1'i;
+  tarama ağa bağlı. Kullanıcıya "Rust taramayı anlamlı hızlandırmaz" denildi; kapsamı kullanıcı seçti.
+- `engine-rs/` (bağımlılıksız crate → wasm32; derlemek için yalnız rustup + wasm32 hedefi, C derleyicisi yok):
+  `ind.rs` (calcAll'in 34 fonksiyonu), `regime.rs` (adaptif eşikler), `sig.rs` (genSignal çekirdeği: skor, sınıf,
+  stop/hedef, vade, uzun vade görüşü), `js.rs` (JS sayı kuralları: null/undefined, Math.max'in NaN'ı,
+  Math.round, toFixed yarım-yukarı, Number→String), `json.rs`, `lib.rs` (C ABI, wasm-bindgen yok).
+- **Sınır**: öğrenilmiş kalibrasyon modeli (signalCalibration), güvenilirlik ipuçları ve Wall Street katmanı JS'te
+  kaldı (saat, tr-TR tarih biçimi, öğrenilmiş durum). genSignal iki aşamalı: Rust skorlar → JS kalibre eder →
+  Rust sınıflar / seviyeleri hesaplar → JS `finalizeSignal` (JS yolu da aynı fonksiyonu kullanır).
+- **Köprü** `src/engine/engineCore.js`: wasm base64 olarak gömülü (Vite ayrı tembel parça; Electron file://, PWA,
+  Capacitor ve Node aynı yoldan yükler). Seriler bellekten doğrudan okunur (JSON değil); JS `null`'u özel bir
+  NaN bit deseni. Uygunsuz girdi (sayı olmayan bar alanı, modellenmeyen seçenek tipi) ya da hata → null → JS
+  motoru. Kapatma: `localStorage.bist_engine = 'js'`. Tanı: tarayıcı konsolunda `window.__bistEngine()`.
+- **`ind` koruması (gözden geçirmede bulundu)**: Rust genSignal skoru `prices`'tan, genSignalJs verilen `ind`'den
+  hesaplar. Başka barlardan üretilmiş bir `ind` ile iki yol ölçülen şekilde ayrışıyordu (skor 61,9 vs 47,4). Bugün
+  hiçbir çağrı noktası bunu yapmıyor (hepsi `genSignal(calcAll(X), X)`), ama testler `ind` alanlarını düzenliyor. Artık
+  Rust yolu yalnız motorun AYNI dizi için ürettiği, üst düzey alanları DOKUNULMAMIŞ `ind` için kullanılır (WeakMap);
+  diğer her durum genSignalJs'e gider. Sınır: iç içe dizi/nesnelerin YERİNDE düzenlenmesi yakalanmaz — kopya düzenleyin.
+- **Eşlik — bit düzeyinde, anahtar sırası dahil**: `src/engine/__tests__/engineParity.test.js` (8 test: 160
+  sentetik uç seri, 5 hissenin 40 gerçek penceresi, 17 seçenek biçimi, kalibrasyon modeli + ipuçları, JS'e düşme,
+  `ind` koruması, hata davranışı, gömülü wasm = güncel Rust kaynak hash'i). `npm run parity:engine`: 130 gerçek seri × 5 yıl,
+  **19.739 pencerede 0 fark**, hiç JS'e düşme yok. Tarayıcıda (Chromium) da doğrulandı; uygulamanın kendi analizi
+  Rust üzerinden koştu.
+- **Hız — ölçüm gürültülü, tek sayı değil aralık** (1.684 gerçek pencere, ısınma sonrası ortanca, 4 bağımsız
+  koşu): calcAll **1,4–1,7×** hızlı (~1,6–1,9 → ~0,95–1,2 ms); calcAll+genSignal toplamı koşuya göre **1,0–1,6×**.
+  genSignal TEK BAŞINA WASM yolunda biraz YAVAŞ (19.739 pencere ortalaması 0,36 → 0,43 ms: JSON taşıma + JS'te
+  kalan kalibrasyon/Wall Street katmanı) — kazancın tamamı calcAll'dan. 623 hisselik taramada tasarruf en fazla
+  ~0,5 sn (taramanın ~%0,3'ü). Boyut: wasm 238 KB (opt-level "s"; 3'te 276 KB), tembel parça 318 KB / gzip 120 KB.
+- **KURAL**: gösterge / sinyal mantığını değiştiren HER değişiklik iki yerde yapılır — Rust (`engine-rs/src`) ve
+  JS referansı (`indicators.js` / `genSignalJs`) — ardından `npm run build:engine` + `npm test` (+ `npm run
+  parity:engine`). Tek tarafı değiştirmek parity testini kırar; kırmızı test "iki motor ayrıştı" demektir.
+- **Taşırken bulunan ölü kurallar (DEĞİŞTİRİLMEDİ — önce eşlik; düzeltmek skoru değiştirir, ölçüm ister)**:
+  (1) Wyckoff Spring/UTAD, Hacim Klimaksı ve DI yakınlaşma puanları hiç çalışmıyor (nesne `=== 'spring'` gibi
+  metinle karşılaştırılıyor); (2) `detectMarketRegime` ATR'yi dizi sanıyor → ATR% hep 0 → VOLATILE rejimi hiç
+  yok, eşik çarpanı hep 0,5; (3) extractFiredSignals'ta WYCKOFF_SPRING / TTM_RELEASE / SUPERTREND_FLIP hiç
+  ateşlenmiyor; (4) vade tahminindeki `macd` / `rsi` / `bollinger` / `golden_cross` / `wyckoff_*` küme adları
+  hiç eklenmiyor; (5) `fibs['2.0']` hiç yok (T3 Fib 2.0 kullanmıyor); (6) gerekçe sınıflandırıcı `StochRSI`
+  metnini RSI, "…verildi " gibi kelimeleri ADX sayıyor.
+- Doğrulama: `npm test` 820 pass (62 dosya), 0 lint error, build temiz; Rust birim testleri 5 pass (`cargo test`);
+  pytest 13 pass (`bist_bridge` varsayılanı değişti, testler oturum sahtesiyle koştuğu için etkilenmez).
 
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ

@@ -32,3 +32,8 @@ reports/replay-*.json
 reports/sweep-*.json
 # KAP olay calismasi ciktisi (scripts/kap-event-study.mjs, yeniden uretilebilir)
 reports/kap-event-study-*.json
+
+# Rust engine build output (v31.42)
+engine-rs/target/
+# pytest / Python bytecode
+__pycache__/
