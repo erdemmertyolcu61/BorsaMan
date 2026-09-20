@@ -1600,6 +1600,11 @@ export function parseBarsPayload(json) {
     if (iF >= 0 && row[iF] === 'a') bar._openApprox = true;
     out.push(bar);
   }
+  // v31.44: second line of defence — the proxy now sorts, but edge caches and a
+  // phone's L2 cache can still hold an unsorted response for a while, and every
+  // indicator here assumes chronological order (measured: an unsorted THYAO
+  // series put MA-20 at 204 against a 285.50 price).
+  out.sort((a, b) => a.date - b.date);
   return out.length >= 10 ? out : null;
 }
 

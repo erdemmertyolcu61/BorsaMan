@@ -2006,8 +2006,27 @@ DÖNEMİ, son tam yıl, ondan önceki tam yıl]`. Böylece:
 - Yan etki (bilinçli): `scoreIsYatirimFundamentals` (Intraday temel skoru) artık gerçek YoY büyüme ve
   yıllık ROE görüyor — eşikler zaten yıllık rakam için yazılmıştı; **kural değişmedi, girdi düzeldi**.
 
+### D — Doğrulama sırasında yakalanan GERÇEK bug: barlar sırasız geliyordu
+Canlı sitede THYAO'yu açınca `MA-20 204,13` (fiyat 285,50), `VWAP 164,02`, günlük değişim
+**-%11,75** görünüyordu; aynı kod yerelde `MA-20 296,99 / -%1,30` diyordu. GARAN temizdi.
+
+Ölçüm (canlı `bars` rotası, 2026-09-21, THYAO): **`days=1850` → 165 ters sıralı çift** ve SON
+satır `2026-04-22`; `days=60` → 19; `days=370` ve `1825` → 0. Yani İş Yatırım'ın HisseTekil ucu
+satır sırasını garanti etmiyor ve bu **aralıklı** — proxy de istemci de sıralamıyordu. Seriyi
+`calcAll` doğrudan yiyor: "son 20 bar" rastgele 20 bar oluyor, "önceki kapanış" rastgele bir gün.
+Yinelenen tarih YOK (1268 satır / 1268 benzersiz) → tek sorun sıra; sıralayınca MA-20 **296,99**,
+son bar 2026-09-18, değişim -%1,30 çıkıyor.
+
+- `mergeDailyBars` + `barsFromYahoo` artık tarihe göre sıralıyor (ISO dizeleri sözlük sırası =
+  kronolojik). `parseBarsPayload` da sıralıyor — **ikinci savunma**: edge cache ve telefondaki L2
+  cache sırasız bir yanıtı bir süre daha taşıyabilir.
+- Test: `barsPayload.test.js` +2 (karıştırılmış girdiyle her iki katman).
+- **Kapsam**: taramanın kullandığı `days=370` penceresi ölçümde temiz çıktı, ama garanti değildi —
+  aynı hata tarama skorlarını da bozabilirdi. Bu commit'ten önce ne kadar sıklıkla bozduğu
+  **bilinmiyor** (sırasızlık aralıklı ve geriye dönük ölçülemez).
+
 ### Doğrulama
-- Test **837 pass (63 dosya)** (tradePlan'in 7 testi silindi, valuation 10 + period plan 2 eklendi),
+- Test **839 pass (63 dosya)** (tradePlan'in 7 testi silindi; valuation 10 + dönem planı 2 + bar sırası 2 eklendi),
   0 lint error (79 warning, ratchet 90), build temiz. Proxy rotası yerelde gerçek uca karşı koştu:
   628 satır, THYAO 2,96 / 0,39; `isy_foreign` 603 satırda **değişmedi**.
 - Canlı önizleme (gerçek veri): plan gitti, başlıkta `Piyasa Değeri 394,0B TL · F/K 3,0 · PD/DD 0,39`,

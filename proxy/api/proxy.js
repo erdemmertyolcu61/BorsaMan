@@ -333,6 +333,14 @@ export function mergeDailyBars(isyRows, yahooResult) {
     const lots = Math.round((Number(v.HGDG_HACIM) || 0) / c);
     rows.push([d, round4(o), round4(h), round4(l), round4(c), lots, round4(vwap), of]);
   }
+  // v31.44: NEVER trust the upstream's row order. Measured on the live route
+  // (2026-09-21, THYAO): days=1850 came back with 165 out-of-order pairs and
+  // 2026-04-22 as the LAST row, days=60 with 19 — while days=370 and 1825 were
+  // clean, so it is intermittent. The client feeds these rows straight into
+  // calcAll, where "the last 20 bars" is a moving average: the analyse screen
+  // showed MA-20 204.13 against a 285.50 price and a -11.75% day that never
+  // happened (sorted: MA-20 296.99, -1.30%). ISO dates sort lexicographically.
+  rows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   return { rows, openReal, openApprox: rows.length - openReal };
 }
 
@@ -350,6 +358,7 @@ export function barsFromYahoo(yahooResult) {
     const o = hasOpen ? Math.min(Math.max(q.open[i], l), h) : c;
     rows.push([yahooDayKey(ts), round4(o), round4(h), round4(l), round4(c), Math.round(q.volume?.[i] || 0), null, hasOpen ? 'y' : 'a']);
   });
+  rows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));   // see mergeDailyBars
   return rows;
 }
 

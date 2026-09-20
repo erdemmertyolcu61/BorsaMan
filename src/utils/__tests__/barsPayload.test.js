@@ -52,3 +52,32 @@ describe('bars payload round trip: proxy merge → client parse (v31.40)', () =>
     expect(parseBarsPayload({ error: 'Invalid source parameter' })).toBeNull();
   });
 });
+
+// v31.44: İş Yatırım's HisseTekil does not guarantee row order. Measured on the
+// live route (2026-09-21, THYAO): days=1850 returned 165 out-of-order pairs with
+// 2026-04-22 as the last row, days=60 returned 19 — while days=370 and 1825 were
+// clean, so it is intermittent and invisible until an indicator reads it. The
+// analyse screen showed MA-20 204.13 under a 285.50 price and a -11.75% day that
+// never happened. Both layers sort now: the proxy at the source, the client
+// because caches can still hold an unsorted response.
+describe('bar ordering', () => {
+  const shuffled = [isy[7], isy[2], isy[11], isy[0], isy[5], isy[9], isy[1], isy[3], isy[10], isy[4], isy[8], isy[6]];
+
+  it('mergeDailyBars returns chronological rows whatever order the upstream used', () => {
+    const merged = mergeDailyBars(shuffled, yahoo);
+    const dates = merged.rows.map(r => r[0]);
+    expect(dates).toEqual([...dates].sort());
+    expect(merged.rows).toHaveLength(12);
+    expect(merged.rows[11][4]).toBe(111);          // newest close is last
+    expect(merged.rows[0][4]).toBe(100);
+  });
+
+  it('parseBarsPayload sorts a payload an older proxy left unsorted', () => {
+    const rows = mergeDailyBars(isy, yahoo).rows;
+    const outOfOrder = [rows[6], rows[0], rows[11], rows[3], rows[9], rows[1], rows[7], rows[2], rows[10], rows[4], rows[8], rows[5]];
+    const bars = parseBarsPayload({ ok: true, fields: BAR_FIELDS, rows: outOfOrder });
+    expect(bars).toHaveLength(12);
+    for (let i = 1; i < bars.length; i++) expect(bars[i].date.getTime()).toBeGreaterThan(bars[i - 1].date.getTime());
+    expect(bars[bars.length - 1].close).toBe(111);
+  });
+});
