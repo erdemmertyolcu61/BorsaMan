@@ -528,7 +528,10 @@ function calcTomorrowPotential(result) {
   if (result.ichimoku?.tkCross === 'bullish') tpScore += 10;
   if (result.ichimoku?.kumoBreakout === 'bullish') tpScore += 12;
   if (result.ichimoku?.cloudPosition === 'above') tpScore += 4;
-  if (result.supertrend?.flip === 'bullish') tpScore += 12;
+  // v31.43: "Supertrend yukari donusu +12" KALDIRILDI (kullanici karari, olcume dayali).
+  // scripts/signal-event-study.mjs — 89 hisse x 4 yil, piyasa-goreli: yukari donus ertesi
+  // gun -%0,17 (t -2,3), 10 seansta -%0,62 (t -2,4). Iki ufukta da negatif, yani bu artiyi
+  // veren kurulum ortalamanin ALTINDA kaliyordu. Supertrend'in YONU (asagidaki +4) duruyor.
   if (result.supertrend?.trend === 'UP') tpScore += 4;
   // v31.43: `wyckoffSpring` bir nesne ({type:'spring'|'utad'}); dogruluk kontrolu UTAD'a
   // (dagitim tuzagi, tasarimda DUSUS isareti) da bu +15'i veriyordu. Yalniz spring.

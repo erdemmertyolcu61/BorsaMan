@@ -1935,10 +1935,13 @@ kalite kapısı (v31.10) verisiz çalışıyordu.
 - Olay çalışması sinyalleri ÖLÇER, advisor'ın likidite/haber/makro/sektör katmanlarını değil; tek veri
   kaynağı (Yahoo), 89 büyük/orta-cap. Intraday (15 dk) ufku ölçülmedi — o yüzden Intraday'deki ölü
   puanlar açılmadı, kaldırıldı.
-- **Canlı skorda duran, ölçümde negatif çıkan iki kural var** (ölü değiller, o yüzden dokunulmadı):
-  yarın potansiyelinde Wyckoff spring +15 (spring ertesi gün −%0,10, t −2,4) ve Supertrend yukarı
-  dönüşü +12 (ertesi gün −%0,17, t −2,3; 10 seans −%0,62, t −2,4). Bunları kaldırmak canlı skoru
-  değiştirir — kullanıcı kararı.
+- **Canlı skorda ölçümde negatif çıkan iki kural** (ölü değillerdi, karar kullanıcıya soruldu):
+  - **Supertrend yukarı dönüşü +12 → KALDIRILDI** (kullanıcı kararı): ertesi gün −%0,17 (t −2,3),
+    10 seansta −%0,62 (t −2,4) — iki ufukta da negatif. Supertrend'in YÖNÜ (+4) duruyor.
+  - **Wyckoff spring +15 → DURUYOR** (kullanıcı kararı): ertesi gün −%0,10 (t −2,4), 10 seansta
+    −%0,20 (t −1,3) — daha zayıf kanıt; ileri veri biriksin.
+  - İlgili, DOKUNULMAYAN kalem: erken birikim sinyal listesinde "Supertrend YUKARI" (dönüş + trend
+    UP) hâlâ bir sinyal sayılıyor (4+ sinyal → `_earlyPick`). Aynı olay, farklı mekanizma — ayrı karar.
 
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
