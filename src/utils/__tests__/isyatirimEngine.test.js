@@ -11,11 +11,14 @@ const { getDataViaProxies } = await import('../fetchEngine.js');
 const { planIsyRoutes, fetchIsYatirimFinancials } = await import('../isyatirimEngine.js');
 
 const row = (desc, v) => ({ itemDescTr: desc, itemValue1: v, itemValue2: v * 0.9, itemValue3: v * 0.8, itemValue4: v * 0.7 });
+// Real İş Yatırım labels (XI_29): equity is plain "Özkaynaklar" and there is no
+// "Toplam Yükümlülükler" row — short and long term are listed separately.
 const MALI_TABLO = JSON.stringify({
   value: [
     row('Hasılat', 1000), row('Brüt Kar (Zarar)', 300), row('Dönem Karı (Zararı)', 120),
     row('Toplam Varlıklar', 5000), row('Dönen Varlıklar', 2000),
-    row('Kısa Vadeli Yükümlülükler', 1200), row('Toplam Özkaynaklar', 2500),
+    row('Kısa Vadeli Yükümlülükler', 1200), row('Uzun Vadeli Yükümlülükler', 1300),
+    row('Özkaynaklar', 2500),
   ],
 });
 
@@ -54,6 +57,19 @@ describe('fetchIsYatirimFinancials', () => {
     expect(url).toContain('MaliTablo?companyCode=THYAO');
     expect(fin?.symbol).toBe('THYAO');
     expect(Object.keys(fin.metrics).length).toBeGreaterThanOrEqual(3);
+  });
+
+  // v31.43: equity never mapped (the sheet says "Özkaynaklar", the table expected
+  // "Toplam Özkaynaklar") and no total-liabilities row exists, so the panel showed
+  // N/A for ROE and debt/equity on every real statement.
+  it('maps plain "Özkaynaklar" and derives total liabilities from the two terms', async () => {
+    vi.mocked(getDataViaProxies).mockResolvedValue(MALI_TABLO);
+    const fin = await fetchIsYatirimFinancials('THYAO');
+    expect(fin.latest.totalEquity).toBe(2500);
+    expect(fin.derivedTotalLiabilities).toBe(true);
+    expect(fin.latest.totalLiabilities).toBe(2500);          // 1200 + 1300
+    expect(fin.ratios.roe).toBeCloseTo(120 / 2500 * 100, 6); // was null before
+    expect(fin.ratios.debtToEquity).toBeCloseTo(1, 6);
   });
 
   it('returns null — never a half-parsed object — when every route fails', async () => {

@@ -142,6 +142,9 @@ function parseFinancialData(rows, symbol, periodLabels) {
     'yukumlulukler toplami': 'totalLiabilities',
     'toplam ozkaynaklar': 'totalEquity',
     'ozkaynaklar toplami': 'totalEquity',
+    // v31.43: İş Yatırım's XI_29 sheet labels it plainly "Özkaynaklar" (code 2N), so
+    // equity never mapped and ROE / debt-to-equity showed N/A on real statements.
+    'ozkaynaklar': 'totalEquity',
     'ana ortakliga ait ozkaynaklar': 'parentEquity',
     'odenmis sermaye': 'paidCapital',
     'stoklar': 'inventories',
@@ -198,6 +201,22 @@ function parseFinancialData(rows, symbol, periodLabels) {
       }
     }
     if (Object.keys(vals).length > 0) out.metrics[mkey] = vals;
+  }
+
+  // v31.43: the same sheet has no "Toplam Yükümlülükler" row — short- and long-term
+  // liabilities are listed separately. Measured on THYAO 2026/6: 566.8B + 774.8B =
+  // 1,341.6B, exactly totalAssets − equity. Derive it so the debt ratios exist.
+  if (!out.metrics.totalLiabilities && out.metrics.currentLiabilities && out.metrics.longTermDebt) {
+    const derived = {};
+    for (const label of Object.keys(out.metrics.currentLiabilities)) {
+      const shortTerm = out.metrics.currentLiabilities[label];
+      const longTerm = out.metrics.longTermDebt[label];
+      if (Number.isFinite(shortTerm) && Number.isFinite(longTerm)) derived[label] = shortTerm + longTerm;
+    }
+    if (Object.keys(derived).length) {
+      out.metrics.totalLiabilities = derived;
+      out.derivedTotalLiabilities = true;   // kisa + uzun vadeli toplami
+    }
   }
 
   const curr = periodLabels[0] || Object.keys(out.metrics.revenue || {})[0];

@@ -1916,9 +1916,20 @@ kalite kapısı (v31.10) verisiz çalışıyordu.
 - `check:proxy`'ye iki kontrol eklendi (quoteSummary + MaliTablo) → deploy sonrası tek komutla görünür.
 - Ölçüm (yerelde gerçek uçlara karşı): quoteSummary 200 (5 modül), yahoo_fund 200, MaliTablo
   GARAN/UFRS_K 200 (192 satır), yahoo chart regresyonu 200.
+- **Deploy sonrası canlıda çıkan İKİNCİ blokaj (asıl sebep buydu)**: istekler 200 dönüyordu ama
+  uygulama hâlâ "IsYatirim: no data" diyordu. `tryProxy` (paylaşılan proxy yarışının doğrulayıcısı)
+  JSON yanıtlarda YALNIZ iki şekli kabul ediyordu: allorigins `contents` sarmalayıcısı veya Yahoo
+  grafiği (`j.chart` / 5'ten uzun dizi) — başka her JSON `null` oluyordu. Yani bilanço ve
+  `quoteSummary` yanıtları istemcide çöpe gidiyordu. Artık yalnız çöp elenir (ayrıştırılamayan gövde,
+  HTML hata sayfası); şekil doğrulaması ne istediğini bilen çağırana ait (`fetchEngine.test.js` +3).
+- **Eşleme boşluğu**: İş'in XI_29 tablosunda özkaynak satırı düz **"Özkaynaklar"** (tabloda yalnız
+  "Toplam Özkaynaklar" vardı) ve **"Toplam Yükümlülükler" satırı YOK** (kısa + uzun vadeli ayrı).
+  Bu yüzden panelde ROE ve Borç/Özkaynak her zaman N/A idi. Eşleme eklendi + toplam yükümlülük iki
+  kalemden türetiliyor. Gerçek veriyle doğrulandı: THYAO türetilen 1.342 milyar = varlık − özkaynak
+  (birebir), EREGL 270 milyar (birebir).
 
 ### Doğrulama / sınırlar (dürüst)
-- Test **827 pass (63 dosya)**, 0 lint error, build temiz; Rust birim testleri 5 pass;
+- Test **831 pass (63 dosya)**, 0 lint error, build temiz; Rust birim testleri 5 pass;
   `npm run parity:engine` **19.739 pencerede 0 fark** (ATR + sınıflandırıcı değişikliği iki motora da
   girdi).
 - Olay çalışması sinyalleri ÖLÇER, advisor'ın likidite/haber/makro/sektör katmanlarını değil; tek veri
