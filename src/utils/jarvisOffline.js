@@ -155,8 +155,6 @@ _(API anahtari olmadan offline modda calistigim icin sadece veri tabanli sorular
       if (adx > 20) teyit.push(`trend gucu yeterli (ADX: ${adx.toFixed(0)})`);
       if (ind.obvDivergence === 'bullish_div') teyit.push('OBV bullish diverjans');
       if (ind.rsiDivergence === 'bullish') teyit.push('RSI bullish diverjans');
-      if (ind.wyckoffSpring === 'spring') teyit.push('Wyckoff Spring — yukari patlama potansiyeli');
-      if (ind.volumeClimax === 'selling_climax') teyit.push('satis klimaksi — taban sinyali');
 
       return `Efendim, **${symbol}** uzerinde **${teyit.length} katli teyit** tespit ediyorum:\n\n${teyit.map(t => '- ' + t).join('\n')}\n\nSinyal skoru **${sig.score?.toFixed(0)}/100**. Giris: **${sig.entry?.toFixed(2)} TL**, Stop: **${sig.stop?.toFixed(2)} TL**, Hedef 1: **${sig.t1?.toFixed(2)} TL**, Hedef 2: **${sig.t2?.toFixed(2)} TL**. R/R: **1:${sig.rr?.toFixed(1)}** (${sig.rrQuality || '?'}).\n\nStrateji: 10K hesapta sermayenizin maksimum %2'sini riske atin — 1/3 giris, teyit gelirse ekleyin.`;
     }
@@ -266,10 +264,9 @@ _(API anahtari olmadan offline modda calistigim icin sadece veri tabanli sorular
     if (ind.obvDivergence === 'bearish_div') adv.push('**OBV Bearish Diverjans:** Fiyat yuksek tepe, OBV dusuk tepe — akilli para sessizce cikiyor.');
     if (ind.rsiDivergence === 'bullish') adv.push('**RSI Bullish Diverjans:** Momentum toparlanma sinyali.');
     if (ind.rsiDivergence === 'bearish') adv.push('**RSI Bearish Diverjans:** Momentum zayifliyor, zirve riski.');
-    if (ind.wyckoffSpring === 'spring') adv.push('**Wyckoff Spring:** Destek altina inip geri toparlandi — yukari atis potansiyeli yuksek.');
-    if (ind.wyckoffSpring === 'utad') adv.push('**Wyckoff UTAD:** Direnc ustune cikip geri cekildi — dagitim tuzagi.');
-    if (ind.volumeClimax === 'selling_climax') adv.push('**Satis Klimaks:** Tum saticilar bosaldi — taban olusumu olabilir.');
-    if (ind.volumeClimax === 'buying_climax') adv.push('**Alis Klimaks:** Son alicilar da girdi — tavan olusumu olabilir.');
+    // v31.43: spring/UTAD ve klimaks yorumlari hic gorunmedi (nesne vs metin). Olcumle
+    // celisen "taban olusumu" iddiasi eklenmedi; satis klimaksi olculen haliyle yazilir.
+    if (ind.volumeClimax?.type === 'selling_climax') adv.push('**Satis Klimaksi:** 3x+ hacimle sert dusus. BIST olcumu (89 hisse, 4 yil): taban DEGIL — sonraki 10 seansta piyasanin ~%3,6 gerisinde kaldi.');
     if (!adv.length) return `Efendim, **${symbol}** uzerinde su an belirgin diverjans veya ileri sinyal yok. Olusum aninda bildiririm.`;
     return `Efendim, **${symbol}** ileri sinyal analizim:\n\n${adv.join('\n\n')}\n\n**Yorum:** Diverjanslar en guclu donus sinyalleridir ama tek baslarina yeterli degil — destek/direnc ve hacim teyidi sart.`;
   }
@@ -297,8 +294,9 @@ _(API anahtari olmadan offline modda calistigim icin sadece veri tabanli sorular
   const advList = [];
   if (ind.obvDivergence) advList.push(`OBV: ${ind.obvDivergence}`);
   if (ind.rsiDivergence) advList.push(`RSI: ${ind.rsiDivergence}`);
-  if (ind.wyckoffSpring) advList.push(`Wyckoff: ${ind.wyckoffSpring}`);
-  if (ind.volumeClimax) advList.push(`Hacim: ${ind.volumeClimax}`);
+  // v31.43: bu alanlar nesne; eskiden metne "[object Object]" basiliyordu
+  if (ind.wyckoffSpring?.type) advList.push(`Wyckoff: ${ind.wyckoffSpring.type}`);
+  if (ind.volumeClimax?.type) advList.push(`Hacim: ${ind.volumeClimax.type}`);
   const advStr = advList.length ? `\n**5. Ileri Sinyaller:** ${advList.join(', ')}.` : '';
 
   return `Efendim, sorunuzu anliyorum. **${symbol}** uzerinde tum kurumsal taramami paylasiyorum:

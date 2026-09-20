@@ -51,7 +51,6 @@ function buildStrategyNote(r, phase) {
   // Additional signal notes
   if (r.volSurge) notes.push('HACIM PATLAMASI: Normal gunden cok daha fazla hacim akiyor — kurumsal hareket isareti.');
   if (r.obvDivergence === 'bullish_div') notes.push('OBV DIVERJANS: Fiyat dusus yaparken kurumsal birikim artiyordu — guclu tersine donus sinyali.');
-  if (r.wyckoffSpring === 'spring') notes.push('WYCKOFF SPRING: Kurumsal tuzak tamamlandi, zayif saticilar silkelendi. Yukari atis bekleniyor.');
   if (r.rsiDivergence === 'bullish') notes.push('RSI DIVERJANS: Fiyat yeniden dip yaparken RSI yukseliyordu — dipten donus onayliyor.');
 
   // Session-specific warning
@@ -142,11 +141,10 @@ function scoreIntradayOpportunity(r, marketInfo, session) {
   if (r.rsiDivergence === 'bullish') { s += 2; tags.push('RSI Diverjans'); }
   else if (r.rsiDivergence === 'bearish') s -= 2;
 
-  if (r.wyckoffSpring === 'spring') { s += 3; tags.push('Wyckoff Spring'); }
-  else if (r.wyckoffSpring === 'utad') s -= 3;
-
-  if (r.volumeClimax === 'selling_climax') { s += 2; tags.push('Satis Klimaksi'); }
-  else if (r.volumeClimax === 'buying_climax') s -= 2;
+  // v31.43: Wyckoff spring/UTAD (+3/-3) ve hacim klimaksi (+2/-2) burada puanlaniyordu ama
+  // gostergeler nesne dondurdugu icin (`{type:'spring',...}`) hic calismadi. Canlandirmadan
+  // once gunluk veride olculdu (scripts/signal-event-study.mjs): spring ertesi gun -%0,10,
+  // satis klimaksi ertesi gun -%1,21 (t -5,3) — yani +2 "dip" puani TERS yondeydi. Kaldirildi.
 
   if (r.ttmSqueeze?.firing && r.ttmSqueeze?.momentum > 0) { s += 2; tags.push('Squeeze Atis'); }
 
@@ -335,7 +333,6 @@ export default function TradesTab({ addToPortfolio, portfolio, signalTracker, ad
         if (r.rsi < 40) ps += 3;
         if (r.volRatio > 1.5) ps += 3;
         if (r.cmf > 0.1) ps += 2;
-        if (r.wyckoffSpring === 'spring') ps += 4;
         if (r.ttmSqueeze?.firing && r.ttmSqueeze?.momentum > 0) ps += 3;
         if (r.obvDivergence === 'bullish_div') ps += 3;
         if (r.dailyRange > 2.5) ps += 2;
@@ -719,7 +716,6 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
 
   const playMeta = PLAY_TYPE_META[r.playType] || PLAY_TYPE_META.none;
   const hasDivergence = r.obvDivergence === 'bullish_div' || r.rsiDivergence === 'bullish';
-  const hasSpring = r.wyckoffSpring === 'spring';
   const isLeader = r.rsData?.strongLeader;
   const orbBroke = r.orbData?.breakoutUp;
 
@@ -749,7 +745,6 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
                 </span>
               )}
               {hasDivergence && <span style={{ fontSize: 7, background: 'var(--purple)', color: '#fff', padding: '1px 5px', borderRadius: 3 }}>DIV</span>}
-              {hasSpring && <span style={{ fontSize: 7, background: '#ff6b00', color: '#fff', padding: '1px 5px', borderRadius: 3 }}>SPRING</span>}
               {isLeader && <span style={{ fontSize: 7, background: 'var(--cyan)', color: '#000', padding: '1px 5px', borderRadius: 3 }}>RS LIDER</span>}
               {orbBroke && <span style={{ fontSize: 7, background: 'var(--yellow)', color: '#000', padding: '1px 5px', borderRadius: 3 }}>ORB{'↗'}</span>}
               {r.intraday15mLoaded && <span style={{ fontSize: 7, background: 'rgba(0,229,255,.15)', color: 'var(--cyan)', padding: '1px 4px', borderRadius: 2 }}>15dk</span>}
@@ -933,8 +928,11 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 9 }}>
                 {r.obvDivergence && <span style={{ color: r.obvDivergence.includes('bullish') ? 'var(--green)' : 'var(--red)' }}>OBV: {r.obvDivergence}</span>}
                 {r.rsiDivergence && <span style={{ color: r.rsiDivergence === 'bullish' ? 'var(--green)' : 'var(--red)' }}>RSI div: {r.rsiDivergence}</span>}
-                {r.wyckoffSpring && <span style={{ color: r.wyckoffSpring === 'spring' ? 'var(--green)' : 'var(--red)' }}>Wyckoff: {r.wyckoffSpring}</span>}
-                {r.volumeClimax && <span style={{ color: r.volumeClimax.includes('selling') ? 'var(--green)' : 'var(--red)' }}>Hacim: {r.volumeClimax}</span>}
+                {/* v31.43: bu iki alan nesne ({type,...}); eskiden nesneyi dogrudan basip
+                    `.includes` cagiriyordu → kart React hatasiyla dusuyordu. Yon rengi yok:
+                    spring'in olculen ustunlugu yok, satis klimaksi ise olculen NEGATIF. */}
+                {r.wyckoffSpring?.type && <span style={{ color: 'var(--t2)' }}>Wyckoff: {r.wyckoffSpring.type}</span>}
+                {r.volumeClimax?.type && <span style={{ color: r.volumeClimax.type === 'selling_climax' ? 'var(--red)' : 'var(--t2)' }}>Hacim: {r.volumeClimax.type}</span>}
               </div>
             </div>
           )}

@@ -37,13 +37,17 @@ export function calcContinuationProbability(r) {
   else if (cmf > 0.12) prob += 5;
   else if (cmf < -0.05) prob -= 9;
 
-  // ── WYCKOFF FAZ ──
-  if (r.wyckoffPhase === 'Markup') prob += 7;       // Markup fazdaysa devam
-  else if (r.wyckoffPhase === 'Distribution') prob -= 11;
-  if (r.wyckoffSpring) prob += 4;
+  // ── WYCKOFF ──
+  // v31.43: `r.wyckoffPhase === 'Markup'` (+7) / `'Distribution'` (-11) hic calismadi —
+  // tarama sonucunda faz `wyckoff` alaninda ve kucuk harf ('markup'). Canlandirmadan once
+  // olculdu (scripts/signal-event-study.mjs): +%7 ustu gunde markup fazi ertesi gun
+  // -%0,50, diger pompalar -%0,44 — devam ustunlugu yok; dagitim ornegi (n=31) yetersiz.
+  // Kaldirildi. Spring kontrolu UTAD'i da sayiyordu (nesne dogrulugu) — artik yalniz spring.
+  if (r.wyckoffSpring?.type === 'spring') prob += 4;
 
-  // ── TTM SQUEEZE RELEASE — kirilim enerjisi hala aktif ──
-  if (r.ttmSqueeze?.squeezeRelease) prob += 7;
+  // ── TTM SQUEEZE ──
+  // v31.43: "release +7" hic calismadi (squeezeRelease uretilmiyor); olculen yukari
+  // cikis negatif (10 seans -%0,93, t -2,8) — canlandirilmadi.
   if (r.ttmSqueeze?.squeezeOn) prob += 3;
 
   // ── MFI — asiri alim seviyesi ──
@@ -144,12 +148,13 @@ export function isUnsafeForTomorrow(r) {
   if (tp >= 5 && tp < 7) {
     const hasCatalyst = r.newsCategories?.some(c =>
       ['fund_inflow', 'buyback', 'insider_buy', 'contract'].includes(c));
+    // v31.43: listede `wyckoffSpring === true || wyckoff === 'Markup'` ve
+    // `squeezeRelease === true` da vardi; ucu de hic dogru olmadi (nesne / kucuk harf /
+    // uretilmeyen alan). Yani fiilen bu dort kontrolun HEPSI gerekiyordu — davranis ayni.
     const techConfirms = [
       r.obvTrend === 'accumulation',
       (r.cmf || 0) > 0.05,
       (r.volRatio || 1) >= 1.3,
-      r.wyckoffSpring === true || r.wyckoff === 'Markup',
-      r.ttmSqueeze?.squeezeRelease === true,
       (r.adx || 0) > 25,
     ].filter(Boolean).length;
     // Kataliz YOK ise red; kataliz var ama < 4 teknik teyit ise red

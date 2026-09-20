@@ -558,6 +558,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid source or missing parameters' });
     }
   }
+  // v31.43: yahoo_fund is a Yahoo request — same headers and crumb as 'yahoo'.
+  if (sourceType === 'yahoo_fund') sourceType = 'yahoo';
 
   if (!targetUrl) {
     return res.status(400).json({
@@ -611,8 +613,10 @@ export default async function handler(req, res) {
       if (key) fetchHeaders.key = key;
     }
 
-    // Auto-inject Yahoo Crumb if target is Yahoo v8 or requires it
-    if (sourceType === 'yahoo' && targetUrl.includes('/v8/')) {
+    // Auto-inject the Yahoo crumb. v31.43: quoteSummary (/v10/, fundamentals) and
+    // /v7/ quote answer 401 "Invalid Crumb" without it — measured 2026-09-19, the
+    // advisor's fundamentals gate received no Yahoo data through this proxy.
+    if (sourceType === 'yahoo' && /\/v(7|8|10)\/finance\//.test(targetUrl)) {
       const auth = await getYahooAuth();
       if (auth && auth.cookie) {
         fetchHeaders['Cookie'] = auth.cookie;

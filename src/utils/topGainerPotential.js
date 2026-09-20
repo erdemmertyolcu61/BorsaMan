@@ -60,7 +60,7 @@ function applyFactor(state, condition, mult, label) {
  * Estimate the chance this name posts a big up day (top-10 gainer candidate).
  *
  * @param {object} r scan result (atrPct, volRatio, obvTrend, cmf, rsi, mfi,
- *                  ttmSqueeze, wyckoffSpring, recentPump, cumulativePump,
+ *                  ttmSqueeze, recentPump, cumulativePump,
  *                  todayPumpReal, newsCategories, avgVolumeTL, distFromMA20)
  * @param {Array<{close:number}>} prices daily bars for the base rate
  * @returns {{score:number, probPct:number, baseRatePct:number, eligible:boolean,
@@ -102,10 +102,12 @@ export function computeTopGainerPotential(r, prices, opts = {}) {
   const hotCats = ['insider_buy', 'buyback', 'fund_inflow', 'contract', 'catalyst_event', 'upgrade'];
 
   // ── ENERGY: a coiled spring is the classic precursor of an outsized day ──
-  applyFactor(st, r.ttmSqueeze?.squeezeRelease === true, 1.60, 'TTM sikisma birakti');
-  applyFactor(st, r.ttmSqueeze?.squeezeRelease !== true && r.ttmSqueeze?.squeezeOn === true,
-    1.30, 'TTM sikisma aktif');
-  applyFactor(st, r.wyckoffSpring === true, 1.25, 'Wyckoff Spring');
+  // v31.43: "TTM sikisma birakti x1.60" ve "Wyckoff Spring x1.25" carpanlari hic
+  // uygulanmadi (squeezeRelease uretilmiyor; wyckoffSpring `true` degil, bir nesne).
+  // Canlandirmadan once olculdu (scripts/signal-event-study.mjs): yukari cikis 10 seansta
+  // -%0,93 (t -2,8), spring ertesi gun -%0,10 (t -2,4) — ikisi de buyuk yukari gunun
+  // habercisi degil. Kaldirildi; kalan carpanlarin davranisi ayni.
+  applyFactor(st, r.ttmSqueeze?.squeezeOn === true, 1.30, 'TTM sikisma aktif');
 
   // ── SMART MONEY: someone has to be buying before the tape does ──
   applyFactor(st, r.obvTrend === 'accumulation' && cmf > 0.05, 1.30, 'OBV birikim + CMF+');

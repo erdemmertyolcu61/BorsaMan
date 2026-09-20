@@ -64,7 +64,9 @@ export function extractFiredSignals(ind, prices = []) {
   }
   if (ind.ttmSqueeze?.firing && (ind.ttmSqueeze.squeezeCount || 0) >= 5)
     fired.push('TTM_FIRE');
-  if (ind.ttmSqueeze?.squeezeRelease) fired.push('TTM_RELEASE');
+  // v31.43: TTM_RELEASE read `squeezeRelease`, which calcTTMSqueeze never produced, so the
+  // tag never fired. Not revived: a squeeze release up measured -0.93% over 10 sessions
+  // (t -2.8, scripts/signal-event-study.mjs).
   if (ind.ttmSqueeze?.squeezeOn) fired.push('TTM_SQUEEZE_ON');
 
   // ── Smart money ────────────────────────────────────────────────
@@ -83,7 +85,8 @@ export function extractFiredSignals(ind, prices = []) {
   if (ind.wyckoffPhase === 'accumulation') fired.push('WYCKOFF_ACC');
   if (ind.wyckoffPhase === 'distribution') fired.push('WYCKOFF_DIST');
   if (ind.wyckoffPhase === 'markup') fired.push('WYCKOFF_MARKUP');
-  if (ind.wyckoffSpring === true) fired.push('WYCKOFF_SPRING');
+  // v31.43: wyckoffSpring is `{type:'spring'|'utad',...}`; `=== true` never matched.
+  if (ind.wyckoffSpring?.type === 'spring') fired.push('WYCKOFF_SPRING');
 
   // ── Structure / MA ─────────────────────────────────────────────
   if (ind.lastMA20 && p > 0) {
@@ -104,9 +107,9 @@ export function extractFiredSignals(ind, prices = []) {
   // ── Supertrend / Ichimoku ──────────────────────────────────────
   if (ind.supertrend?.trend === 'UP') fired.push('SUPERTREND_UP');
   if (ind.supertrend?.trend === 'DOWN') fired.push('SUPERTREND_DOWN');
-  if (ind.supertrend?.flip === true) {
-    fired.push(ind.supertrend.trend === 'UP' ? 'SUPERTREND_FLIP_UP' : 'SUPERTREND_FLIP_DOWN');
-  }
+  // v31.43: flip is 'bullish' | 'bearish' | null; `=== true` never matched.
+  if (ind.supertrend?.flip === 'bullish') fired.push('SUPERTREND_FLIP_UP');
+  else if (ind.supertrend?.flip === 'bearish') fired.push('SUPERTREND_FLIP_DOWN');
 
   // ── Bollinger ──────────────────────────────────────────────────
   if (ind.lastBU && ind.lastBL && ind.lastBM) {
@@ -660,27 +663,16 @@ export function genSignalJs(ind, prices, { kapSentiment, htfContext, sectorStren
     else if (ind.rsiDivergence === 'bearish') { score -= 2; reasons.push({ t: 'RSI BEARISH DIVERJANS: Fiyat yuksek tepe, RSI dusuk tepe — zirve riski', c: 'bearish' }); }
   }
 
-  // Wyckoff Spring/UTAD (institutional traps — high-value reversal signals)
-  if (ind.wyckoffSpring) {
-    if (ind.wyckoffSpring === 'spring') { score += 2.5; reasons.push({ t: 'WYCKOFF SPRING: Destek alti fake kirilma + toparlanma — kurumsal tuzak', c: 'bullish' }); }
-    else if (ind.wyckoffSpring === 'utad') { score -= 2.5; reasons.push({ t: 'WYCKOFF UTAD: Direnç ustu fake kirilma + geri cekilme — dagitim tuzagi', c: 'bearish' }); }
-  }
-
-  // Volume Climax (extreme volume events signaling exhaustion)
-  if (ind.volumeClimax) {
-    if (ind.volumeClimax === 'buying_climax') { score -= 1.5; reasons.push({ t: 'HACIM KLIMAKS: Asiri alim hacmi — tavan olabilir', c: 'bearish' }); }
-    else if (ind.volumeClimax === 'selling_climax') { score += 1.5; reasons.push({ t: 'HACIM KLIMAKS: Asiri satim hacmi — taban olabilir', c: 'bullish' }); }
-    else if (ind.volumeClimax === 'volume_exhaustion') { score += 0.5; reasons.push({ t: 'HACIM TUKENMESI: Satis baskisi azaliyor', c: 'bullish' }); }
-  }
-
-  // DI Convergence (trend weakness warning)
-  if (ind.diConvergence) {
-    if (ind.diConvergence === 'converging') {
-      // DI lines converging = current trend losing steam
-      if (score > 2) { score -= 0.5; reasons.push({ t: 'DI YAKINLASMA: +DI/-DI yakinlasiyor — trend zayifliyor', c: 'neutral' }); }
-      else if (score < -2) { score += 0.5; reasons.push({ t: 'DI YAKINLASMA: +DI/-DI yakinlasiyor — dusus yavasliyabilir', c: 'neutral' }); }
-    }
-  }
+  // v31.43: Wyckoff Spring/UTAD (+/-2.5), Volume Climax (-1.5/+1.5/+0.5) and DI
+  // convergence (+/-0.5) used to be scored here, but they compared objects
+  // ({type:'spring',...}) with strings, so none of them ever ran. Measured before
+  // reviving them (scripts/signal-event-study.mjs — 89 stocks, 2022-06..2026-08,
+  // next-open entry, excess over the same-day universe):
+  //   spring -0.10% next day (t -2.4), UTAD -0.07%, DI convergence ~0;
+  //   selling climax -1.21% next day / -3.59% over 10 sessions (t -5.2) — the
+  //   OPPOSITE of the +1.5 "bottom" it was meant to score.
+  // Switching them on as designed also lowered the replayed buy set (+2.00% ->
+  // +1.98%). Removed; neither engine scores them (engine-rs never did).
 
   // Wyckoff Phase
   if (ind.wyckoffPhase) {
@@ -733,19 +725,23 @@ export function genSignalJs(ind, prices, { kapSentiment, htfContext, sectorStren
     // Classify each reason into an indicator category
     const text = r.t;
     let cat = null;
+    // v31.43: StochRSI is tested before RSI (its text contains "RSI ", so STOCH was
+    // unreachable); the ADX test is case-sensitive (with /i, "DI\s" matched Turkish
+    // "-di " endings like "verildi " and counted weak-close reasons as ADX); KAP is a
+    // whole word (it matched "KAPANIS"). Replayed on 26,855 buy candidates: neutral.
     if (/MA-\d|Golden|Death|MA-200/i.test(text)) cat = 'MA';
+    else if (/StochRSI/i.test(text)) cat = 'STOCH';
     else if (/RSI\s/i.test(text)) cat = 'RSI';
     else if (/MACD|Histogram/i.test(text)) cat = 'MACD';
-    else if (/StochRSI/i.test(text)) cat = 'STOCH';
     else if (/Bollinger|BB/i.test(text)) cat = 'BBAND';
     else if (/Hacim|hacim|VPVR/i.test(text)) cat = 'VOL';
     else if (/MFI|OBV|CMF|VWAP|Wyckoff|Akilli|Birikim|Dagilim/i.test(text)) cat = 'SMART';
-    else if (/ADX|DI\s|Trend\s/i.test(text)) cat = 'ADX';
+    else if (/ADX|\bDI\b|Trend\s/.test(text)) cat = 'ADX';
     else if (/TTM|SQUEEZE/i.test(text)) cat = 'TTM';
     else if (/DIVERJANS|KLIMAKS|SPRING|UTAD/i.test(text)) cat = 'DIVERGENCE';
     else if (/Pivot/i.test(text)) cat = 'PIVOT';
     else if (/SETUP/i.test(text)) cat = 'SETUP';
-    else if (/KAP/i.test(text)) cat = 'KAP';
+    else if (/\bKAP\b/i.test(text)) cat = 'KAP';
     else if (/MTF/i.test(text)) cat = 'MTF';
     else if (/SEKTOR/i.test(text)) cat = 'SECTOR';
     if (cat) {
@@ -1494,10 +1490,11 @@ export function genSignalJs(ind, prices, { kapSentiment, htfContext, sectorStren
   else if (atr) t2 = entry + 3.5 * atr;
   else t2 = t1 * 1.05;
 
-  // T3: uzak hedef
+  // T3: uzak hedef. v31.43: a `fibs['2.0']` branch sat first here, but calcFibonacci has
+  // no 2.0 level, so T3 has always been R3 or 5.5 ATR. Under the trailing-only exit
+  // (v31.30) T3 is a reference line, not a sell order; the dead branch was removed.
   let t3;
-  if (fibs && fibs['2.0'] && fibs['2.0'] > t2 * 1.01) t3 = fibs['2.0'];
-  else if (pivots && pivots.r3 && pivots.r3 > t2 * 1.01) t3 = pivots.r3;
+  if (pivots && pivots.r3 && pivots.r3 > t2 * 1.01) t3 = pivots.r3;
   else if (atr) t3 = entry + 5.5 * atr;
   else t3 = t2 * 1.06;
 
@@ -1557,18 +1554,19 @@ export function genSignalJs(ind, prices, { kapSentiment, htfContext, sectorStren
     if (rocVal > 10 || rocVal < -10) baseBars *= 0.7; // Aşırı momentum hedefe varışı hızlandırır
 
     // 4. Setup Type Context Base (Yapısal kurulumlar uzun, tepkiler kısa sürer)
-    const isStructural = bullishTypes.has('wyckoff_spring') || bullishTypes.has('wyckoff_markup') || 
-                         bearishTypes.has('wyckoff_distribution') || bullishTypes.has('golden_cross') || 
-                         ind.wyckoffPhase === 'accumulation';
-    
+    // v31.43: these lists also named 'wyckoff_spring', 'wyckoff_markup',
+    // 'wyckoff_distribution', 'golden_cross', 'macd', 'rsi' and 'bollinger' — names the
+    // classifier above never produces, so they never matched. Making them match (as
+    // designed) was replayed: the estimate moved FURTHER from the real holding time under
+    // the trailing-only exit (mean error 5.0 -> 9.9 bars, real average 6.0). The live
+    // behaviour is kept; the dead names are gone.
+    const isStructural = ind.wyckoffPhase === 'accumulation';
+
     const isTrendFollow = bullishTypes.has('supertrend') || bearishTypes.has('supertrend') ||
                           bullishTypes.has('ichimoku') || bearishTypes.has('ichimoku') ||
-                          bullishTypes.has('macd') || bearishTypes.has('macd') ||
                           bullishTypes.has('trix') || bearishTypes.has('trix');
 
-    const isMeanReversion = bullishTypes.has('rsi') || bearishTypes.has('rsi') || 
-                            bullishTypes.has('williams') || bearishTypes.has('williams') ||
-                            bullishTypes.has('bollinger') || bearishTypes.has('bollinger');
+    const isMeanReversion = bullishTypes.has('williams') || bearishTypes.has('williams');
 
     // Structural -> taban 15 gun
     // TrendFollow -> taban 7 gun

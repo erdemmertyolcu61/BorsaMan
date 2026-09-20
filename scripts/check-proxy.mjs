@@ -47,6 +47,25 @@ const CHECKS = [
     verify: j => (j?.ok === true && j.count >= 20
       ? `${j.count} bar, gercek acilis ${j.openReal} / yaklasik ${j.openApprox} (${j.source})` : null),
   },
+  {
+    // v31.43: quoteSummary (v10) crumb ister — crumb enjeksiyonu eskiden yalniz /v8/ icindi,
+    // bu yuzden advisor'in temel kalite kapisi 401 aliyordu.
+    name: 'yahoo quoteSummary (temel veri, crumb)',
+    path: '/api/proxy?url=' + encodeURIComponent(
+      'https://query1.finance.yahoo.com/v10/finance/quoteSummary/THYAO.IS?modules=financialData,defaultKeyStatistics'),
+    verify: j => (j?.quoteSummary?.result?.[0]
+      ? `modul ${Object.keys(j.quoteSummary.result[0]).join(',')}`
+      : (j?.finance?.error?.description ? `HATA: ${j.finance.error.description}` : null)),
+  },
+  {
+    // v31.43: bilanco — istemci artik bu yolu kullaniyor (Vite rotasi yalniz localhost'ta var)
+    name: 'isyatirim MaliTablo (bilanco)',
+    path: '/api/proxy?url=' + encodeURIComponent(
+      'https://www.isyatirim.com.tr/_layouts/15/IsYatirim.Website/Common/Data.aspx/MaliTablo'
+      + '?companyCode=THYAO&exchange=TRY&financialGroup=XI_29&year1=2026&period1=6'
+      + '&year2=2026&period2=3&year3=2025&period3=12&year4=2025&period4=9'),
+    verify: j => (Array.isArray(j?.value) && j.value.length > 20 ? `${j.value.length} satir` : null),
+  },
 ];
 
 async function probe(path) {

@@ -11,9 +11,15 @@ export const MarketRegime = {
 
 export function detectMarketRegime(prices, ind) {
   const n = prices.length;
-  if (n < 20) return MarketRegime.NORMAL;
+  // v31.43: this used to return the bare string 'NORMAL', so `regime.regime` was
+  // undefined and every adaptive threshold came out NaN (reason texts read "(undefined)").
+  if (n < 20) return { regime: MarketRegime.NORMAL, strength: ind.adx || 0, atrPercent: 0, volatility: 0 };
 
-  const atr = ind.atr?.[ind.atr.length - 1] || 0;
+  // v31.43: ind.atr is the latest ATR as a number. `ind.atr?.[ind.atr.length - 1]` read it
+  // as an array and always got 0 — VOLATILE could never fire and the threshold multiplier
+  // was stuck at 0.5. Replayed on 26,855 buy candidates (89 stocks x 5y) together with the
+  // classifier fix in signals.js: neutral (+2.00% -> +2.00%); kept for correctness.
+  const atr = typeof ind.atr === 'number' && ind.atr > 0 ? ind.atr : 0;
   const price = ind.lastClose || prices[n - 1]?.close || 0;
   const atrPercent = price > 0 ? (atr / price) * 100 : 0;
 

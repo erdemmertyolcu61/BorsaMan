@@ -4,42 +4,42 @@ use crate::ind::{Bar, Indicators};
 use crate::js;
 
 #[derive(Clone, Debug)]
-pub enum Regime {
-    /// detectMarketRegime returned the bare string 'NORMAL' (fewer than 20 bars):
-    /// `regime.regime` is then undefined and the thresholds come out NaN.
-    Bare,
-    Obj { label: &'static str, atr_percent: f64 },
+pub struct Regime {
+    pub label: &'static str,
+    pub atr_percent: f64,
 }
 
 impl Regime {
     /// `regime?.regime`
     pub fn label(&self) -> Option<&'static str> {
-        match self {
-            Regime::Bare => None,
-            Regime::Obj { label, .. } => Some(label),
-        }
+        Some(self.label)
     }
     /// `${regime.regime}` inside a template literal.
     pub fn label_text(&self) -> &'static str {
-        self.label().unwrap_or("undefined")
+        self.label
     }
 }
 
 pub fn detect_market_regime(b: &[Bar], ind: &Indicators) -> Regime {
     let n = b.len();
+    // v31.43: JS used to return the bare string 'NORMAL' here (undefined label, NaN
+    // thresholds); it is an object now, like every other branch.
     if n < 20 {
-        return Regime::Bare;
+        return Regime { label: "NORMAL", atr_percent: 0.0 };
     }
-    // JS: `ind.atr?.[ind.atr.length - 1] || 0` — ind.atr is a scalar, so this
-    // always reads undefined and falls back to 0. Kept for parity: the ATR% is
-    // therefore always 0 (VOLATILE never fires, threshold multiplier stays 0.5).
-    let atr = 0.0;
+    // v31.43: `typeof ind.atr === 'number' && ind.atr > 0 ? ind.atr : 0`. The old JS read
+    // the scalar ind.atr as an array and always got 0, so VOLATILE never fired and the
+    // threshold multiplier was stuck at 0.5.
+    let atr = match ind.atr {
+        js::V::F(x) if x > 0.0 => x,
+        _ => 0.0,
+    };
     let price = js::or(js::or(ind.last_close, b[n - 1].c), 0.0);
     let atr_percent = if price > 0.0 { (atr / price) * 100.0 } else { 0.0 };
     let adx = ind.adx.or(0.0);
     let pdi = ind.plus_di.or(0.0);
     let mdi = ind.minus_di.or(0.0);
-    let mk = |label: &'static str| Regime::Obj { label, atr_percent };
+    let mk = |label: &'static str| Regime { label, atr_percent };
     if adx > 30.0 && pdi > mdi {
         return mk("TRENDING_UP");
     }
@@ -70,10 +70,7 @@ pub struct Thresholds {
 }
 
 pub fn get_adaptive_thresholds(r: &Regime) -> Thresholds {
-    let (label, atr_percent) = match r {
-        Regime::Bare => (None, f64::NAN),
-        Regime::Obj { label, atr_percent } => (Some(*label), *atr_percent),
-    };
+    let (label, atr_percent) = (Some(r.label), r.atr_percent);
     let vm = js::max(0.5, js::min(2.0, atr_percent / 3.0));
     let mut t = Thresholds {
         rsi_oversold: 35.0,

@@ -32,6 +32,8 @@ reports/replay-*.json
 reports/sweep-*.json
 # KAP olay calismasi ciktisi (scripts/kap-event-study.mjs, yeniden uretilebilir)
 reports/kap-event-study-*.json
+# Sinyal olay calismasi ciktisi (scripts/signal-event-study.mjs, yeniden uretilebilir)
+reports/signal-event-study-*.json
 
 # Rust engine build output (v31.42)
 engine-rs/target/

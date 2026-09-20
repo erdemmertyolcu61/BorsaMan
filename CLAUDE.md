@@ -35,6 +35,10 @@ npm run parity:engine        # 130 gercek seri x 5 yil: JS motoru vs Rust motoru
 # KAP olay calismasi (v31.40) — 24 ay bildirim x fiyat, onbellekli (--refresh ile yeniden indirir)
 node scripts/kap-event-study.mjs
 
+# Sinyal olay calismasi (v31.43) — bir gosterge olayi sonraki getiri hakkinda ne soyluyor?
+# 89 hisse x 5 yil, piyasa-goreli fazla getiri (.replay-cache gerekir; replay-signals doldurur)
+node scripts/signal-event-study.mjs --out reports/signal-event-study.json
+
 # Test
 npm test                     # Tum testleri calistir (Vitest)
 npm run test:watch           # Watch mode
@@ -1824,7 +1828,8 @@ Kullanıcı: "Gerekli olabilecek MCP'leri listele, bağlayalım; ayrıca uygulam
 - **KURAL**: gösterge / sinyal mantığını değiştiren HER değişiklik iki yerde yapılır — Rust (`engine-rs/src`) ve
   JS referansı (`indicators.js` / `genSignalJs`) — ardından `npm run build:engine` + `npm test` (+ `npm run
   parity:engine`). Tek tarafı değiştirmek parity testini kırar; kırmızı test "iki motor ayrıştı" demektir.
-- **Taşırken bulunan ölü kurallar (DEĞİŞTİRİLMEDİ — önce eşlik; düzeltmek skoru değiştirir, ölçüm ister)**:
+- **Taşırken bulunan ölü kurallar** (bu sürümde dokunulmadı; **v31.43'te ölçülüp karara bağlandı** —
+  aşağıdaki bölüm):
   (1) Wyckoff Spring/UTAD, Hacim Klimaksı ve DI yakınlaşma puanları hiç çalışmıyor (nesne `=== 'spring'` gibi
   metinle karşılaştırılıyor); (2) `detectMarketRegime` ATR'yi dizi sanıyor → ATR% hep 0 → VOLATILE rejimi hiç
   yok, eşik çarpanı hep 0,5; (3) extractFiredSignals'ta WYCKOFF_SPRING / TTM_RELEASE / SUPERTREND_FLIP hiç
@@ -1833,6 +1838,96 @@ Kullanıcı: "Gerekli olabilecek MCP'leri listele, bağlayalım; ayrıca uygulam
   metnini RSI, "…verildi " gibi kelimeleri ADX sayıyor.
 - Doğrulama: `npm test` 820 pass (62 dosya), 0 lint error, build temiz; Rust birim testleri 5 pass (`cargo test`);
   pytest 13 pass (`bist_bridge` varsayılanı değişti, testler oturum sahtesiyle koştuğu için etkilenmez).
+
+## Ölü Kurallar Ölçüldü (canlandırılmadı) + Bilanço Hattı Onarıldı (v31.43)
+
+Kullanıcı: "Çözmeye çalış" — v31.42'de raporlanan iki madde: (1) hiç çalışmayan sinyal kuralları,
+(2) telefonda gelmeyen bilanço verisi.
+
+### A — Önce ölçüm: `scripts/signal-event-study.mjs` (yeni)
+89 hisse × 5 yıl önbellekli günlük bar (2022-06 → 2026-08). Her gün üretimdeki gibi son 252 barla
+`calcAll`; giriş olaydan SONRAKİ seansın açılışı; kıyas aynı giriş gününde TÜM hisselerin aynı kuralla
+getirisi (piyasa-göreli fazla getiri); aynı hissede aynı olay 5 seansta bir kez sayılır.
+
+| Olay | n | ertesi gün | t | 10 seans | t | istikrar |
+|---|---|---|---|---|---|---|
+| Wyckoff Spring | 2.830 | −%0,10 | −2,4 | −%0,20 | −1,3 | iki yarıda da negatif |
+| Wyckoff UTAD | 2.258 | −%0,07 | −1,5 | −%0,28 | −1,6 | — |
+| **Satış klimaksı** | 228 | **−%1,21** | −5,3 | **−%3,59** | **−5,2** | iki yarıda da negatif |
+| Alış klimaksı | 630 | −%0,35 | −2,4 | −%0,37 | −0,6 | — |
+| DI yakınlaşma (iki yön) | ~6.800 | ~−%0,03 | <1 | ~−%0,18 | −1,2 | yön yok |
+| TTM sıkışma çözülmesi (yukarı) | 749 | −%0,15 | −1,6 | **−%0,93** | −2,8 | iki yarıda da negatif |
+| Wyckoff markup fazı | 2.493 | −%0,19 | −3,3 | −%0,63 | −2,9 | — |
+| +%7 gün + markup fazı | 748 | −%0,50 | −3,4 | −%0,74 | −1,4 | diğer pompalarla aynı (−%0,44) |
+
+**Sonuç**: bu kuralların hiçbirini "tasarlandığı gibi" açmak kazandırmazdı. **Satış klimaksı tasarımda
++1,5 AL puanıydı ("taban olabilir") — ölçüm TAM TERSİ**; TTM çözülmesi advisor'da +20 / ×1,6 alacaktı.
+
+### B — Varyant replay (aynı barlar, yamalı `signals.js` kopyaları; proje dosyaları değişmeden)
+26.855 AL adayı; "işlem yapılan" = YÜKSELİŞ'in tamamı + YATAY'da skor ≥70 (14.378 aday).
+
+| Varyant | işlem yapılan net | portföy | 1. yarı | 2. yarı |
+|---|---|---|---|---|
+| Mevcut | **+%2,00** | +%1,82 | +%2,82 | +%0,82 |
+| Ölü kurallar tasarlandığı gibi açık | +%1,98 | +%1,80 | +%2,80 | +%0,81 |
+| ATR/VOLATILE düzeltmesi | +%2,01 | +%1,82 | +%2,82 | +%0,84 |
+| Sınıflandırıcı düzeltmesi | +%2,00 | +%1,81 | +%2,80 | +%0,83 |
+| **Gönderilen set (ATR + sınıflandırıcı)** | **+%2,00** | +%1,81 | +%2,82 | +%0,84 |
+
+Vade tahminini "tasarlandığı gibi" düzeltmek gerçeğe UZAKLAŞTIRIYOR: ortalama hata 5,0 → 9,9 bar
+(tahmin 14,3 bar, trailing-only çıkışta gerçek tutma 6,0 bar) → tasarım uygulanmadı.
+
+### C — Uygulanan (davranış değişmeyenler + ölçümde nötr düzeltmeler)
+- **Kaldırıldı (davranış AYNI, kod artık dürüst)**: genSignal'de spring/UTAD ±2,5, hacim klimaksı
+  ±1,5/+0,5, DI yakınlaşma ±0,5; `fibs['2.0']` T3 dalı (hiç yoktu; T3 her zaman R3 / 5,5×ATR);
+  vade tahminindeki `macd`/`rsi`/`bollinger`/`golden_cross`/`wyckoff_*` küme adları; `TTM_RELEASE`
+  etiketi; advisor'da squeezeRelease +20, pumpGuard'da Markup +7 / Distribution −11 / squeezeRelease +7,
+  `wyckoffSpring === true` kontrolleri, topGainer ×1,60 ve ×1,25 çarpanları, Intraday'de spring ±3 /
+  klimaks ±2 puanları, ChatPanel + JARVIS'teki yön iddiaları. **Rust motoru bunların hiçbirini zaten
+  taşımıyordu** (JS'te hep yanlış çıktıkları için) → eşlik bozulmadı.
+- **Düzeltildi (ölçümde nötr, doğruluk kazancı — İKİ motorda birden)**:
+  - `detectMarketRegime` ATR'yi dizi sanıyordu → ATR% hep 0; artık gerçek ATR ⇒ VOLATILE rejimi
+    tetiklenebiliyor, eşik çarpanı 0,5'te sabit değil. 20 bardan kısa geçmişte çıplak `'NORMAL'`
+    metni yerine nesne (eşikler NaN, metinler "(undefined)" çıkıyordu).
+  - Gerekçe sınıflandırıcı: `StochRSI` artık RSI'dan ÖNCE (STOCH kategorisine hiç ulaşılamıyordu);
+    ADX deseni büyük/küçük harf duyarlı (`/i` yüzünden Türkçe "…verildi " ADX sayılıyordu); `KAP`
+    tam kelime ("KAPANIS" KAP bildirimi sayılıyordu).
+- **UTAD hatası (canlı, ters yönlüydü)**: `if (result.wyckoffSpring)` nesne doğruluğunu ölçtüğü için
+  düşüş tuzağı UTAD da spring'in artılarını alıyordu (yarın potansiyeli +15, devam olasılığı +4, erken
+  birikim sinyali). Artık yalnız `type === 'spring'`.
+- **Intraday çökmesi**: kart `volumeClimax.includes(...)` çağırıp `wyckoffSpring` nesnesini doğrudan
+  ekrana basıyordu → hacim klimaksı olan bir hissenin detayı açıldığında React hatası (uygulamada
+  ErrorBoundary yok → beyaz ekran). Artık `.type` okunuyor; JARVIS metnindeki "[object Object]" de gitti.
+- **Etiketler doğrulandı**: `WYCKOFF_SPRING` ve `SUPERTREND_FLIP_UP/DOWN` artık gerçekten üretiliyor
+  (öğrenme döngüsünün özellikleri; 120 ML kuralının hiçbiri bu etiketleri kullanmıyordu, eşleşmeler
+  değişmedi).
+
+### D — Bilanço hattı production'da ÖLÜYDÜ (ölçüldü, onarıldı)
+Canlı sitede THYAO analizi sırasında: `/api/isyatirim/MaliTablo…` **404** (bu rota yalnız Vite
+geliştirme sunucusunda var), genel CORS yedekleri de düştü (allorigins 408, codetabs), Yahoo
+`quoteSummary` **401** ("Invalid Crumb"). Yani telefonda hem Bilanço paneli hem advisor'ın temel
+kalite kapısı (v31.10) verisiz çalışıyordu.
+- **`isyatirimEngine.planIsyRoutes`** (saf, 6 test): yerelde Vite rotası → Electron köprüsü →
+  `getDataViaProxies` (PWA'da aynı adresteki kendi proxy'miz, sonra genel proxy'ler) —
+  `fetchEngine`'in diğer İş Yatırım çağrılarıyla aynı sıra. Ölü genel proxy listesi ve tarayıcıda
+  zaten yok sayılan "User-Agent/Referer ile doğrudan fetch" denemeleri kaldırıldı.
+- **Proxy (iki kopya)**: crumb enjeksiyonu `/v8/` yerine `/v(7|8|10)/finance/` → quoteSummary ve v7
+  quote artık 200; `source=yahoo_fund` de Yahoo başlıkları + crumb alıyor (eskiden hiç çalışamazdı).
+- `check:proxy`'ye iki kontrol eklendi (quoteSummary + MaliTablo) → deploy sonrası tek komutla görünür.
+- Ölçüm (yerelde gerçek uçlara karşı): quoteSummary 200 (5 modül), yahoo_fund 200, MaliTablo
+  GARAN/UFRS_K 200 (192 satır), yahoo chart regresyonu 200.
+
+### Doğrulama / sınırlar (dürüst)
+- Test **827 pass (63 dosya)**, 0 lint error, build temiz; Rust birim testleri 5 pass;
+  `npm run parity:engine` **19.739 pencerede 0 fark** (ATR + sınıflandırıcı değişikliği iki motora da
+  girdi).
+- Olay çalışması sinyalleri ÖLÇER, advisor'ın likidite/haber/makro/sektör katmanlarını değil; tek veri
+  kaynağı (Yahoo), 89 büyük/orta-cap. Intraday (15 dk) ufku ölçülmedi — o yüzden Intraday'deki ölü
+  puanlar açılmadı, kaldırıldı.
+- **Canlı skorda duran, ölçümde negatif çıkan iki kural var** (ölü değiller, o yüzden dokunulmadı):
+  yarın potansiyelinde Wyckoff spring +15 (spring ertesi gün −%0,10, t −2,4) ve Supertrend yukarı
+  dönüşü +12 (ertesi gün −%0,17, t −2,3; 10 seans −%0,62, t −2,4). Bunları kaldırmak canlı skoru
+  değiştirir — kullanıcı kararı.
 
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ

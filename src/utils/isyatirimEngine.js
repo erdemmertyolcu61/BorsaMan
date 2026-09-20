@@ -2,6 +2,9 @@
 // Ports MaliTablo (financial tables) from isyatirim.com.tr, with multi-proxy fallback,
 // localStorage cache, DuPont decomposition, Altman Z-Score, Piotroski F-Score.
 
+import { getDataViaProxies } from './fetchEngine.js';
+import { isLocalDevHost } from './proxyTarget.js';
+
 const BASE_URL = 'https://www.isyatirim.com.tr/_layouts/15/IsYatirim.Website/Common/Data.aspx';
 const CACHE_KEY = 'bist_isyatirim_cache_v3';
 const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
@@ -39,58 +42,58 @@ function normalizeTR(str) {
     .trim();
 }
 
+/**
+ * v31.43: which routes to try for an İş Yatırım MaliTablo request, in order.
+ *
+ * The old first route was the Vite dev-server rewrite `/api/isyatirim/...`, which
+ * exists only on localhost: the deployed PWA got a 404 there, and the public CORS
+ * proxies behind it failed too (measured 2026-09-19: allorigins 408, codetabs
+ * fail). The balance-sheet panel therefore never received data on the phone,
+ * while the same URL through our own `/api/proxy?url=` returned 147 rows. This is
+ * the order fetchEngine already uses for its other İş Yatırım calls.
+ *
+ * @param {{localDev?: boolean, electron?: boolean}} env
+ * @returns {Array<'vite'|'electron'|'proxies'>}
+ */
+export function planIsyRoutes({ localDev = false, electron = false } = {}) {
+  const routes = [];
+  if (localDev) routes.push('vite');        // Vite dev proxy — localhost only
+  if (electron) routes.push('electron');    // desktop IPC bridge, no CORS
+  routes.push('proxies');                   // own proxy first (same origin on the PWA), then public ones
+  return routes;
+}
+
+const looksLikeMaliTablo = (t) => typeof t === 'string' && t.length > 100
+  && (t.includes('"value"') || t.includes('"itemCode"')) && !t.includes('<!DOCTYPE');
+
+function detectIsyEnv() {
+  const w = typeof window !== 'undefined' ? window : null;
+  const capacitorNative = !!w?.Capacitor?.isNativePlatform?.();
+  const hostname = typeof location !== 'undefined' ? location.hostname : '';
+  return {
+    // Capacitor also serves from "localhost", but there is no Vite server behind it
+    localDev: !capacitorNative && isLocalDevHost(hostname),
+    electron: !!w?.electronAPI?.remoteFetch,
+  };
+}
+
 async function fetchWithProxy(url) {
-  // 1. Try vite proxy
-  try {
-    const u = new URL(url);
-    const viteUrl = '/api/isyatirim' + u.pathname.replace('/_layouts/15/IsYatirim.Website/Common/Data.aspx', '') + u.search;
-    const r = await fetch(viteUrl, { signal: AbortSignal.timeout(15000), headers: { Accept: 'application/json' } });
-    if (r.ok) {
-      const text = await r.text();
-      if (text && text.length > 100 && (text.includes('"value"') || text.includes('"itemCode"'))) return text;
-    }
-  } catch {}
-
-  // 2. Public CORS proxies
-  const proxies = [
-    'https://api.allorigins.win/get?url=' + encodeURIComponent(url),
-    'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
-    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url),
-    'https://corsproxy.io/?' + encodeURIComponent(url),
-    'https://thingproxy.freeboard.io/fetch/' + url,
-  ];
-  for (const p of proxies) {
+  for (const route of planIsyRoutes(detectIsyEnv())) {
     try {
-      const r = await fetch(p, { signal: AbortSignal.timeout(12000) });
-      if (!r.ok) continue;
-      const text = await r.text();
-      if (!text || text.length < 100) continue;
-      if (p.includes('allorigins.win/get')) {
-        try { const j = JSON.parse(text); if (j.contents) return j.contents; } catch {}
+      let text = null;
+      if (route === 'vite') {
+        const u = new URL(url);
+        const viteUrl = '/api/isyatirim' + u.pathname.replace('/_layouts/15/IsYatirim.Website/Common/Data.aspx', '') + u.search;
+        const r = await fetch(viteUrl, { signal: AbortSignal.timeout(15000), headers: { Accept: 'application/json' } });
+        if (r.ok) text = await r.text();
+      } else if (route === 'electron') {
+        const res = await window.electronAPI.remoteFetch(url, { method: 'GET' });
+        if (res?.success) text = res.text;
+      } else {
+        text = await getDataViaProxies(url, 12000);
       }
-      if (text.includes('"value"') || text.includes('"itemCode"')) return text;
-    } catch {}
-  }
-
-  // 3. Direct fetch (rare success due to CORS)
-  for (let i = 0; i < 2; i++) {
-    try {
-      const r = await fetch(url, {
-        signal: AbortSignal.timeout(12000),
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-          Referer: 'https://www.isyatirim.com.tr/',
-          Origin: 'https://www.isyatirim.com.tr',
-          Accept: 'application/json, text/plain, */*',
-          'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8',
-        },
-      });
-      if (r.ok) {
-        const text = await r.text();
-        if (text && text.length > 50 && (text.includes('"value"') || text.includes('"itemCode"')) && !text.includes('<!DOCTYPE')) return text;
-      }
-    } catch {}
-    if (i === 0) await new Promise(r => setTimeout(r, 1000));
+      if (looksLikeMaliTablo(text)) return text;
+    } catch { /* next route */ }
   }
   return null;
 }

@@ -210,10 +210,10 @@ function generateAutoReading(symbol, ind, sig, fundamentals, bilanco, advisor, i
   if (ind.obvDivergence === 'bearish_div') adv.push('OBV bearish diverjans — gizli kurumsal satim');
   if (ind.rsiDivergence === 'bullish') adv.push('RSI bullish diverjans — donus potansiyeli');
   if (ind.rsiDivergence === 'bearish') adv.push('RSI bearish diverjans — zirve riski');
-  if (ind.wyckoffSpring === 'spring') adv.push('WYCKOFF SPRING — kurumsal tuzak, yukari atis potansiyeli');
-  if (ind.wyckoffSpring === 'utad') adv.push('WYCKOFF UTAD — dagitim tuzagi, dusus riski');
-  if (ind.volumeClimax === 'selling_climax') adv.push('Satis klimaksi — taban olusumu');
-  if (ind.volumeClimax === 'buying_climax') adv.push('Alis klimaksi — tavan olusumu');
+  // v31.43: spring/UTAD ve hacim klimaksi yon yorumlari burada hic gorunmedi (gostergeler
+  // nesne, karsilastirma metinle). Olcum yorumlarin tersini soyluyor (satis klimaksi
+  // "taban" degil: ertesi gun -%1,21, 10 seansta -%3,59) — yon iddiasi eklenmedi.
+  if (ind.volumeClimax?.type === 'selling_climax') adv.push('Satis klimaksi — olcumde TABAN SINYALI DEGIL: sonraki 10 seansta piyasanin ~%3,6 gerisinde');
   if (ind.ttmSqueeze?.squeezeOn) adv.push(`TTM Squeeze ${ind.ttmSqueeze.squeezeCount} bar — patlama yaklasiyor (${ind.ttmSqueeze.momentum > 0 ? 'YUKARI' : 'ASAGI'})`);
   if (ind.volRatio < 0.5) adv.push('SIGLIK UYARISI: Hacim cok dusuk, manipulasyon riski');
   const advBlock = adv.length ? `\n\n**Ileri Sinyaller:**\n${adv.map(x => '- ' + x).join('\n')}` : '';

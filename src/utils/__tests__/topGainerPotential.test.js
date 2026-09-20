@@ -49,7 +49,7 @@ describe('computeTopGainerPotential', () => {
   const history = bars(251, 20);          // ~8% of sessions are big movers
   const coiled = {
     atrPct: 4, volRatio: 1.8, obvTrend: 'accumulation', cmf: 0.12, rsi: 55, mfi: 50,
-    ttmSqueeze: { squeezeOn: true, squeezeRelease: false }, recentPump: 1,
+    ttmSqueeze: { squeezeOn: true }, recentPump: 1,
     cumulativePump: 2, todayPumpReal: 0.5, newsCategories: [], avgVolumeTL: 50_000_000,
   };
 
@@ -84,7 +84,8 @@ describe('computeTopGainerPotential', () => {
 
   it('never claims more than the honest cap', () => {
     const everything = computeTopGainerPotential({
-      ...coiled, ttmSqueeze: { squeezeRelease: true }, wyckoffSpring: true,
+      // v31.43: squeezeRelease / wyckoffSpring factors removed (never fired; measured negative)
+      ...coiled, ttmSqueeze: { squeezeOn: true },
       newsCategories: ['insider_buy', 'contract'], volRatio: 2.5, cmf: 0.4,
     }, bars(251, 120));                       // absurdly explosive history
     expect(everything.probPct).toBeLessThanOrEqual(PROB_CAP * 100);

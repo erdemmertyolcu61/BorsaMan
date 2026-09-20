@@ -147,6 +147,15 @@ fn has_ma_digit(h: &str) -> bool {
     h.match_indices("ma-").any(|(i, _)| h.as_bytes().get(i + 3).map_or(false, |b| b.is_ascii_digit()))
 }
 
+/// `/\b<w>\b/`. JS `\b` without the `u` flag is ASCII-only, so every byte of a
+/// multi-byte UTF-8 character is a non-word neighbour here, as it is in JS.
+fn has_word(h: &str, w: &str) -> bool {
+    let b = h.as_bytes();
+    let is_w = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    h.match_indices(w)
+        .any(|(i, _)| (i == 0 || !is_w(b[i - 1])) && b.get(i + w.len()).map_or(true, |&c| !is_w(c)))
+}
+
 /// The reason → indicator-category classifier (regex chain in genSignal).
 /// JS `/i` without the `u` flag folds ASCII letters only, which is exactly
 /// `to_ascii_lowercase` on the haystack.
@@ -156,14 +165,15 @@ fn classify(text: &str) -> Option<&'static str> {
     if has_ma_digit(h) || has(h, "golden") || has(h, "death") {
         return Some("MA");
     }
+    // v31.43: StochRSI before RSI — its text contains "RSI ", so STOCH was unreachable
+    if has(h, "stochrsi") {
+        return Some("STOCH");
+    }
     if has_ws(h, "rsi") {
         return Some("RSI");
     }
     if has(h, "macd") || has(h, "histogram") {
         return Some("MACD");
-    }
-    if has(h, "stochrsi") {
-        return Some("STOCH");
     }
     if has(h, "bollinger") || has(h, "bb") {
         return Some("BBAND");
@@ -174,7 +184,9 @@ fn classify(text: &str) -> Option<&'static str> {
     if ["mfi", "obv", "cmf", "vwap", "wyckoff", "akilli", "birikim", "dagilim"].iter().any(|p| has(h, p)) {
         return Some("SMART");
     }
-    if has(h, "adx") || has_ws(h, "di") || has_ws(h, "trend") {
+    // v31.43: `/ADX|\bDI\b|Trend\s/` is case-sensitive, so it runs on the original text
+    // (with /i, "di " matched Turkish "-di" endings such as "verildi ")
+    if has(text, "ADX") || has_word(text, "DI") || has_ws(text, "Trend") {
         return Some("ADX");
     }
     if has(h, "ttm") || has(h, "squeeze") {
@@ -189,7 +201,8 @@ fn classify(text: &str) -> Option<&'static str> {
     if has(h, "setup") {
         return Some("SETUP");
     }
-    if has(h, "kap") {
+    // v31.43: whole word — "KAPANIS" (close) is not a KAP disclosure
+    if has_word(h, "kap") {
         return Some("KAP");
     }
     if has(h, "mtf") {
@@ -1783,12 +1796,19 @@ mod tests {
 
     #[test]
     fn classifier_mirrors_the_regex_chain() {
-        // "StochRSI 15/12 ..." contains "RSI " → classified as RSI (JS order).
-        assert_eq!(classify("StochRSI 15/12 — Asiri satim bolgesi"), Some("RSI"));
+        // v31.43: StochRSI is tested before RSI
+        assert_eq!(classify("StochRSI 15/12 — Asiri satim bolgesi"), Some("STOCH"));
+        assert_eq!(classify("RSI 28.4 — Satis baskisi azaliyor (QUIET)"), Some("RSI"));
         assert_eq!(classify("Fiyat MA-20 (12.00) ustunde"), Some("MA"));
         assert_eq!(classify("MA-20 > MA-50 Golden cross"), Some("MA"));
-        // "verildi —" has "di " → ADX before KAP ("KAPANIS")
-        assert_eq!(classify("COK ZAYIF KAPANIS: Zirveden %80+ geri verildi — agir satis baskisi"), Some("ADX"));
+        // v31.43: "verildi " is not ADX any more, and "KAPANIS" is not KAP
+        assert_eq!(classify("COK ZAYIF KAPANIS: Zirveden %80+ geri verildi — agir satis baskisi"), None);
+        assert_eq!(classify("KAP POZITIF: yeni is iliskisi"), Some("KAP"));
+        assert_eq!(classify("ADX 28 Trend YUKSELIS (+DI>25)"), Some("ADX"));
+        assert_eq!(classify("DI YAKINLASMA: +DI/-DI yakinlasiyor"), Some("ADX"));
+        assert_eq!(classify("SUPERTREND FLIP: Trend yukselise dondu — guclu AL sinyali"), Some("ADX"));
+        assert_eq!(classify("ŞDI x"), Some("ADX")); // non-ASCII neighbour is a \b boundary, as in JS
+        assert_eq!(classify("EDIT x"), None);
         assert_eq!(classify("Hacim 2.1x"), Some("VOL"));
         assert_eq!(classify("OBV Dagilim — Akilli para satiyor (2x agirlik)"), Some("SMART"));
         assert_eq!(classify("Pivot ustunde, R1 hedefliyor"), Some("PIVOT"));

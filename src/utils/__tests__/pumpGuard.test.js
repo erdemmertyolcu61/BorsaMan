@@ -8,8 +8,10 @@ const strong = (over = {}) => ({
   todayPumpReal: 10, cumulativePump: 10,
   newsCategories: ['insider_buy'], newsScore: 6,
   obvTrend: 'accumulation', cmf: 0.25,
-  wyckoffPhase: 'Markup', wyckoffSpring: true,
-  ttmSqueeze: { squeezeRelease: true }, mfi: 55, rsi: 60,
+  // v31.43: production shapes — calcAll returns {type:'spring'} (never `true`) and
+  // never produces squeezeRelease, so the old fixture tested inputs that cannot occur.
+  wyckoffSpring: { type: 'spring' },
+  ttmSqueeze: { squeezeOn: true }, mfi: 55, rsi: 60,
   supertrend: { trend: 'UP' }, ichimoku: { cloudPosition: 'above' },
   sectorStrength: 3, ...over,
 });
@@ -37,6 +39,20 @@ describe('pumpGuard.calcContinuationProbability', () => {
   it('separates a catalyst-backed pump from a bare FOMO pump', () => {
     expect(calcContinuationProbability(strong()))
       .toBeGreaterThan(calcContinuationProbability(weak()));
+  });
+
+  // v31.43: `if (r.wyckoffSpring)` credited the OBJECT, so UTAD — a distribution trap,
+  // bearish by design — collected the same +4 as a spring. Measured over 89 stocks x 4y
+  // neither predicts an excess return, so only the spring keeps its (small) credit.
+  it('gives the spring credit to a spring only, never to a UTAD', () => {
+    // plain pumped name, away from the [5, 55] clamp so the delta is visible
+    const quiet = { todayPumpReal: 8, cumulativePump: 8, newsCategories: [],
+      obvTrend: 'neutral', cmf: 0.05, mfi: 65, rsi: 75 };
+    const none = calcContinuationProbability(quiet);
+    const spring = calcContinuationProbability({ ...quiet, wyckoffSpring: { type: 'spring' } });
+    const utad = calcContinuationProbability({ ...quiet, wyckoffSpring: { type: 'utad' } });
+    expect(spring).toBe(none + 4);
+    expect(utad).toBe(none);
   });
 
   it('penalises a second consecutive limit-up (cumulative >= 22%)', () => {
@@ -107,8 +123,7 @@ describe('pumpGuard.isUnsafeForTomorrow — the 5-7% mean-reversion trap', () =>
   const midPump = (over = {}) => ({
     todayPumpReal: 6, cumulativePump: 6,
     newsCategories: ['contract'],
-    obvTrend: 'accumulation', cmf: 0.1, volRatio: 1.5,
-    wyckoffSpring: true, ttmSqueeze: { squeezeRelease: true }, adx: 30,
+    obvTrend: 'accumulation', cmf: 0.1, volRatio: 1.5, adx: 30,
     rsi: 60, mfi: 55, ...over,
   });
 
@@ -122,8 +137,7 @@ describe('pumpGuard.isUnsafeForTomorrow — the 5-7% mean-reversion trap', () =>
 
   it('rejects a catalyst with thin technical backing', () => {
     expect(isUnsafeForTomorrow(midPump({
-      obvTrend: 'neutral', cmf: 0, volRatio: 1, wyckoffSpring: false,
-      ttmSqueeze: null, adx: 15,
+      obvTrend: 'neutral', cmf: 0, volRatio: 1, adx: 15,
     }))).toBe(true);
   });
 

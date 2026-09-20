@@ -342,11 +342,13 @@ function calcTomorrowPotential(result) {
   const isExhausted = cumulativePump >= 15;   // 3 gunde +%15 = momentum yorgun
 
   // Guc sinyalleri (tavan bolgesinde sigir koruma kontrolu)
+  // v31.43: `wyckoffSpring === true` ve `squeezeRelease === true` da buradaydi ama hic
+  // dogru olmadi (spring bir nesne, squeezeRelease hic uretilmiyor). Canlandirmadan once
+  // olculdu (scripts/signal-event-study.mjs): ikisi de ertesi gun ve 10 seansta piyasanin
+  // gerisinde — acilmadi, kaldirildi. Sayac davranisi degismedi.
   const strongSignals = [
     result.obvTrend === 'accumulation',
     (result.cmf || 0) > 0.12,                       // 0.10 → 0.12 sıkılastirildi
-    result.wyckoffSpring === true,
-    result.ttmSqueeze?.squeezeRelease === true,
     result.newsCategories?.some(c =>
       ['fund_inflow','buyback','insider_buy','contract'].includes(c)),
   ].filter(Boolean).length;
@@ -461,7 +463,8 @@ function calcTomorrowPotential(result) {
 
   // ── SETUP B — COIL/SQUEEZE BREAK (kirilim oncesi birikim) ──
   if (result.ttmSqueeze?.squeezeOn) tpScore += 15; // aktif sikisma
-  if (result.ttmSqueeze?.squeezeRelease) tpScore += 20; // sikismadan yeni cikis
+  // v31.43: "sikismadan yeni cikis +20" hic calismadi (squeezeRelease uretilmiyor).
+  // Olculdu: yukari cikis 10 seansta -%0,93 (t -2,8) — acilmadi, kaldirildi.
   if (result.obvTrend === 'accumulation') tpScore += 12;
   if (result.cmf != null) {
     if (result.cmf > 0.15) tpScore += 10;
@@ -527,7 +530,9 @@ function calcTomorrowPotential(result) {
   if (result.ichimoku?.cloudPosition === 'above') tpScore += 4;
   if (result.supertrend?.flip === 'bullish') tpScore += 12;
   if (result.supertrend?.trend === 'UP') tpScore += 4;
-  if (result.wyckoffSpring) tpScore += 15;  // Wyckoff spring = en guclu dip sinyali
+  // v31.43: `wyckoffSpring` bir nesne ({type:'spring'|'utad'}); dogruluk kontrolu UTAD'a
+  // (dagitim tuzagi, tasarimda DUSUS isareti) da bu +15'i veriyordu. Yalniz spring.
+  if (result.wyckoffSpring?.type === 'spring') tpScore += 15;  // Wyckoff spring
 
   // ── R/R KALITESI (net-of-cost when available — gross RR flatters thin edges) ──
   const rrEff = result.rrNet ?? result.rr;
@@ -1513,10 +1518,12 @@ export function useAIAdvisor(portfolio) {
         if (r.obvTrend === 'accumulation') signals.push('OBV birikim');
         // 2. Para akisi pozitif
         if ((r.cmf || 0) > 0.08) signals.push('CMF+ para girisi');
-        // 3. Wyckoff Accumulation/Spring fazi
-        if (r.wyckoff === 'Accumulation' || r.wyckoffSpring) signals.push('Wyckoff birikim');
+        // 3. Wyckoff spring. v31.43: `r.wyckoff === 'Accumulation'` hic eslesmedi (faz kucuk
+        // harf: 'accumulation'; olculdu: birikim fazinin getiri ustunlugu yok, acilmadi) ve
+        // `r.wyckoffSpring` dogruluk kontrolu UTAD'i da sayiyordu — artik yalniz spring.
+        if (r.wyckoffSpring?.type === 'spring') signals.push('Wyckoff spring');
         // 4. TTM Squeeze aktif (kirilim oncesi sikisma)
-        if (r.ttmSqueeze?.squeezeOn || r.ttmSqueeze?.squeezeRelease) signals.push('Sıkışma');
+        if (r.ttmSqueeze?.squeezeOn) signals.push('Sıkışma');
         // 5. Hacim artis kademeli (1.3x-2.5x — pump degil, gradual)
         const vr = r.volRatio || 0;
         if (vr >= 1.3 && vr <= 2.5) signals.push('Hacim ısınıyor');
@@ -1576,8 +1583,8 @@ export function useAIAdvisor(portfolio) {
         // 7. Supertrend yukari + ichimoku bulutu üzerinde
         if (r.supertrend?.trend === 'UP' && r.ichimoku?.cloudPosition === 'above')
           signals.push('Trend onayı (Supertrend + Ichimoku)');
-        // 8. TTM Squeeze release (sikisma yeni acildi — patlama enerjisi)
-        if (r.ttmSqueeze?.squeezeRelease) signals.push('TTM Squeeze RELEASE');
+        // 8. (v31.43) "TTM Squeeze RELEASE" buradaydi — squeezeRelease hic uretilmedigi icin
+        // hic eklenmedi; olculen yukari cikis negatif oldugu icin canlandirilmadi.
         // 9. MFI > 55 ama < 78 (para girisi var ama overbought degil)
         if (r.mfi != null && r.mfi >= 55 && r.mfi < 78) signals.push('MFI para girişi');
         // 10. Pozitif kataliz haberi
@@ -2095,7 +2102,7 @@ export function useAIAdvisor(portfolio) {
             const rp = Math.max(r.todayPumpReal || 0, r.recentPump || 0);
             const obvAccum = r.obvTrend === 'accumulation';
             const cmf = r.cmf || 0;
-            const squeezeOn = r.ttmSqueeze?.squeezeOn || r.ttmSqueeze?.squeezeRelease;
+            const squeezeOn = r.ttmSqueeze?.squeezeOn;
             const upTrend = r.supertrend?.trend === 'UP';
 
             // v24: QUALITY TIER 1 genisletildi — score>=45 + herhangi pozitif teknik sinyal
