@@ -599,12 +599,16 @@ export async function tryProxy(url, ms = 10000) {
       return null;
     }
     if (ct.indexOf('json') >= 0) {
-      try {
-        const j = JSON.parse(t);
-        if (j && j.contents && j.contents.length > 50) return j.contents;
-        if (j && (j.chart || j.length > 5)) return JSON.stringify(j);
-      } catch {}
-      return null;
+      // v31.43: this used to return null for every JSON shape other than a Yahoo
+      // chart or an allorigins wrapper, so valid 200 responses were thrown away on
+      // the client — measured: İş Yatırım MaliTablo (balance sheets) and Yahoo
+      // quoteSummary (the advisor's fundamentals gate) both died here even after
+      // the proxy started answering them. Shape validation belongs to the caller,
+      // which knows what it asked for; this layer only rejects junk.
+      let j;
+      try { j = JSON.parse(t); } catch { return null; }   // json content-type that is not JSON
+      if (j && typeof j.contents === 'string' && j.contents.length > 50) return j.contents;
+      return t.length > 50 ? t : null;
     }
     return t.length > 50 ? t : null;
   } catch { return null; }

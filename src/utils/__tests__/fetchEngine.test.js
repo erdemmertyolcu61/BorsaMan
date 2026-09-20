@@ -13,7 +13,7 @@
  * Circuit-breaker: After 3 consecutive failures, a source is skipped for a
  * backoff period. This prevents hammering a failing proxy and allows recovery.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import {
   istanbulDayKey,
   isBistWeekend,
@@ -24,6 +24,7 @@ import {
   _circuitState,
   CIRCUIT_FAILURE_THRESHOLD,
   CIRCUIT_BASE_BACKOFF_MS,
+  tryProxy,
 } from '../fetchEngine.js';
 
 describe('istanbulDayKey', () => {
@@ -106,5 +107,36 @@ describe('circuit-breaker', () => {
   it('threshold constant is correct', () => {
     expect(CIRCUIT_FAILURE_THRESHOLD).toBe(3);
     expect(CIRCUIT_BASE_BACKOFF_MS).toBe(60000);
+  });
+});
+
+
+// v31.43: tryProxy used to return null for every JSON shape other than a Yahoo
+// chart or an allorigins wrapper, so valid 200 payloads were discarded on the
+// client — İş Yatırım balance sheets and Yahoo quoteSummary (the advisor's
+// fundamentals gate) both died here even while the proxy answered them.
+describe('tryProxy — what counts as a usable proxy response', () => {
+  const reply = (body, contentType = 'application/json', ok = true) =>
+    vi.fn(async () => ({ ok, headers: { get: () => contentType }, text: async () => body }));
+
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('passes an arbitrary JSON payload through (balance sheet, quoteSummary...)', async () => {
+    const body = JSON.stringify({ ok: true, value: Array.from({ length: 40 }, (_, i) => ({ itemCode: 'x' + i, value1: '1' })) });
+    vi.stubGlobal('fetch', reply(body));
+    expect(await tryProxy('https://example.test/MaliTablo')).toBe(body);
+  });
+
+  it('still unwraps the allorigins envelope', async () => {
+    const inner = JSON.stringify({ quoteSummary: { result: [{ financialData: {} }] } }).padEnd(60, ' ');
+    vi.stubGlobal('fetch', reply(JSON.stringify({ contents: inner })));
+    expect(await tryProxy('https://example.test/q')).toBe(inner);
+  });
+
+  it('rejects an HTML error page and a json content-type that is not JSON', async () => {
+    vi.stubGlobal('fetch', reply('<!DOCTYPE html><html>nope</html>', 'text/html'));
+    expect(await tryProxy('https://example.test/a')).toBeNull();
+    vi.stubGlobal('fetch', reply('not json at all, just a long line of text .....', 'application/json'));
+    expect(await tryProxy('https://example.test/b')).toBeNull();
   });
 });
