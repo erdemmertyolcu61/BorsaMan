@@ -6,7 +6,7 @@ import { getDataViaProxies } from './fetchEngine.js';
 import { isLocalDevHost } from './proxyTarget.js';
 
 const BASE_URL = 'https://www.isyatirim.com.tr/_layouts/15/IsYatirim.Website/Common/Data.aspx';
-const CACHE_KEY = 'bist_isyatirim_cache_v3';
+const CACHE_KEY = 'bist_isyatirim_cache_v4';   // v31.44: period plan + TTM ratios changed the shape
 const CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
 
 function loadCache() {
@@ -98,7 +98,7 @@ async function fetchWithProxy(url) {
   return null;
 }
 
-function parseFinancialData(rows, symbol, periodLabels) {
+function parseFinancialData(rows, symbol, periodLabels, periodPlan) {
   if (!Array.isArray(rows) || rows.length === 0) return null;
   const out = {
     symbol,
@@ -220,24 +220,53 @@ function parseFinancialData(rows, symbol, periodLabels) {
   }
 
   const curr = periodLabels[0] || Object.keys(out.metrics.revenue || {})[0];
+  // v31.44: index 1 is the SAME period one year earlier (see buildPeriodPlan),
+  // not the previous quarter. The old plan compared a 6-month cumulative against
+  // a 3-month one, so "Ciro Buyume" was structurally ~+100% for every company
+  // (measured on THYAO: +126.8%, an artifact, not growth).
   const prev = periodLabels[1] || Object.keys(out.metrics.revenue || {})[1];
+  const lastFY = periodPlan?.lastFY || periodLabels[2];
+  const isFullYear = !!periodPlan?.isFullYear;
 
   if (curr) {
     const get = (k) => out.metrics[k]?.[curr] || 0;
     const getPrev = (k) => prev && (out.metrics[k]?.[prev] || 0);
 
+    // Trailing twelve months = last full year - same period last year + this
+    // period. Cumulative statements make this exact; without it ROE on a H1
+    // sheet reads as half a year of profit over a full balance sheet (THYAO:
+    // 1.8% instead of 13.1%).
+    const ttm = (k) => {
+      const cur = get(k);
+      if (isFullYear) return cur;
+      const fy = lastFY ? out.metrics[k]?.[lastFY] : undefined;
+      const sly = getPrev(k);
+      if (!Number.isFinite(fy) || !Number.isFinite(sly) || !Number.isFinite(cur)) return null;
+      if (fy === 0 || sly === 0) return null;
+      return fy - sly + cur;
+    };
+    const ttmNetIncome = ttm('netIncome');
+    const ttmRevenue = ttm('revenue');
+    const roeTtm = ttmNetIncome != null && get('totalEquity') > 0 ? ttmNetIncome / get('totalEquity') * 100 : null;
+    const roaTtm = ttmNetIncome != null && get('totalAssets') > 0 ? ttmNetIncome / get('totalAssets') * 100 : null;
+
     out.ratios = {
       grossMargin: get('revenue') > 0 ? get('grossProfit') / get('revenue') * 100 : null,
       netMargin: get('revenue') > 0 ? get('netIncome') / get('revenue') * 100 : null,
       operatingMargin: get('revenue') > 0 ? get('operatingIncome') / get('revenue') * 100 : null,
-      roe: get('totalEquity') > 0 ? get('netIncome') / get('totalEquity') * 100 : null,
-      roa: get('totalAssets') > 0 ? get('netIncome') / get('totalAssets') * 100 : null,
+      // roe/roa are annualised (TTM) where the data allows; the raw
+      // period-over-equity figures stay available for auditing.
+      roe: roeTtm != null ? roeTtm : (get('totalEquity') > 0 ? get('netIncome') / get('totalEquity') * 100 : null),
+      roa: roaTtm != null ? roaTtm : (get('totalAssets') > 0 ? get('netIncome') / get('totalAssets') * 100 : null),
+      roePeriod: get('totalEquity') > 0 ? get('netIncome') / get('totalEquity') * 100 : null,
+      roeIsTtm: roeTtm != null,
       currentRatio: get('currentLiabilities') > 0 ? get('currentAssets') / get('currentLiabilities') : null,
       debtToEquity: get('totalEquity') > 0 ? get('totalLiabilities') / get('totalEquity') : null,
       debtToAssets: get('totalAssets') > 0 ? get('totalLiabilities') / get('totalAssets') : null,
       revenueGrowth: getPrev('revenue') > 0 ? (get('revenue') - getPrev('revenue')) / getPrev('revenue') * 100 : null,
       netIncomeGrowth: getPrev('netIncome') !== 0 ? (get('netIncome') - getPrev('netIncome')) / Math.abs(getPrev('netIncome')) * 100 : null,
     };
+    out.ttm = { netIncome: ttmNetIncome, revenue: ttmRevenue, comparedTo: prev || null };
     out.latest = {
       period: curr,
       revenue: get('revenue'),
@@ -256,6 +285,41 @@ function parseFinancialData(rows, symbol, periodLabels) {
   return out;
 }
 
+/**
+ * v31.44: which four statement periods to request.
+ *
+ * The old plan asked for four CONSECUTIVE quarters (2026/6, 2026/3, 2025/12,
+ * 2025/9). Is Yatirim reports CUMULATIVE figures, so "previous period" was a
+ * 3-month cumulative next to a 6-month one: growth was ~+100% by construction
+ * and there was no way to annualise profit.
+ *
+ * The new plan keeps the same four slots but gives them meaning:
+ *   [0] current      [1] same period one year earlier (YoY comparison)
+ *   [2] last full year   [3] the full year before it   (trailing 12m)
+ *
+ * When the newest statement IS a full year (Jan-Apr, before Q1 lands), the
+ * trailing window is already complete, so the slots become four year-ends.
+ *
+ * @returns {{periods: Array<{year:number, period:number}>, current: string,
+ *            prevYearSame: string, lastFY: string, isFullYear: boolean}}
+ */
+export function buildPeriodPlan(baseYear, basePeriod) {
+  const label = (y, p) => `${y}/${p}`;
+  const isFullYear = basePeriod === 12;
+  const periods = isFullYear
+    ? [{ year: baseYear, period: 12 }, { year: baseYear - 1, period: 12 },
+       { year: baseYear - 2, period: 12 }, { year: baseYear - 3, period: 12 }]
+    : [{ year: baseYear, period: basePeriod }, { year: baseYear - 1, period: basePeriod },
+       { year: baseYear - 1, period: 12 }, { year: baseYear - 2, period: 12 }];
+  return {
+    periods,
+    current: label(periods[0].year, periods[0].period),
+    prevYearSame: label(periods[1].year, periods[1].period),
+    lastFY: label(periods[2].year, periods[2].period),
+    isFullYear,
+  };
+}
+
 export async function fetchIsYatirimFinancials(symbol) {
   const cached = getCached(symbol);
   if (cached) { console.log(`IsYatirim: ${symbol} from cache`); return cached; }
@@ -269,13 +333,8 @@ export async function fetchIsYatirimFinancials(symbol) {
   else if (m >= 5) { baseYear = yr; basePeriod = 3; }
   else { baseYear = yr - 1; basePeriod = 12; }
 
-  const periods = [];
-  let y = baseYear, p = basePeriod;
-  for (let i = 0; i < 4; i++) {
-    periods.push({ year: y, period: p });
-    p -= 3;
-    if (p <= 0) { p = 12; y--; }
-  }
+  const plan = buildPeriodPlan(baseYear, basePeriod);
+  const periods = plan.periods;
 
   const groups = ['XI_29', 'UFRS_K', 'UFRS'];
   for (const grp of groups) {
@@ -293,7 +352,7 @@ export async function fetchIsYatirimFinancials(symbol) {
       if (!json || !json.value || !Array.isArray(json.value) || json.value.length === 0) continue;
 
       const labels = periods.map(p => `${p.year}/${p.period}`);
-      const parsed = parseFinancialData(json.value, symbol, labels);
+      const parsed = parseFinancialData(json.value, symbol, labels, plan);
       if (parsed && parsed.ratios && Object.keys(parsed.metrics).length >= 3) {
         parsed.financialGroup = grp;
         saveCache(symbol, parsed);

@@ -34,6 +34,18 @@ const CHECKS = [
     verify: j => (j?.ok === true && j.count >= 400 ? `${j.count} hisse` : null),
   },
   {
+    // v31.44: F/K + PD/DD (ayri screener istegi — bkz. handleIsyValuation)
+    name: 'isy_valuation (F/K + PD/DD)',
+    path: '/api/proxy?source=isy_valuation',
+    verify: j => {
+      if (j?.ok !== true || !(j.count >= 400)) return null;
+      const thy = (j.rows || []).find(r => r[0] === 'THYAO');
+      const pe = thy && thy[j.fields.indexOf('pe')];
+      const pb = thy && thy[j.fields.indexOf('pb')];
+      return pe > 0 && pb > 0 ? `${j.count} hisse (THYAO F/K ${pe} · PD/DD ${pb})` : null;
+    },
+  },
+  {
     // Tatil gunleri 0 bildirim donebilir; dogru sekil yeterli.
     name: 'kap_disclosures (KAP bildirim akisi)',
     path: '/api/proxy?source=kap_disclosures&days=3',

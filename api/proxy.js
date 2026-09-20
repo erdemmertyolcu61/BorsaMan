@@ -10,6 +10,7 @@
 //        /api/proxy?source=kap_disclosures&days=3               (v31.38 KAP bildirim akisi)
 //        /api/proxy?source=kap_disclosures&days=60&oid=<32 hex> (v31.38 tek sirket)
 //        /api/proxy?source=isy_foreign                          (v31.38 hisse bazli yabanci orani)
+//        /api/proxy?source=isy_valuation                        (v31.44 F/K + PD/DD, tum hisseler)
 //        /api/proxy?source=tcmb_evds&series=TP.MKNETHAR.M7&startdate=dd-mm-yyyy&enddate=dd-mm-yyyy&evds_key=...
 //
 // Features:
@@ -53,6 +54,8 @@ const ALLOWED_SOURCES = new Set([
   'isyatirim', 'isyatirim_fin', 'isyatirim_yabanci', 'foreks', 'tcmb_evds', 'news', 'default',
   // v31.38: server-side POST routes (see handleKapDisclosures / handleIsyForeign)
   'kap_disclosures', 'isy_foreign',
+  // v31.44: F/K + PD/DD (ayri rota — bkz. handleIsyValuation)
+  'isy_valuation',
   // v31.40: merged daily bars — Is Yatirim days + Yahoo real opens (see handleBars)
   'bars',
 ]);
@@ -232,6 +235,15 @@ const ISY_FIELDS = [
   ['40', 'foreignRatio'], ['44', 'foreignChg1w'], ['45', 'foreignChg1m'],
   ['8', 'mcapMnTL'], ['22', 'rel1w'], ['23', 'rel1m'],
 ];
+
+// v31.44: valuation ids, verified numerically on THYAO 2026-09-20 —
+//   28 F/K  = mcap / trailing-12m net income (393.99B / 132.92B = 2.96, matches)
+//   30 PD/DD = mcap / equity                 (393.99B / 1,018.45B = 0.39, matches)
+// SEPARATE request on purpose: the screener returns the INTERSECTION of its
+// criteria, so folding 28/30 into the foreign body drops every stock without a
+// F/K (measured: 603 -> 601, ISKUR and MARMR vanish). The foreign map must not
+// lose rows to buy a second metric.
+const ISY_VALUATION_FIELDS = [['28', 'pe'], ['30', 'pb'], ['8', 'mcapMnTL']];
 
 function istanbulDate(ms) {
   const d = new Date(ms + 3 * 60 * 60 * 1000);
@@ -515,6 +527,61 @@ async function handleIsyForeign(req, res) {
   }
 }
 
+// v31.44: F/K + PD/DD for every BIST stock in one POST (measured 2026-09-20:
+// 628 rows, ~500 ms). Same screener, own criteria — see ISY_VALUATION_FIELDS
+// for why this is not folded into isy_foreign. Valuation moves once a day at
+// most, so the edge cache is an hour.
+async function handleIsyValuation(req, res) {
+  const body = {
+    sektor: '', endeks: '', takip: '', oneri: '', lang: '1055',
+    criterias: [
+      ['28', '-100000000', '100000000', 'False'],
+      ['30', '-100000000', '100000000', 'False'],
+      ['8', '0', '100000000', 'False'],
+    ],
+  };
+  const now = Date.now();
+  try {
+    const { status, text } = await postJson(ISY_SCREENER_URL, body, {
+      'User-Agent': BROWSER_UA,
+      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Origin': 'https://www.isyatirim.com.tr',
+      'Referer': 'https://www.isyatirim.com.tr/tr-tr/analiz/hisse/Sayfalar/gelismis-hisse-arama.aspx',
+    }, 9000);
+    if (status !== 200) return res.status(502).json({ ok: false, error: 'upstream_status', status });
+    let list;
+    try {
+      const outer = JSON.parse(text);
+      list = typeof outer.d === 'string' ? JSON.parse(outer.d) : outer.d;
+    } catch {
+      return res.status(502).json({ ok: false, error: 'upstream_not_json' });
+    }
+    if (!Array.isArray(list)) return res.status(502).json({ ok: false, error: 'upstream_shape' });
+
+    const num = (v) => {
+      const n = parseFloat(String(v).replace(',', '.'));
+      return Number.isFinite(n) ? n : null;
+    };
+    const rows = [];
+    for (const it of list) {
+      const symbol = String((it && it.Hisse) || '').split(' - ')[0].trim().toUpperCase();
+      if (!/^[A-Z][A-Z0-9]{2,5}$/.test(symbol)) continue;
+      rows.push([symbol, ...ISY_VALUATION_FIELDS.map(([id]) => num(it[id]))]);
+    }
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
+    res.setHeader('X-Proxy-Source', 'isy_valuation');
+    return res.status(200).json({
+      ok: true, source: 'isyatirim', fetchedAt: now,
+      fields: ['symbol', ...ISY_VALUATION_FIELDS.map(([, name]) => name)],
+      count: rows.length, rows,
+    });
+  } catch (err) {
+    return sendUpstreamError(res, err);
+  }
+}
+
 export default async function handler(req, res) {
   // CORS — restrict to known origins; Electron has no origin header (allowed)
   const allowedOrigin = getCorsOrigin(req);
@@ -546,6 +613,7 @@ export default async function handler(req, res) {
   // v31.38: POST-only upstreams — the proxy makes the call itself.
   if (rawSource === 'kap_disclosures') return handleKapDisclosures(req, res);
   if (rawSource === 'isy_foreign') return handleIsyForeign(req, res);
+  if (rawSource === 'isy_valuation') return handleIsyValuation(req, res);
   if (rawSource === 'bars') return handleBars(req, res);
 
   let targetUrl = req.query.url;
@@ -575,6 +643,7 @@ export default async function handler(req, res) {
         yahoo_fund: '/api/proxy?source=yahoo_fund&symbol=THYAO',
         kap_disclosures: '/api/proxy?source=kap_disclosures&days=3',
         isy_foreign: '/api/proxy?source=isy_foreign',
+        isy_valuation: '/api/proxy?source=isy_valuation',
       },
     });
   }

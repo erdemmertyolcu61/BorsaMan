@@ -1943,6 +1943,81 @@ kalite kapısı (v31.10) verisiz çalışıyordu.
   - İlgili, DOKUNULMAYAN kalem: erken birikim sinyal listesinde "Supertrend YUKARI" (dönüş + trend
     UP) hâlâ bir sinyal sayılıyor (4+ sinyal → `_earlyPick`). Aynı olay, farklı mekanizma — ayrı karar.
 
+## Analiz Ekranı Sadeleştirildi + Gerçek Değerleme (F/K · PD/DD · Özkaynak) (v31.44)
+
+Kullanıcı: "Ekran çok kalabalık, işlem yönetim planını kaldır. Ayrıca bir hisse için önemli olan
+F/K, PD/DD oranları, özsermayeler bunlar olmalı. Ekranda olan ve işe yaramayan tüm ekstra
+detayları kaldıralım."
+
+### A — Kaldırılanlar (hepsi ya istek ya ölçülmüş kusur)
+- **📋 İŞLEM YÖNETİM PLANI** (v31.18) — sağ panelin ~20 satırı. Anlattığı kurallar YERİNDE duruyor:
+  gerçek stop'u `useLivePrices` yürütüyor (+%3 başabaş, +%5 üstü yarısını kilitle) ve öğrenme
+  döngüsü `planSimulation` ile aynı sabitleri tekrar oynatıyor. `tradePlan.js` artık yalnız
+  `PLAN_CONST` + `EXIT_POLICY`; tüketicisi kalmayan `buildTradePlan` (ve 7 testi) silindi.
+- **Chandelier Stop** ve **Piyasa Modu (ADX)** satırları — ikisi de gösterge şeridinde zaten var
+  (ADX o sayfada üçüncü kez yazılıyordu).
+- **Tutma Süresi** — v31.43'te ölçüldü: tahmin 14,3 bar, trailing-only çıkışta gerçek tutma 6,0 bar.
+- **Brüt Marj** kartı (Net Marj duruyor).
+- Makro kutucuklarında **sahte trend**: veri gelmeyen VIX/Brent `0.00 ▼ DUSUS` yazıyordu — yani
+  elimizde olmayan veri hakkında hüküm. Artık `— · VERİ YOK` (dördü de meşru olarak 0 olamaz).
+
+### B — F/K + PD/DD: Yahoo ölçülerek bırakıldı, İş Yatırım getirildi
+Ekranda F/K ve PD/DD zaten "vardı" ama Yahoo `quoteSummary`'den besleniyordu. Ölçüm (2026-09-20,
+İş Yatırım'ın kendi rakamlarına karşı):
+
+| | İş F/K | İş PD/DD | Yahoo PE | Yahoo PB |
+|---|---|---|---|---|
+| **THYAO** | 2,96 | 0,39 | **yok** | **17,97** |
+| GARAN | 4,52 | 1,12 | 4,53 | 1,12 |
+| EREGL | 32,67 | 0,80 | 31,67 | 0,77 |
+| SISE | 10,34 | 0,45 | 10,71 | 0,29 |
+| KCHOL | 14,34 | 0,69 | 23,46 | 0,69 |
+
+Yahoo büyük çoğunlukta yakın, ama delikleri var ve THYAO'da (uygulamanın varsayılan sembolü)
+PD/DD **46 kat** yanlış — canlı ekranda satırların hiçbiri görünmüyordu bile.
+
+- Yeni proxy rotası `source=isy_valuation` (iki kopya): aynı hisse tarama ucu, kendi kriterleriyle.
+  Kriter kimlikleri THYAO üzerinde **sayısal olarak doğrulandı**: `28` = F/K (394,0B / 132,9B = 2,96),
+  `30` = PD/DD (394,0B / 1.018,5B = 0,39). 628 hisse, ~500 ms, saatlik edge cache.
+  **Bilinçli olarak AYRI istek**: tarama kriterleri KESİŞİM döndürüyor — 28/30'u yabancı-oranı
+  gövdesine eklemek F/K'si olmayan hisseleri sessizce düşürüyordu (ölçüldü: 603 → 601, ISKUR ve
+  MARMR kayboluyor). Yabancı haritası ikinci bir metrik için satır kaybetmez.
+- `valuationRatios.js` (yeni, 10 test): compact/ham/eski-proxy yüklerini ALAN ADIYLA okur (eski bir
+  dağıtım sütun kaydırmaz), 6 saat cache (628 hisse = 44 KB), ve **boş ile yok'u ayırır** —
+  eski proxy 400 dönerse `proxy_outdated` der, "bu hissenin F/K'si yok" demez.
+- **Hiçbir skora girmiyor** — yalnız gösterim. Değerleme kuralları ölçülmeden açılmaz
+  (`dataLayerPolicy` çizgisi).
+
+### C — Bilanço paneli → **TEMEL ANALİZ**, ve iki gerçek hesap hatası
+Panel F/K, PD/DD, **Özkaynak** ve Piyasa Değeri kartlarını kazandı. Yazarken iki bug ölçüldü:
+- **ROE yarım yıllık kârla hesaplanıyordu**: İş Yatırım KÜMÜLATİF raporluyor, panel 6 aylık kârı tam
+  bilançoya bölüyordu → THYAO **%1,8** (gerçek 12 aylık %13,1; Yahoo'nun `returnOnEquity` alanı da
+  %13,13 diyor — bağımsız teyit).
+- **"Ciro Büyüme %126,8" bir artefakttı**: dönem listesi ardışık 4 çeyrekti, yani 6 aylık kümülatif
+  3 aylık kümülatifle karşılaştırılıyordu → her şirkette yapısal olarak ~+%100.
+
+`buildPeriodPlan` (yeni, test edilmiş) dört dönemi anlamlandırdı: `[bu dönem, GEÇEN YILIN AYNI
+DÖNEMİ, son tam yıl, ondan önceki tam yıl]`. Böylece:
+- **12 aylık (TTM)** = son tam yıl − geçen yılın aynı dönemi + bu dönem → THYAO net kâr **132,9B**
+  (139,1 − 24,9 + 18,8; elle doğrulandı), ROE **%13,1**, Hasılat **1.302,2B**.
+- **Ciro büyüme artık YoY** → THYAO **+%43,4**.
+- En yeni tablo zaten tam yılsa (Ocak-Nisan) dört slot dört yıl sonu olur; `roePeriod` denetim için
+  duruyor. `bist_isyatirim_cache_v3` → `v4` (şekil değişti).
+- Yan etki (bilinçli): `scoreIsYatirimFundamentals` (Intraday temel skoru) artık gerçek YoY büyüme ve
+  yıllık ROE görüyor — eşikler zaten yıllık rakam için yazılmıştı; **kural değişmedi, girdi düzeldi**.
+
+### Doğrulama
+- Test **837 pass (63 dosya)** (tradePlan'in 7 testi silindi, valuation 10 + period plan 2 eklendi),
+  0 lint error (79 warning, ratchet 90), build temiz. Proxy rotası yerelde gerçek uca karşı koştu:
+  628 satır, THYAO 2,96 / 0,39; `isy_foreign` 603 satırda **değişmedi**.
+- Canlı önizleme (gerçek veri): plan gitti, başlıkta `Piyasa Değeri 394,0B TL · F/K 3,0 · PD/DD 0,39`,
+  panelde `F/K 2,96 · PD/DD 0,39 · ÖZKAYNAK 1.018,5B · NET KÂR (12A) 132,9B · ROE (12A) %13,1 ·
+  CİRO BÜYÜME (YoY) %43,4`, makro kutucuklarında `VERİ YOK`, yatay taşma yok, yeni konsol hatası yok.
+- **Sınır (dürüst)**: F/K ve PD/DD İş Yatırım'ın KENDİ hesabı (mcap / 12 aylık kâr, mcap / özkaynak);
+  farklı veri sağlayıcılar farklı kâr tanımıyla farklı F/K yazabilir. Değerleme gün içinde
+  güncellenmez (saatlik cache) ve **hiçbir AL/SAT kararına girmez**. Yeni proxy rotası dağıtılana
+  kadar üretimde F/K/PD/DD `proxy_outdated` der.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

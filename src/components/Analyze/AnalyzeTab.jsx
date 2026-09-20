@@ -3,8 +3,8 @@ import { fetchData, fetchFundamentals, fetchBigParaBatchPrices } from '../../uti
 import { calcPosition, getUnifiedAnalysis } from '../../utils/signals.js';
 import { getUnifiedDecision } from '../../utils/unifiedDecision.js';
 import { analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
-import { buildTradePlan } from '../../utils/tradePlan.js';
 import { fetchIsYatirimFinancials } from '../../utils/isyatirimEngine.js';
+import { fetchSymbolValuation } from '../../utils/valuationRatios.js';
 import { fetchKAPDisclosures, calcKAPSentiment } from '../../utils/kapEngine.js';
 import { isKapCatalystScoringEnabled } from '../../utils/dataLayerPolicy.js';
 import { runMonteCarloAsync } from '../../utils/monteCarlo.js';
@@ -60,6 +60,7 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
   const [loading, setLoading] = useState(false);
   const [fundamentals, setFundamentals] = useState(null);
   const [bilanco, setBilanco] = useState(null);
+  const [valuation, setValuation] = useState(null);   // v31.44: F/K + PD/DD (Is Yatirim)
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [showJarvisModal, setShowJarvisModal] = useState(false);
   const [pendingOrder, setPendingOrder] = useState(null);
@@ -286,12 +287,16 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
       } else { setMcData(null); }
       setFundamentals(null);
       setBilanco(null);
+      setValuation(null);
       fetchFundamentals(s).then(f => {
         const comprehensive = analyzeComprehensiveFinancials(f.yahoo, f.kap);
         setFundamentals(comprehensive);
       }).catch(() => {});
       // Fetch real bilanco from Is Yatirim
       fetchIsYatirimFinancials(s).then(b => setBilanco(b)).catch(() => {});
+      // v31.44: F/K + PD/DD come from the Is Yatirim screener — Yahoo's BIST
+      // valuation is patchy (THYAO: no trailing P/E, P/B 17.97 vs the real 0.39).
+      fetchSymbolValuation(s).then(v => setValuation(v)).catch(() => {});
       setBadge({ text: 'Tamam', cls: 'ok' });
     } catch (error) {
       log({ type: 'err', msg: 'Analiz hatasi: ' + error.message });
@@ -374,11 +379,14 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
                 return <span>Hacim: <b style={{ color: 'var(--cyan)' }}>{volStr}</b></span>;
               })()}
               {(gInd.volRatio != null) && <span>Ort. Hacim: <b style={{ color: gInd.volRatio > 1.5 ? 'var(--green)' : gInd.volRatio < 0.5 ? 'var(--red)' : 'var(--t1)' }}>{(gInd.volRatio || 0).toFixed(1)}x</b></span>}
-              {fundamentals?.marketCap && <span>PD: <b style={{ color: 'var(--yellow)' }}>{fundamentals.marketCap >= 1e9 ? (fundamentals.marketCap / 1e9).toFixed(1) + 'B TL' : (fundamentals.marketCap / 1e6).toFixed(0) + 'M TL'}</b></span>}
-              {fundamentals?.pe && <span>F/K: <b style={{ color: fundamentals.pe < 10 ? 'var(--green)' : fundamentals.pe > 25 ? 'var(--red)' : 'var(--t1)' }}>{(fundamentals.pe || 0).toFixed(1)}</b></span>}
-              {fundamentals?.pb && <span>PD/DD: <b>{(fundamentals.pb || 0).toFixed(1)}</b></span>}
-              {fundamentals?.divYield && <span>Temettu: <b style={{ color: 'var(--green)' }}>%{(fundamentals.divYield || 0).toFixed(1)}</b></span>}
-              {fundamentals?.roe && <span>ROE: <b style={{ color: fundamentals.roe > 15 ? 'var(--green)' : 'var(--t1)' }}>%{(fundamentals.roe || 0).toFixed(0)}</b></span>}
+              {/* v31.44: valuation from Is Yatirim (all 628 stocks, verified on
+                  THYAO); Yahoo only as a fallback for the market cap. */}
+              {(() => {
+                const mcap = valuation?.mcapMnTL != null ? valuation.mcapMnTL * 1e6 : (fundamentals?.marketCap || null);
+                return mcap ? <span>Piyasa Değeri: <b style={{ color: 'var(--yellow)' }}>{mcap >= 1e9 ? (mcap / 1e9).toFixed(1) + 'B TL' : (mcap / 1e6).toFixed(0) + 'M TL'}</b></span> : null;
+              })()}
+              {valuation?.pe != null && <span>F/K: <b style={{ color: valuation.pe > 0 && valuation.pe < 10 ? 'var(--green)' : valuation.pe > 25 || valuation.pe < 0 ? 'var(--red)' : 'var(--t1)' }}>{valuation.pe.toFixed(1)}</b></span>}
+              {valuation?.pb != null && <span>PD/DD: <b style={{ color: valuation.pb > 0 && valuation.pb < 1 ? 'var(--green)' : valuation.pb > 3 ? 'var(--red)' : 'var(--t1)' }}>{valuation.pb.toFixed(2)}</b></span>}
             </div>
           </div>
         )}
@@ -558,47 +566,9 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
               <div className="tr-row"><span className="tr-l">Hedef 2</span><span className="tr-v g">{(gSig.t2 || 0).toFixed(2)} TL (+{(((gSig.t2 - gSig.entry) / gSig.entry) * 100 || 0).toFixed(1)}%)</span></div>
               <div className="tr-row"><span className="tr-l">R/O</span><span className="tr-v y">1:{(gSig.rr || 0).toFixed(1)}</span></div>
               {gSig.atr && <div className="tr-row"><span className="tr-l">ATR(14)</span><span className="tr-v" style={{ color: 'var(--cyan)' }}>{(gSig.atr || 0).toFixed(2)}</span></div>}
-              {gInd?.chandelier?.longStop && <div className="tr-row"><span className="tr-l">Chandelier Stop</span><span className="tr-v" style={{ color: 'var(--orange)' }}>{(gInd.chandelier.longStop || 0).toFixed(2)} TL</span></div>}
-              <div className="tr-row"><span className="tr-l">Tutma Süresi</span><span className="tr-v" style={{ color: 'var(--purple)' }}>{gSig.holdText || '—'}</span></div>
-              {gInd?.adx != null && <div className="tr-row"><span className="tr-l">Piyasa Modu</span><span className="tr-v" style={{ color: gInd.adx > 25 ? 'var(--green)' : 'var(--yellow)' }}>{gInd.adx > 25 ? 'TREND (ADX ' + (gInd.adx || 0).toFixed(0) + ')' : 'YATAY (ADX ' + (gInd.adx || 0).toFixed(0) + ')'}</span></div>}
-
-              {/* v31.18: İŞLEM YÖNETİM PLANI — kademeli alım + stop yönetimi + kâr alma */}
-              {(() => {
-                const plan = buildTradePlan(gSig);
-                if (!plan) return null;
-                const fmt = (v) => v == null ? 'trailing' : `${v.toFixed(2)} TL`;
-                const Section = ({ title, color, items }) => (
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ fontSize: 9, fontWeight: 800, color, letterSpacing: 0.4, marginBottom: 4 }}>{title}</div>
-                    {items.map((it, i) => (
-                      <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 9.5, lineHeight: 1.5, color: 'var(--t2)' }}>
-                        <span style={{ color, fontWeight: 700, minWidth: 46 }}>{it.tag}</span>
-                        <span>{it.text}</span>
-                      </div>
-                    ))}
-                  </div>
-                );
-                return (
-                  <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--cyan)', marginBottom: 2 }}>📋 İŞLEM YÖNETİM PLANI</div>
-                    <Section title="① KADEMELİ ALIM" color="var(--green)" items={plan.entrySteps.map(s => ({
-                      tag: `%${s.fraction}`, text: `${fmt(s.at)} — ${s.note}`,
-                    }))} />
-                    <Section title="② STOP YÖNETİMİ" color="var(--orange)" items={plan.stopSteps.map(s => ({
-                      tag: s.trigger ? `${s.trigger.toFixed(2)}` : 'başta', text: s.note,
-                    }))} />
-                    {/* v31.30: hedefler artık satış emri değil referans seviye — ölçüm
-                        kademeli satışın getiriyi yarıya düşürdüğünü gösterdi. */}
-                    <Section title="③ KÂR YÖNETİMİ (trailing)" color="var(--green)" items={plan.exitSteps.map(s => ({
-                      tag: s.fraction ? `%${s.fraction}` : 'ref', text: `${fmt(s.at)} — ${s.note}`,
-                    }))} />
-                    <div style={{ marginTop: 6, fontSize: 9, color: 'var(--t3)', lineHeight: 1.5 }}>
-                      <b style={{ color: 'var(--red)' }}>Geçersizleşme:</b> {plan.invalidation.toFixed(2)} TL günlük kapanış {plan.isBuy ? 'altında' : 'üstünde'} → setup bozuldu, çık.
-                      {plan.holdHorizon ? <> · <b style={{ color: 'var(--purple)' }}>Ufuk:</b> {plan.holdHorizon}</> : null}
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* v31.44 temizlik: "Chandelier Stop" ve "Piyasa Modu (ADX)" gosterge
+                  seridinde zaten var; "Tutma Suresi" ise v31.43'te olculdu —
+                  tahmin 14.3 bar, trailing-only cikista gercek tutma 6.0 bar. */}
 
               {/* Long-term investment view */}
               {gSig.longTermView && (
@@ -671,45 +641,67 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
             {/* KAP Panel */}
             <KAPPanel symbol={gData.symbol} />
 
-            {/* Bilanco Panel */}
-            {bilanco && bilanco.ratios && (
-              <div className="trade-box fi" style={{ marginTop: 14 }}>
-                <div className="trade-title" style={{ color: 'var(--purple)' }}>Bilanco & Gelir Tablosu ({bilanco.latest?.period || 'Son Donem'})</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(100px,1fr))', gap: 6, marginTop: 8 }}>
-                  {[
-                    { label: 'Hasilat', val: bilanco.latest?.revenue, fmt: 'money' },
-                    { label: 'Net Kar', val: bilanco.latest?.netIncome, fmt: 'money' },
-                    { label: 'Brut Marj', val: bilanco.ratios?.grossMargin, fmt: 'pct' },
-                    { label: 'Net Marj', val: bilanco.ratios?.netMargin, fmt: 'pct' },
-                    { label: 'ROE', val: bilanco.ratios?.roe, fmt: 'pct' },
-                    { label: 'Cari Oran', val: bilanco.ratios?.currentRatio, fmt: 'ratio' },
-                    { label: 'Borc/Ozkaynak', val: bilanco.ratios?.debtToEquity, fmt: 'ratio' },
-                    { label: 'Ciro Buyume', val: bilanco.ratios?.revenueGrowth, fmt: 'pct' },
-                  ].map((m, i) => {
-                    let display = 'N/A', color = 'var(--t2)';
-                    if (m.val != null) {
+            {/* v31.44 TEMEL ANALİZ — F/K, PD/DD, özkaynak ve gerçek (yıllığa
+                çevrilmiş) kârlılık. Bilanço gelmese bile değerleme gösterilir;
+                değerleme gelmese bile bilanço gösterilir. */}
+            {(bilanco?.ratios || valuation?.pe != null) && (() => {
+              const L = bilanco?.latest || {};
+              const R = bilanco?.ratios || {};
+              const ttm = bilanco?.ttm || {};
+              const mcapTL = valuation?.mcapMnTL != null ? valuation.mcapMnTL * 1e6 : (fundamentals?.marketCap || null);
+              const cards = [
+                { label: 'F/K', val: valuation?.pe, fmt: 'x', good: (v) => v > 0 && v < 10, bad: (v) => v < 0 || v > 25 },
+                { label: 'PD/DD', val: valuation?.pb, fmt: 'x', good: (v) => v > 0 && v < 1, bad: (v) => v > 3 },
+                { label: 'Özkaynak', val: L.totalEquity || null, fmt: 'money' },
+                { label: 'Piyasa Değeri', val: mcapTL, fmt: 'money', neutral: true },
+                { label: ttm.revenue != null ? 'Hasılat (12A)' : 'Hasılat', val: ttm.revenue != null ? ttm.revenue : (L.revenue || null), fmt: 'money' },
+                { label: ttm.netIncome != null ? 'Net Kâr (12A)' : 'Net Kâr', val: ttm.netIncome != null ? ttm.netIncome : (L.netIncome || null), fmt: 'money' },
+                { label: R.roeIsTtm ? 'ROE (12A)' : 'ROE', val: R.roe, fmt: 'pct' },
+                { label: 'Net Marj', val: R.netMargin, fmt: 'pct' },
+                { label: 'Cari Oran', val: R.currentRatio, fmt: 'x', good: (v) => v >= 1.5, bad: (v) => v < 1 },
+                { label: 'Borç/Özkaynak', val: R.debtToEquity, fmt: 'x', good: (v) => v < 1, bad: (v) => v >= 2 },
+                { label: 'Ciro Büyüme (YoY)', val: R.revenueGrowth, fmt: 'pct' },
+              ].filter(c => c.val != null && Number.isFinite(c.val));
+              const period = bilanco?.latest?.period;
+              return (
+                <div className="trade-box fi" style={{ marginTop: 14 }}>
+                  <div className="trade-title" style={{ color: 'var(--purple)' }}>Temel Analiz{period ? ' (' + period + ')' : ''}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(96px,1fr))', gap: 6, marginTop: 8 }}>
+                    {cards.map((m, i) => {
+                      let display, color = 'var(--t1)';
                       if (m.fmt === 'money') {
-                        display = Math.abs(m.val) >= 1e9 ? (m.val / 1e9).toFixed(1) + 'B' : (m.val / 1e6).toFixed(0) + 'M';
-                        color = m.val >= 0 ? 'var(--green)' : 'var(--red)';
+                        const a = Math.abs(m.val);
+                        display = a >= 1e9 ? (m.val / 1e9).toFixed(1) + 'B' : a >= 1e6 ? (m.val / 1e6).toFixed(0) + 'M' : m.val.toFixed(0);
+                        color = m.neutral ? 'var(--yellow)' : m.val >= 0 ? 'var(--green)' : 'var(--red)';
                       } else if (m.fmt === 'pct') {
                         display = m.val.toFixed(1) + '%';
                         color = m.val >= 10 ? 'var(--green)' : m.val >= 0 ? 'var(--cyan)' : 'var(--red)';
                       } else {
                         display = m.val.toFixed(2);
-                        color = m.label === 'Cari Oran' ? (m.val >= 1.5 ? 'var(--green)' : m.val >= 1 ? 'var(--yellow)' : 'var(--red)') : (m.val < 1 ? 'var(--green)' : m.val < 2 ? 'var(--yellow)' : 'var(--red)');
+                        if (m.good && m.good(m.val)) color = 'var(--green)';
+                        else if (m.bad && m.bad(m.val)) color = 'var(--red)';
+                        else color = 'var(--yellow)';
                       }
-                    }
-                    return (
-                      <div key={i} style={{ background: 'var(--bg2)', padding: '6px 8px', borderRadius: 4, textAlign: 'center' }}>
-                        <div style={{ fontSize: 7, textTransform: 'uppercase', color: 'var(--t3)', letterSpacing: 0.3 }}>{m.label}</div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color, marginTop: 2 }}>{display}</div>
-                      </div>
-                    );
-                  })}
+                      return (
+                        <div key={i} style={{ background: 'var(--bg2)', padding: '6px 8px', borderRadius: 4, textAlign: 'center' }}>
+                          <div style={{ fontSize: 7, textTransform: 'uppercase', color: 'var(--t3)', letterSpacing: 0.3 }}>{m.label}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color, marginTop: 2 }}>{display}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontSize: 8, color: 'var(--t3)', marginTop: 6 }}>
+                    Kaynak: İş Yatırım (mali tablo + F/K · PD/DD) · TL
+                    {bilanco?.ttm?.comparedTo ? ' · 12A = son yıl − ' + bilanco.ttm.comparedTo + ' + ' + period : ''}
+                  </div>
+                  {valuation?.unavailable && (
+                    <div style={{ fontSize: 8, color: 'var(--orange)', marginTop: 4 }}>
+                      F/K · PD/DD alınamadı ({valuation.reason === 'proxy_outdated' ? 'proxy eski — proxy klasörünü yeniden deploy et' : valuation.reason}) — &quot;veri yok&quot; demek değil.
+                    </div>
+                  )}
                 </div>
-                <div style={{ fontSize: 8, color: 'var(--t3)', marginTop: 6 }}>Kaynak: Is Yatirim Mali Tablolar | TL</div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Reasons — Collapsible */}
             {(() => {

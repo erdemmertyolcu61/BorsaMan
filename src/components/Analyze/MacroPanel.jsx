@@ -55,20 +55,24 @@ export default function MacroPanel() {
             ) : (
               ['policyRate', 'vix', 'usdtry', 'brent'].map(key => {
                 const ind = indicators[key];
+                // v31.44: a feed that did not answer left the value at 0 and the
+                // tile still printed "0.00 ▼ DUSUS" — a verdict on data we do not
+                // have. None of these four can legitimately be 0.
+                const hasValue = Number.isFinite(ind.value) && ind.value !== 0;
                 return (
                   <div key={key} style={{
                     padding: '8px 10px', background: 'var(--bg3)', borderRadius: 8,
                     border: '1px solid var(--border)', textAlign: 'center',
                   }}>
                     <div style={{ fontSize: 8, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{ind.label}</div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)', marginTop: 2 }}>
-                      {key === 'bist100' ? ind.value.toLocaleString() : ind.value.toFixed(2)}{ind.unit ? ' ' + ind.unit : ''}
+                    <div style={{ fontSize: 14, fontWeight: 800, color: hasValue ? 'var(--t1)' : 'var(--t3)', marginTop: 2 }}>
+                      {!hasValue ? '—' : (key === 'bist100' ? ind.value.toLocaleString() : ind.value.toFixed(2)) + (ind.unit ? ' ' + ind.unit : '')}
                     </div>
                     <div style={{
                       fontSize: 8, fontWeight: 600, marginTop: 2,
-                      color: ind.trend === 'yukselis' ? 'var(--green)' : ind.trend === 'dusus' ? 'var(--red)' : 'var(--t3)',
+                      color: !hasValue ? 'var(--t3)' : ind.trend === 'yukselis' ? 'var(--green)' : ind.trend === 'dusus' ? 'var(--red)' : 'var(--t3)',
                     }}>
-                      {ind.trend === 'yukselis' ? '▲' : ind.trend === 'dusus' ? '▼' : '◆'} {ind.trend.toUpperCase()}
+                      {!hasValue ? 'VERİ YOK' : (ind.trend === 'yukselis' ? '▲' : ind.trend === 'dusus' ? '▼' : '◆') + ' ' + ind.trend.toUpperCase()}
                     </div>
                   </div>
                 );
