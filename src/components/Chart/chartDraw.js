@@ -23,6 +23,29 @@ export function chartPads(w) {
   };
 }
 
+/**
+ * v31.45: clamp a requested window to the series we actually have.
+ *
+ * The view range used to be taken at face value. It is set once per analysis
+ * ("show the last 200 of 1252 bars"), and when the user switched the timeframe
+ * to a SHORTER series the old range survived: `prices.slice(1052, 1252)` on a
+ * 64-bar array is empty, the draw bailed at "fewer than 2 visible bars" and the
+ * canvas stayed BLANK (measured: 0 ink). Chart.jsx resets the range when the
+ * series changes; this is the second line of defence.
+ *
+ * @param {{start?: number, end?: number}|null} viewRange
+ * @param {number} length number of bars available
+ * @returns {{startIdx: number, endIdx: number}} always inside [0, length-1]
+ */
+export function clampViewRange(viewRange, length) {
+  const lastIdx = Math.max(0, (length || 0) - 1);
+  let endIdx = Number.isFinite(viewRange?.end) ? Math.min(Math.round(viewRange.end), lastIdx) : lastIdx;
+  let startIdx = Number.isFinite(viewRange?.start) ? Math.max(0, Math.round(viewRange.start)) : 0;
+  if (endIdx < 1) endIdx = lastIdx;
+  if (startIdx > endIdx - 1) startIdx = Math.max(0, endIdx - Math.min(200, lastIdx));
+  return { startIdx, endIdx };
+}
+
 export function drawChart({ canvas, container, prices, ind, viewRange, crosshair, mcData, smcData, entryZone }) {
   if (!prices || !ind || !canvas || !container) return;
 
@@ -42,8 +65,7 @@ export function drawChart({ canvas, container, prices, ind, viewRange, crosshair
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const startIdx = viewRange ? viewRange.start : 0;
-  const endIdx = viewRange ? viewRange.end : prices.length - 1;
+  const { startIdx, endIdx } = clampViewRange(viewRange, prices.length);
   const visiblePrices = prices.slice(startIdx, endIdx + 1);
   if (visiblePrices.length < 2) return;
 

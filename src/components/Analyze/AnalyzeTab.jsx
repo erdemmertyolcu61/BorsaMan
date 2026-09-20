@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { fetchData, fetchFundamentals, fetchBigParaBatchPrices } from '../../utils/fetchEngine.js';
+import { fetchData, fetchFundamentals, fetchBigParaBatchPrices, istanbulDayKey } from '../../utils/fetchEngine.js';
 import { calcPosition, getUnifiedAnalysis } from '../../utils/signals.js';
 import { getUnifiedDecision } from '../../utils/unifiedDecision.js';
 import { analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
@@ -370,8 +370,32 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
               </span>
             </div>
             <div style={{ display: 'flex', gap: 12, fontSize: 9, color: 'var(--t3)', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span>{gData.source}</span>
-              {fundamentals?.source && <span style={{ background: fundamentals.source.includes('KAP') ? 'var(--purple)' : 'var(--bg2)', padding: '1px 4px', borderRadius: 3, color: '#fff', fontSize: 7 }}>{fundamentals.source}</span>}
+              {/* v31.45: fiyatin HANGI oturumdan geldigi acikca yazilir. "Dogru fiyati
+                  gormek" bunu bilmeyi de gerektiriyor: hafta sonu ve seans disinda
+                  gorulen sayi son kapanistir, canli degildir. */}
+              {(() => {
+                const bars = gData.prices || [];
+                const last = bars[bars.length - 1];
+                if (!last) return <span>{gData.source}</span>;
+                // Gun anahtari UTC'den okunamaz: kaynaklarin bir kismi bar tarihini
+                // YEREL saatle kuruyor (2026-09-18T00:00+03 -> UTC'de 17'si).
+                // `istanbulDayKey` uygulamanin tek dogru gun anahtari.
+                const key = istanbulDayKey(last.date);           // "YYYY-MM-DD"
+                const dayTxt = key ? `${key.slice(8, 10)}.${key.slice(5, 7)}` : '—';
+                const forming = last._isForming === true;
+                return (
+                  <span title={`Veri kaynagi: ${gData.source}${gData.lastPriceSource ? ' + ' + gData.lastPriceSource : ''}
+Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
+                    {gData.source} · <b style={{ color: forming ? 'var(--green)' : 'var(--t2)' }}>{dayTxt}{forming ? ' canlı' : ' kapanış'}</b>
+                  </span>
+                );
+              })()}
+              {gData.dataConfidence === 'low' && (
+                <span style={{ background: 'var(--red2)', border: '1px solid var(--red)', color: 'var(--red)', padding: '1px 5px', borderRadius: 3, fontWeight: 700 }}
+                  title={`Canli fiyat son barin kapanisindan %${(gData.divergencePct || 0).toFixed(1)} uzakta. Kaynaklar celisiyor — islem kararindan once teyit edin.`}>
+                  ⚠ VERİ ÇELİŞKİSİ %{(gData.divergencePct || 0).toFixed(1)}
+                </span>
+              )}
               {gData.prices.length > 0 && (() => {
                 const lastBar = gData.prices[gData.prices.length - 1];
                 const vol = lastBar.volume || 0;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
+import { fetchQuotesBatch } from '../utils/fetchEngine.js';
 
 // ============================================================
 // TIERED ADAPTIVE LIVE-PRICE ENGINE (v11)
@@ -11,7 +11,7 @@ import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
 //   - SLOW   (45s): watchlist & non-positioned symbols
 // Plus:
 //   - Page Visibility API: pauses all polling when tab hidden
-//   - Batch quote fetch: fetchBiquoteLatest if available
+//   - Batch quote fetch: fetchQuotesBatch (Is Yatirim list, per-symbol fallback)
 //   - Re-arm: a symbol that escalated to FAST drops back to NORMAL
 //     once the gap re-widens, capping the load on free CORS proxies.
 // ============================================================
@@ -257,25 +257,18 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
     }
   }, []);
 
-  // ── Batch fetcher: tries fetchBiquoteLatest first, falls back per-symbol ──
-  const fetchTier = useCallback(async (symbols) => {
+  // ── Batch fetcher ──
+  // v31.45: the quote each tier gets must be as fresh as the tier claims to be,
+  // so the tier's own interval is the freshness bound: a 5 s burst tier will not
+  // accept a 30 s old cached list. (It used to call biquote.io first, which has
+  // no BIST symbols at all — see fetchQuotesBatch.)
+  const fetchTier = useCallback(async (symbols, tier) => {
     if (!symbols.length) return;
+    const maxAgeMs = tier === 'fast' ? TIER_FAST_MS : tier === 'normal' ? TIER_NORMAL_MS : TIER_SLOW_MS;
     let quoteMap = {};
     try {
-      const batch = await fetchBiquoteLatest(symbols);
-      if (batch?.length) {
-        for (const q of batch) if (q?.symbol && q.price) quoteMap[q.symbol] = q;
-      }
-    } catch {}
-    const missing = symbols.filter(s => !quoteMap[s]);
-    if (missing.length) {
-      await Promise.all(missing.map(async (s) => {
-        try {
-          const q = await fetchBigParaQuote(s);
-          if (q?.price) quoteMap[s] = q;
-        } catch {}
-      }));
-    }
+      quoteMap = await fetchQuotesBatch(symbols, { maxAgeMs });
+    } catch { quoteMap = {}; }
     for (const s of symbols) {
       const q = quoteMap[s];
       if (!q?.price) continue;
@@ -317,7 +310,7 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
         if (list?.length) {
           inFlight[tier] = true;
           setIsPolling(true);
-          try { await fetchTier(list); }
+          try { await fetchTier(list, tier); }
           finally { inFlight[tier] = false; setIsPolling(false); }
         }
       }
@@ -356,7 +349,7 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
   const pollOnce = useCallback(async () => {
     const buckets = buildTieredSymbols();
     const all = uniq([...buckets.fast, ...buckets.normal, ...buckets.slow]);
-    if (all.length) await fetchTier(all);
+    if (all.length) await fetchTier(all, 'fast');   // manuel yenileme: en taze
   }, [buildTieredSymbols, fetchTier]);
 
   return {

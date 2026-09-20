@@ -11,7 +11,7 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
+import { fetchQuotesBatch } from '../utils/fetchEngine.js';
 import {
   loadJournal,
   persistJournal,
@@ -58,21 +58,12 @@ export function useForwardTestJournal() {
     if (!symbols.size) return;
 
     const symList = [...symbols];
+    // v31.45: tek toplu istek + eksikler icin sembol basina yedek (fetchQuotesBatch).
     const quoteMap = {};
     try {
-      const batch = await fetchBiquoteLatest(symList);
-      if (batch?.length) {
-        for (const q of batch) if (q?.price) quoteMap[q.symbol] = q.price;
-      }
+      const map = await fetchQuotesBatch(symList, { maxAgeMs: 60_000 });
+      for (const [sym, q] of Object.entries(map)) if (q?.price > 0) quoteMap[sym] = q.price;
     } catch {}
-    // Per-symbol fallback for any misses
-    for (const sym of symList) {
-      if (quoteMap[sym] != null) continue;
-      try {
-        const q = await fetchBigParaQuote(sym);
-        if (q?.price) quoteMap[sym] = q.price;
-      } catch {}
-    }
     if (!Object.keys(quoteMap).length) return;
 
     const { days: nextDays, changed } = evaluateJournal(current, quoteMap, now);

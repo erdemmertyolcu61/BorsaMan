@@ -289,8 +289,11 @@ const BATCH_CACHE_TTL = 60000; // 1 minute
  * fetchBigParaBatchPrices — fetches all BIST stock prices in one request
  * Returns Map<symbol, { price, change, volume, high, low }>
  */
-export async function fetchBigParaBatchPrices() {
-  if (Date.now() - _batchPriceCache.ts < BATCH_CACHE_TTL && Object.keys(_batchPriceCache.data).length > 0) {
+export async function fetchBigParaBatchPrices(maxAgeMs) {
+  // v31.45: callers that need a fresher quote than the 60 s default (the live
+  // guard's 5 s burst tier) pass their own bound; everyone else keeps the TTL.
+  const ttl = Number.isFinite(maxAgeMs) && maxAgeMs >= 0 ? maxAgeMs : BATCH_CACHE_TTL;
+  if (Date.now() - _batchPriceCache.ts < ttl && Object.keys(_batchPriceCache.data).length > 0) {
     return _batchPriceCache.data;
   }
 
@@ -1003,106 +1006,67 @@ export async function fetchBigParaList() {
   }
 }
 
-// ==========================================
-// DATA SOURCE: biquote.io (real-time quotes)
-// ==========================================
+// ── biquote.io KALDIRILDI (v31.45) ────────────────────────────────────────
+// Olculdu 2026-09-21: `/api/latest?symbols=THYAO` 200 ile `{}` donuyor,
+// `/api/THYAO` ise 404 "No tick data available", ve kendi `/api/symbols`
+// listesi 1673 sembolu NYSE / FOREX / CRYPTO / HKEX borsalarinda sayiyor —
+// **Borsa Istanbul hic yok**. Yani bu kaynak bir BIST fiyati dondurebilecek
+// durumda degildi; yalnizca her canli-fiyat turunda bir gidis-donus harciyordu.
+// Yerine `fetchQuotesBatch` (Is Yatirim toplu listesi + sembol basina yedek).
 
-const BIQUOTE_BASE = 'https://biquote.io';
+/**
+ * v31.45: quotes for a set of symbols, cheapest way first.
+ *
+ * REPLACES `fetchBiquoteLatest`, which three hooks called before every
+ * per-symbol fallback. Measured 2026-09-21: `biquote.io/api/latest` answers 200
+ * with `{}` for any BIST code, and its own `/api/symbols` lists 1673 symbols
+ * across NYSE / FOREX / CRYPTO / HKEX — **no Borsa İstanbul at all**. So the
+ * call could never return a BIST price; it only spent a round trip (up to a
+ * 10 s timeout) before the loop that actually fetched the prices, once per live
+ * guard tick and once per signal-tracker sweep.
+ *
+ * The İş Yatırım batch (TumHisseSenetleri) carries every traded symbol with a
+ * real open/high/low, previous close and its own session time in ONE ~400 ms
+ * request, and the scan already keeps it warm. It is only worth asking for when
+ * several symbols are wanted or the cached copy is already fresh enough — for
+ * one or two symbols a 1.3 KB per-symbol quote beats a 423 KB list, which
+ * matters on a phone.
+ *
+ * @param {string[]} symbols
+ * @param {{maxAgeMs?: number, minBatchSymbols?: number, concurrency?: number}} [opts]
+ * @returns {Promise<Record<string, object>>} symbol -> quote ({price, change, ...})
+ */
+export async function fetchQuotesBatch(symbols, opts = {}) {
+  const { maxAgeMs = BATCH_CACHE_TTL, minBatchSymbols = 8, concurrency = 8 } = opts || {};
+  const out = {};
+  const list = [...new Set((symbols || [])
+    .map(x => String(x || '').toUpperCase().replace('.IS', '').trim())
+    .filter(Boolean))];
+  if (!list.length) return out;
 
-export async function fetchBiquoteQuote(symbol) {
-  const code = symbol.toUpperCase();
-  const url = `${BIQUOTE_BASE}/api/${code}`;
-
-  const startTime = Date.now();
-
-  try {
-    // Capacitor: biquote.io may CORS-block; try self-proxy first
-    if (_isCapacitor) {
-      const proxyText = await _capacitorProxyFetch(url, 8000);
-      if (proxyText) {
-        const data = JSON.parse(proxyText);
-        if (data?.last) {
-          recordSourceSuccess('biquote', Date.now() - startTime);
-          return { price: parseFloat(data.last), open: parseFloat(data.open), high: parseFloat(data.high), low: parseFloat(data.low), volume: parseFloat(data.volume), change: parseFloat(data.changePercent) || parseFloat(data.change), prevClose: parseFloat(data.previousClose) || parseFloat(data.prevClose), date: new Date(), bid: parseFloat(data.bid), ask: parseFloat(data.ask) };
+  const cacheFresh = Date.now() - _batchPriceCache.ts < maxAgeMs
+    && Object.keys(_batchPriceCache.data).length > 0;
+  if (list.length >= minBatchSymbols || cacheFresh) {
+    try {
+      const batch = await fetchBigParaBatchPrices(maxAgeMs);
+      if (batch) {
+        for (const sym of list) {
+          const b = batch[sym];
+          if (b && Number(b.price) > 0) out[sym] = b;
         }
       }
-      return null;
-    }
-    const r = await quickFetch(url, 8000);
-    if (!r.ok) {
-      recordSourceFailure('biquote');
-      return null;
-    }
-
-    const t = await r.text();
-    if (!t || t.length < 20) return null;
-
-    if (t.includes('<!DOCTYPE') || t.includes('<html') || t.startsWith('<')) {
-      console.warn('[biquote] HTML response:', t.slice(0, 80));
-      recordSourceFailure('biquote');
-      return null;
-    }
-
-    const data = JSON.parse(t);
-    if (!data || !data.last) {
-      return null;
-    }
-
-    const latency = Date.now() - startTime;
-    recordSourceSuccess('biquote', latency);
-
-    const result = {
-      price: parseFloat(data.last),
-      open: parseFloat(data.open),
-      high: parseFloat(data.high),
-      low: parseFloat(data.low),
-      volume: parseFloat(data.volume),
-      change: parseFloat(data.changePercent) || parseFloat(data.change),
-      prevClose: parseFloat(data.previousClose) || parseFloat(data.prevClose),
-      date: new Date(),
-      bid: parseFloat(data.bid),
-      ask: parseFloat(data.ask)
-    };
-
-    console.log(`[biquote] ${code}: ${result.price} TL (${latency}ms)`);
-    return result;
-  } catch (e) {
-    recordSourceFailure('biquote');
-    return null;
+    } catch { /* fall through to per-symbol */ }
   }
-}
 
-export async function fetchBiquoteLatest(symbols) {
-  if (!symbols || symbols.length === 0) return [];
-
-  const codes = symbols.map(s => s.toUpperCase()).join('&symbols=');
-  const url = `${BIQUOTE_BASE}/api/latest?symbols=${codes}`;
-
-  try {
-    const r = await quickFetch(url, 10000);
-    if (!r.ok) return [];
-
-    const t = await r.text();
-    if (!t || t.includes('<!DOCTYPE') || t.startsWith('<')) return [];
-
-    const data = JSON.parse(t);
-    if (!Array.isArray(data)) return [];
-
-    const results = [];
-    for (const d of data) {
-      if (!d.last) continue;
-      results.push({
-        symbol: d.symbol,
-        price: parseFloat(d.last),
-        change: parseFloat(d.changePercent) || 0,
-        volume: parseFloat(d.volume) || 0
-      });
-    }
-
-    return results;
-  } catch {
-    return [];
+  const missing = list.filter(sym => !out[sym]);
+  for (let i = 0; i < missing.length; i += concurrency) {
+    const chunk = missing.slice(i, i + concurrency);
+    const res = await Promise.all(chunk.map(async (sym) => {
+      try { return [sym, await fetchBigParaQuote(sym)]; } catch { return [sym, null]; }
+    }));
+    for (const [sym, q] of res) if (q && Number(q.price) > 0) out[sym] = q;
   }
+  return out;
 }
 
 // ==========================================
@@ -1783,7 +1747,17 @@ function sanitizePrices(prices) {
   if (!Array.isArray(prices)) return [];
   const out = [];
   let lastDate = 0;
-  for (const b of prices) {
+  // v31.44/45: every source funnels through here, and everything below (the
+  // duplicate check, the outlier filter, the ghost-candle strip) and everything
+  // downstream (calcAll, the chart) assumes chronological order. İş Yatırım does
+  // not guarantee it — measured 165 out-of-order pairs in one 5-year response —
+  // so sort here rather than trusting each parser.
+  const ordered = [...prices].sort((a, b) => {
+    const ta = new Date(a?.date || a?.time || 0).getTime() || 0;
+    const tb = new Date(b?.date || b?.time || 0).getTime() || 0;
+    return ta - tb;
+  });
+  for (const b of ordered) {
     if (!b || b.close == null || !isFinite(b.close) || b.close <= 0) continue;
     const ts = new Date(b.date || b.time || 0).getTime();
     if (!ts || ts === lastDate) continue; // drop duplicate timestamps

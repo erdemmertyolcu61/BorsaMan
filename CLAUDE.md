@@ -2037,6 +2037,77 @@ son bar 2026-09-18, değişim -%1,30 çıkıyor.
   güncellenmez (saatlik cache) ve **hiçbir AL/SAT kararına girmez**. Yeni proxy rotası dağıtılana
   kadar üretimde F/K/PD/DD `proxy_outdated` der.
 
+## Grafik Boş Kalıyordu + Canlı Fiyat Yolu Onarıldı (v31.45)
+
+Kullanıcı: "Anlık fiyatları ve grafikleri tamamen doğru görmek istiyorum, bazen saçmalayabiliyor."
+Önce veri ölçüldü, sonra uygulamanın kendisi izlendi — asıl kusur ikincisindeydi.
+
+### A — GRAFİK BOŞ KALIYORDU (asıl sebep, canlı olarak yakalandı)
+`Chart.jsx` görünür pencereyi (`viewRange`) **bir kez** ayarlıyor, bir daha dokunmuyordu:
+`if (!prices || prices.length <= 250 || viewRange) return;`. 5 yıllık analiz pencereyi
+1052-1251 barlarına kuruyor; kullanıcı **3A**'ya basınca seri 64 bara düşüyor ama pencere
+kalıyor → `prices.slice(1052, 1252)` = boş → `drawChart` "2'den az bar" deyip çıkıyor →
+**tuval tamamen boş**. Önizlemede ölçüldü: `getImageData` ile **%0 mürekkep**. Aynı şey
+uzun seriden sonra sembol değiştirince de oluyordu.
+
+- `Chart.jsx`: pencere artık SERİYE bağlı — seri kimliği (uzunluk + ilk/son bar tarihi)
+  değişince sıfırlanır (büyük seride son 200 bar, küçük seride tamamı). Kaydırma/yakınlaştırma
+  seriyi değiştirmediği için kullanıcının kendi görünümü korunur.
+- `chartDraw.clampViewRange` (saf, 6 test): istenen pencere her hâlükârda mevcut seriye
+  kırpılır — ikinci savunma hattı.
+- Doğrulandı (canlı, gerçek veri): THYAO 1G/3A/1Y/1A/5Y ve GARAN→ASELS geçişlerinde mürekkep
+  %14,8-34,4 (önce %0). Başlıkta fiyat ve değişim doğru.
+
+### B — CANLI FİYAT: biquote.io'nun BIST'i hiç yok
+Üç kanca (`useLivePrices`, `useSignalTracker`, `useForwardTestJournal`) her turda ÖNCE
+`fetchBiquoteLatest` çağırıyordu. Ölçüm (2026-09-21): `biquote.io/api/latest?symbols=THYAO`
+**200 ile `{}`**, `/api/THYAO` **404 "No tick data"**, ve kendi `/api/symbols` listesi 1673
+sembolü **NYSE / FOREX / CRYPTO / HKEX** borsalarında sayıyor — **Borsa İstanbul hiç yok**.
+Yani bu çağrı bir BIST fiyatı döndüremezdi; sadece (10 sn zaman aşımına kadar) bir gidiş-dönüş
+harcayıp asıl fiyatları çeken döngüden önce bekletiyordu. 5 saniyelik "burst" kademesi bunu
+kaldıramaz.
+
+- `fetchQuotesBatch(symbols, {maxAgeMs, minBatchSymbols})` (yeni, 6 test): İş Yatırım toplu
+  listesi (TumHisseSenetleri — **gerçek açılış**, önceki kapanış ve kendi oturum zamanıyla
+  704 sembol, ~400 ms) + eksikler için sembol başına yedek. Tek sembol için liste indirilmez
+  (423 KB'a karşı 1,3 KB — telefonda önemli), ama liste zaten tazeyse bedava kullanılır.
+- `fetchBigParaBatchPrices(maxAgeMs)`: çağıran kendi tazelik sınırını verebiliyor; canlı-koruma
+  kademesi artık **kendi aralığı kadar taze** veri istiyor (5 sn kademe 30 sn'lik kopyayı kabul
+  etmez). Varsayılan 60 sn, mevcut çağıranlar değişmedi.
+- `useSignalTracker`: 25 aktif sinyal = 25 ARDIŞIK istek yerine tek toplu istek.
+- `fetchBiquoteLatest` ve tüketicisi olmayan `fetchBiquoteQuote` silindi.
+
+### C — Sıralama tek hunide garanti altına alındı
+v31.44 proxy ve `parseBarsPayload` tarafında sıralamıştı; `sanitizePrices` **her kaynağın
+geçtiği tek nokta** ve oradaki yinelenen-bar kontrolü, aykırı-değer filtresi ve hayalet-mum
+temizliği de kronolojik sıra varsayıyor. Artık orada da sıralanıyor.
+
+### D — Ekranda ne gördüğünü söyleyen etiket
+Başlıkta kaynak artık **son barın oturumunu** da yazıyor: `IsYatirim · 18.09 kapanış`
+(seans sürerken `canlı`, yeşil). Canlı fiyat son barın kapanışından %5'ten fazla saparsa
+(`dataConfidence='low'`) kırmızı **⚠ VERİ ÇELİŞKİSİ %N** rozeti çıkıyor — "saçmalama" artık
+sessiz değil. Etiket ilk yazımda UTC'den gün okuyup 18.09'u **17.09** gösterdi (bazı kaynaklar
+bar tarihini yerel saatle kuruyor); `istanbulDayKey` ile düzeltildi — uygulamanın tek doğru
+gün anahtarı.
+
+### Ölçülen ama sorun ÇIKMAYANLAR (kayıt için)
+57 sembol × 5 yıl (~70.000 bar) üretim verisi: **0 sırasız, 0 yinelenen gün, 0 OHLC ihlali
+(kapanış aralık dışı vb.), 0 eksi/sıfır fiyat, 0 bayat son bar**. 57 sembolde 400 günde
+**|%11,5| üstü tek bir günlük hareket yok** → BIST'in ±%10 limitini aşan "bozuk baskı" veya
+düzeltilmemiş bedelsiz artefaktı bulunamadı. BigPara tek-sembol teklifi ve alan adları
+(`yuzdedegisim`, `dunkukapanis`) doğru; İş toplu listesi dizi olarak dönüyor ve parser bunu
+zaten karşılıyor.
+
+### Dürüst sınırlar
+- Canlı-koruma kademelerinin yeni toplu yolu **seans içinde** ölçülemedi (bugün Pazar); birim
+  testler davranışı kilitliyor, gerçek tazelik ancak açık piyasada görülür.
+- Yahoo'nun atladığı günlerde günlük mumun AÇILIŞI hâlâ AOF yaklaşımıdır (son 1 yılda ~%2,4);
+  ücretsiz bir geçmiş açılış kaynağı yok. **Son** bar bundan etkilenmez: canlı birleştirme
+  İş listesinin gerçek açılışını yazar (ölçüldü: THYAO 286,748 → 289).
+- Veri hâlâ 15-30 dk gecikmeli (ücretsiz kaynak sınırı) — "anlık" bu demek.
+
+Test 851 pass (65 dosya), 0 lint error (78 warning), build temiz.
+
 ## DÜRÜST BEKLENTİ (tekrar) — "günlük/haftalık kazandırmalı"
 Ölçülen edge rejime bağımlı: **sadece YÜKSELİŞ + yüksek skor pozitif** (YATAY -%1,68, DÜŞÜŞ
 -%3,36). Hiçbir sistem düşen/yatay piyasada long ile istikrarlı günlük/haftalık kazandıramaz.

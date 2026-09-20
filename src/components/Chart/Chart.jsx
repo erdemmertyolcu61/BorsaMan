@@ -9,12 +9,22 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState(null); // {x, start, end}
 
-  // Auto-set initial view range for large datasets
+  // v31.45: the view range belongs to ONE series. It used to be set once and
+  // never revisited (`if (... || viewRange) return`), so after a 5-year analysis
+  // set it to bars 1052-1251, switching the timeframe to 3A left that range on a
+  // 64-bar array: `prices.slice(1052, 1252)` is empty, drawChart bails at
+  // "fewer than 2 visible bars" and the chart goes BLANK. Reproduced here
+  // (0 ink on the canvas) before the fix. Reset whenever the series itself
+  // changes — a pan or zoom does not change it, so the user's own view survives.
+  const seriesKeyRef = useRef('');
   useEffect(() => {
-    if (!prices || prices.length <= 250 || viewRange) return;
-    // Show last 200 bars by default for large datasets
-    setViewRange({ start: prices.length - 200, end: prices.length - 1 });
-  }, [prices]); // eslint-disable-line react-hooks/exhaustive-deps
+    const n = prices?.length || 0;
+    const key = n ? `${n}|${prices[0]?.date}|${prices[n - 1]?.date}` : '';
+    if (key === seriesKeyRef.current) return;
+    seriesKeyRef.current = key;
+    // Large set: start on the last 200 bars. Small set: show all of it.
+    setViewRange(n > 250 ? { start: n - 200, end: n - 1 } : null);
+  }, [prices]);
 
   const draw = useCallback(() => {
     drawChart({

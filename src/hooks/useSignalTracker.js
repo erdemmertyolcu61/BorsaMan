@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { fetchBigParaQuote, fetchBiquoteLatest } from '../utils/fetchEngine.js';
+import { fetchQuotesBatch } from '../utils/fetchEngine.js';
 import { buildCalibrationModel, setSignalCalibration } from '../utils/signalCalibration.js';
 import { setSignalReliabilityHints } from '../utils/signals.js';
 import {
@@ -467,27 +467,14 @@ export function useSignalTracker() {
 
       const symbols = [...new Set(activeSignals.map(s => s.symbol))];
 
+      // v31.45: tek istekte tum aktif sinyaller. Eskiden once biquote (BIST
+      // sembolu tasimayan bir kaynak) deneniyor, sonra sembol basina SIRAYLA
+      // fiyat cekiliyordu — 25 aktif sinyalde bu 25 ardisik istek demekti.
       let quotes = {};
       try {
-        const batch = await fetchBiquoteLatest(symbols);
-        if (batch?.length) {
-          for (const q of batch) quotes[q.symbol] = q.price;
-        } else {
-          for (const sym of symbols) {
-            try {
-              const q = await fetchBigParaQuote(sym);
-              if (q?.price) quotes[sym] = q.price;
-            } catch {}
-          }
-        }
-      } catch {
-        for (const sym of symbols) {
-          try {
-            const q = await fetchBigParaQuote(sym);
-            if (q?.price) quotes[sym] = q.price;
-          } catch {}
-        }
-      }
+        const map = await fetchQuotesBatch(symbols, { maxAgeMs: 60_000 });
+        for (const [sym, q] of Object.entries(map)) if (q?.price > 0) quotes[sym] = q.price;
+      } catch { quotes = {}; }
 
       const updates = {};
       for (const sig of activeSignals) {
