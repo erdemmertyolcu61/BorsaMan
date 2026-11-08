@@ -467,6 +467,18 @@ export function setEvdsApiKey(key) {
 // long-standing EVDS JSON shape: items[] with `Tarih` and dots→underscores.
 export const EVDS_FOREIGN_EQUITY_SERIES = 'TP.MKNETHAR.M7';
 
+/**
+ * v31.48 — measured 2026-11-08 against evds3: no `key` header → 403
+ * {"message":"Required request header 'key' is not present"}; a wrong key → 401
+ * "Invalid API Key". Only 403 was recognised, so a mistyped key surfaced as
+ * "TCMB EVDS yanit vermedi" — a verdict on the source, not on the key.
+ */
+export function evdsErrorMessage(status) {
+  if (status === 401) return 'EVDS anahtarı geçersiz (TCMB 401). Anahtarı evds3.tcmb.gov.tr › Profil › API Anahtarı\'ndan yeniden kopyala.';
+  if (status === 403) return 'Anahtar TCMB\'ye ulaşmadı (403). Proxy eski olabilir — yeniden yayınlanmalı.';
+  return null;
+}
+
 export function parseEvdsWeeklyFlow(json, series = EVDS_FOREIGN_EQUITY_SERIES) {
   const field = String(series).replace(/\./g, '_');
   const items = Array.isArray(json?.items) ? json.items : [];
@@ -503,11 +515,11 @@ export async function fetchMarketForeignFlow() {
     const end = fmt(new Date());
 
     const baseUrl = PROXY_BASE_URL || DEFAULT_PROXY_URL;
-    const url = `${baseUrl}/api/proxy?source=tcmb_evds&series=${EVDS_FOREIGN_EQUITY_SERIES}&startdate=${start}&enddate=${end}&evds_key=${encodeURIComponent(evdsKey)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
-    if (res.status === 403) {
-      return { error: 'EVDS anahtarı reddedildi (403). Anahtarı kontrol et; proxy eskiyse yeniden deploy et.' };
-    }
+    // v31.48: the key goes in a header, not the URL (URLs land in access logs and caches).
+    const url = `${baseUrl}/api/proxy?source=tcmb_evds&series=${EVDS_FOREIGN_EQUITY_SERIES}&startdate=${start}&enddate=${end}`;
+    const res = await fetch(url, { headers: { 'X-Evds-Key': evdsKey }, signal: AbortSignal.timeout(12000) });
+    const keyProblem = evdsErrorMessage(res.status);
+    if (keyProblem) return { error: keyProblem };
     if (!res.ok) throw new Error(`EVDS fail: ${res.status}`);
     const json = await res.json();
     const marketFlow = parseEvdsWeeklyFlow(json);

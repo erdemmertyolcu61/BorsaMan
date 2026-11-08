@@ -11,7 +11,7 @@
 //        /api/proxy?source=kap_disclosures&days=60&oid=<32 hex> (v31.38 tek sirket)
 //        /api/proxy?source=isy_foreign                          (v31.38 hisse bazli yabanci orani)
 //        /api/proxy?source=isy_valuation                        (v31.44 F/K + PD/DD, tum hisseler)
-//        /api/proxy?source=tcmb_evds&series=TP.MKNETHAR.M7&startdate=dd-mm-yyyy&enddate=dd-mm-yyyy&evds_key=...
+//        /api/proxy?source=tcmb_evds&series=TP.MKNETHAR.M7&startdate=dd-mm-yyyy&enddate=dd-mm-yyyy  (key: x-evds-key header)
 //
 // Features:
 // - Domain whitelist for security
@@ -737,7 +737,7 @@ export default async function handler(req, res) {
   }
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin ?? '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Evds-Key');
   res.setHeader('Vary', 'Origin');
 
   if (req.method === 'OPTIONS') {
@@ -828,8 +828,13 @@ export default async function handler(req, res) {
 
     // v31.38: EVDS key goes in a header (TCMB rule since 2024-04-05). Client value
     // first, then an optional EVDS_API_KEY env var on the deployment.
+    // v31.48: the client sends it in an `X-Evds-Key` header — a query parameter lands in
+    // access logs and in the edge cache key. The query form stays for old clients.
     if (sourceType === 'tcmb_evds') {
-      const key = (typeof req.query.evds_key === 'string' && req.query.evds_key.trim()) || process.env.EVDS_API_KEY || '';
+      const hdr = req.headers && (req.headers['x-evds-key'] || req.headers['X-Evds-Key']);
+      const key = (typeof hdr === 'string' && hdr.trim())
+        || (typeof req.query.evds_key === 'string' && req.query.evds_key.trim())
+        || process.env.EVDS_API_KEY || '';
       if (key) fetchHeaders.key = key;
     }
 
@@ -861,9 +866,13 @@ export default async function handler(req, res) {
     const contentType = response.headers.get('content-type') || 'application/json';
     const text = await response.text();
 
-    // Edge cache: 2 minutes fresh, serve stale for up to 10 minutes while revalidating
+    // Edge cache: 2 minutes fresh, serve stale for up to 10 minutes while revalidating.
+    // v31.48: never for EVDS (the key is a header now, so the URL no longer tells two
+    // keys apart) and never for an error — a cached 401/403/5xx outlived its cause.
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=600');
+    res.setHeader('Cache-Control', (sourceType === 'tcmb_evds' || !response.ok)
+      ? 'private, no-store'
+      : 's-maxage=120, stale-while-revalidate=600');
     res.setHeader('X-Proxy-Source', sourceType);
     res.setHeader('X-Proxy-Target', targetUrl.substring(0, 100));
 

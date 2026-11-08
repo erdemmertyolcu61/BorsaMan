@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   parseIsyForeignPayload, summarizeForeignBreadth, topRelativeMomentum,
-  parseEvdsWeeklyFlow, EVDS_FOREIGN_EQUITY_SERIES, ISY_FOREIGN_FIELDS,
+  parseEvdsWeeklyFlow, EVDS_FOREIGN_EQUITY_SERIES, ISY_FOREIGN_FIELDS, evdsErrorMessage,
 } from '../foreignFlowEngine.js';
+import proxyHandler from '../../../proxy/api/proxy.js';
 
 // Rows as measured live 2026-09-12 (İş Yatırım screener, criteria 40/44/45/8/22/23).
 const RAW_ROWS = [
@@ -89,5 +90,46 @@ describe('parseEvdsWeeklyFlow (TP.MKNETHAR.M7)', () => {
   it('returns null when EVDS sends nothing usable', () => {
     expect(parseEvdsWeeklyFlow({ items: [] })).toBeNull();
     expect(parseEvdsWeeklyFlow(null)).toBeNull();
+  });
+});
+
+
+// ── v31.48: EVDS key travels in a header; errors name the key, not the source ──
+describe('EVDS key handling (v31.48)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  // Measured against evds3 on 2026-11-08: no key header → 403, a wrong key → 401.
+  it('maps 401 to "invalid key" and 403 to "key did not arrive"', () => {
+    expect(evdsErrorMessage(401)).toMatch(/geçersiz/);
+    expect(evdsErrorMessage(403)).toMatch(/ulaşmadı/);
+    expect(evdsErrorMessage(200)).toBeNull();
+    expect(evdsErrorMessage(500)).toBeNull();
+  });
+
+  it("the proxy forwards the X-Evds-Key header as TCMB's key header and never caches the reply", async () => {
+    const upstream = vi.fn(async () => new Response(JSON.stringify({ items: [] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', upstream);
+    const res = {
+      headers: {}, code: 0, body: null,
+      setHeader(k, v) { this.headers[k] = v; },
+      status(c) { this.code = c; return this; },
+      json(b) { this.body = b; return this; },
+      send(b) { this.body = b; return this; },
+      end() { return this; },
+    };
+    await proxyHandler({
+      method: 'GET',
+      headers: { 'x-evds-key': 'test-key-123' },
+      query: { source: 'tcmb_evds', series: 'TP.MKNETHAR.M7', startdate: '01-09-2026', enddate: '08-11-2026' },
+    }, res);
+    expect(res.code).toBe(200);
+    const [url, init] = upstream.mock.calls[0];
+    expect(String(url)).toContain('evds3.tcmb.gov.tr');
+    expect(String(url)).not.toContain('test-key-123');
+    expect(init.headers.key).toBe('test-key-123');
+    expect(res.headers['Cache-Control']).toBe('private, no-store');
+    expect(res.headers['Access-Control-Allow-Headers']).toMatch(/X-Evds-Key/);
   });
 });
