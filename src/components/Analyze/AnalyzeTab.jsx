@@ -49,7 +49,7 @@ function ReasonsGroup({ label, items, color, bg }) {
   );
 }
 
-export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGSig, log, setBadge, addToPortfolio, portfolio, brokerConfig, advisorData, intradayScan }) {
+export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGSig, log, setBadge, addToPortfolio, portfolio, brokerConfig, advisorData, intradayScan, onOpenDetail }) {
   const [symbol, setSymbol] = useState('THYAO');
   // Strict cleanup: engine resets on every symbol change, no OB/FVG bleed across assets.
   const smcEngine = useSMCEngine(symbol);
@@ -738,6 +738,16 @@ Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
                     Kaynak: İş Yatırım (mali tablo + F/K · PD/DD) · TL
                     {bilanco?.ttm?.comparedTo ? ' · 12A = son yıl − ' + bilanco.ttm.comparedTo + ' + ' + period : ''}
                   </div>
+                  {/* v31.50: bu kutu ozet kalir; 16 ceyreklik FAVOK, net kar, bilanco ve
+                      tum kalemler Hisse detayi sekmesinde. */}
+                  {onOpenDetail && (
+                    <span role="button" tabIndex={0}
+                      onClick={() => onOpenDetail(gData?.symbol || symbol)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') onOpenDetail(gData?.symbol || symbol); }}
+                      style={{ display: 'inline-block', marginTop: 8, fontSize: 12, color: 'var(--blue)', cursor: 'pointer', fontWeight: 600 }}>
+                      Çeyreklik FAVÖK, net kâr ve tüm mali tablolar ›
+                    </span>
+                  )}
                   {valuation?.unavailable && (
                     <div style={{ fontSize: 8, color: 'var(--orange)', marginTop: 4 }}>
                       F/K · PD/DD alınamadı ({valuation.reason === 'proxy_outdated' ? 'proxy eski — proxy klasörünü yeniden deploy et' : valuation.reason}) — &quot;veri yok&quot; demek değil.

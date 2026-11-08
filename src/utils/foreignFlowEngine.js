@@ -90,8 +90,6 @@ function parseNum(str) {
   return parseFloat(String(str).replace(/\./g, '').replace(',', '.')) || 0;
 }
 
-const round2 = (x) => Math.round(x * 100) / 100;
-
 /**
  * v29.4: Pure foreign-flow scoring — extracted from useAIAdvisor AND AnalyzeTab
  * (the exact same block was duplicated in both, a DRY/bug risk). Weighs weekly +
@@ -387,63 +385,6 @@ export async function fetchAllForeignRatios() {
 export async function fetchForeignRatio(symbol) {
   const ratios = await fetchAllForeignRatios();
   return ratios[symbol] || null;
-}
-
-/** When the ratio map in the cache was fetched (ms), or null. */
-export function getForeignRatiosFetchedAt() {
-  return getCache()?.ratiosFetchedAt || null;
-}
-
-// ── v31.38: MARKET BREADTH + RELATIVE MOMENTUM (pure) ──────────────────────
-
-/**
- * Market-wide picture from the per-stock map: how many stocks saw foreign
- * ownership rise vs fall this week, the median and market-cap-weighted average
- * change (percentage points), and the largest movers.
- */
-export function summarizeForeignBreadth(ratios, { flatBandPp = 0.05, topN = 5, minMcapMnTL = 0 } = {}) {
-  const rows = [];
-  for (const [symbol, v] of Object.entries(ratios || {})) {
-    if (!v || typeof v.changeWeek !== 'number' || !Number.isFinite(v.changeWeek)) continue;
-    rows.push({ symbol, ratio: v.ratio, changeWeek: v.changeWeek, changeMonth: v.changeMonth, mcapMnTL: v.mcapMnTL, rel1w: v.rel1w });
-  }
-  if (!rows.length) {
-    return { n: 0, up: 0, down: 0, flat: 0, medianChg1w: null, capWeightedChg1w: null, topIn: [], topOut: [] };
-  }
-  let up = 0, down = 0, flat = 0, capSum = 0, capWeighted = 0;
-  for (const r of rows) {
-    if (r.changeWeek > flatBandPp) up++;
-    else if (r.changeWeek < -flatBandPp) down++;
-    else flat++;
-    if (Number.isFinite(r.mcapMnTL) && r.mcapMnTL > 0) {
-      capSum += r.mcapMnTL;
-      capWeighted += r.mcapMnTL * r.changeWeek;
-    }
-  }
-  const sorted = rows.map((r) => r.changeWeek).sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-  const eligible = minMcapMnTL > 0 ? rows.filter((r) => (r.mcapMnTL || 0) >= minMcapMnTL) : rows;
-  const topIn = eligible.filter((r) => r.changeWeek > 0).sort((a, b) => b.changeWeek - a.changeWeek).slice(0, topN);
-  const topOut = eligible.filter((r) => r.changeWeek < 0).sort((a, b) => a.changeWeek - b.changeWeek).slice(0, topN);
-  return {
-    n: rows.length, up, down, flat,
-    medianChg1w: round2(median),
-    capWeightedChg1w: capSum > 0 ? round2(capWeighted / capSum) : null,
-    topIn, topOut,
-  };
-}
-
-/** Strongest relative performers (vs the index) above a market-cap floor. */
-export function topRelativeMomentum(ratios, { key = 'rel1w', topN = 5, minMcapMnTL = 3000 } = {}) {
-  const rows = [];
-  for (const [symbol, v] of Object.entries(ratios || {})) {
-    const value = v?.[key];
-    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
-    if (minMcapMnTL > 0 && !((v.mcapMnTL || 0) >= minMcapMnTL)) continue;
-    rows.push({ symbol, value, rel1w: v.rel1w, rel1m: v.rel1m, changeWeek: v.changeWeek, ratio: v.ratio, mcapMnTL: v.mcapMnTL });
-  }
-  return rows.sort((a, b) => b.value - a.value).slice(0, topN);
 }
 
 // EVDS API Key Management

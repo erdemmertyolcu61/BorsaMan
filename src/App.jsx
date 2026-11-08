@@ -21,15 +21,16 @@ import Tabs from './components/Tabs/Tabs.jsx';
 import MobileNav from './components/MobileNav/MobileNav.jsx';
 import MobilePicksStrip from './components/MobileNav/MobilePicksStrip.jsx';
 import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
-import RealPortfolioTab from './components/RealPortfolio/RealPortfolioTab.jsx';
-import MarketIntelPanel from './components/MarketIntel/MarketIntelPanel.jsx';
-import MarketPulsePanel from './components/MarketPulse/MarketPulsePanel.jsx';
 import ScanScorecardPanel from './components/Signals/ScanScorecardPanel.jsx';
+import DataLayerEdgePanel from './components/Signals/DataLayerEdgePanel.jsx';
+import StockDetailTab from './components/StockDetail/StockDetailTab.jsx';
+import { VirtualPositionsPanel } from './components/Portfolio/PortfolioExtras.jsx';
 
-// v31.38 (user decision): tabs removed on mobile → where to land instead.
-// Desktop keeps both. On mobile they are not even mounted: a hidden TradesTab
-// would keep pulling 15-minute bars in the background (battery + data).
-const MOBILE_REMOVED_TABS = { trades: 'analyze', intel: 'market' };
+// v31.50 (kullanici karari): Istihbarat, Gercek Portfoy ve Piyasa Nabzi kaldirildi;
+// yerlerine Hisse detayi geldi. Intraday yalniz masaustunde (v31.38): mobilde mount
+// edilmez, gizli TradesTab arka planda 15 dakikalik bar cekip duruyordu.
+const DESKTOP_TABS = ['analyze', 'stock', 'trades', 'signals', 'paper'];
+const MOBILE_TABS = ['analyze', 'stock', 'signals', 'paper'];
 
 export default function App() {
   const state = useAppState();
@@ -51,11 +52,19 @@ export default function App() {
   const scorecard = useScanScorecard(signalTracker.signals);
   const isMobile = useIsMobile();
   const { activeTab, setActiveTab } = state;
-  // A rotation / resize can leave a phone on a tab it no longer has.
+  // A rotation / resize (or an old link to a removed tab) can leave the app on a
+  // tab it no longer has.
   useEffect(() => {
-    const fallback = isMobile ? MOBILE_REMOVED_TABS[activeTab] : null;
-    if (fallback) setActiveTab(fallback);
+    const allowed = isMobile ? MOBILE_TABS : DESKTOP_TABS;
+    if (!allowed.includes(activeTab)) setActiveTab('analyze');
   }, [isMobile, activeTab, setActiveTab]);
+  // v31.50: Hisse detayi, Analiz'de ya da bir AI kartinda acilan hisseyle acilir.
+  const [detailSymbol, setDetailSymbol] = useState('THYAO');
+  useEffect(() => {
+    const onResult = (e) => { if (e.detail?.symbol) setDetailSymbol(e.detail.symbol); };
+    window.addEventListener('analyze-result', onResult);
+    return () => window.removeEventListener('analyze-result', onResult);
+  }, []);
   const [watchlist, setWatchlist] = useState(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem('bist_watchlist') || '[]');
@@ -316,7 +325,12 @@ export default function App() {
 
   const handleAIAnalyze = (symbol) => {
     state.setActiveTab('analyze');
+    if (symbol) setDetailSymbol(symbol);
     window.dispatchEvent(new CustomEvent('ai-analyze', { detail: { symbol } }));
+  };
+  const openStockDetail = (symbol) => {
+    if (symbol) setDetailSymbol(symbol);
+    state.setActiveTab('stock');
   };
 
   return (
@@ -330,7 +344,6 @@ export default function App() {
         portfolio={state.portfolio}
         scanHistory={scanHistory}
         onAnalyze={handleAIAnalyze}
-        onTabChange={state.setActiveTab}
         brokerConfig={state.brokerConfig}
         setBrokerConfig={state.setBrokerConfig}
       />
@@ -348,24 +361,6 @@ export default function App() {
 
       <Tabs activeTab={state.activeTab} onTabChange={state.setActiveTab} />
 
-      {!isMobile && (
-        <div className={`tab-content ${state.activeTab === 'intel' ? 'active' : ''}`}>
-          <MarketIntelPanel />
-        </div>
-      )}
-
-      {/* v31.38: KAP + yabanci orani + goreli momentum. Yalniz aktifken mount
-          edilir — veri modul onbelleginde durdugu icin sekme degisimi ucuz. */}
-      <div className={`tab-content ${state.activeTab === 'market' ? 'active' : ''}`}>
-        {state.activeTab === 'market' && (
-          <MarketPulsePanel
-            signals={signalTracker.signals}
-            watchlist={watchlist}
-            onAnalyze={handleAIAnalyze}
-          />
-        )}
-      </div>
-
       <div className={`tab-content ${state.activeTab === 'analyze' ? 'active' : ''}`}>
         <AnalyzeTab
           gData={state.gData} setGData={state.setGData}
@@ -377,6 +372,20 @@ export default function App() {
           brokerConfig={state.brokerConfig}
           advisorData={advisor}
           intradayScan={intradayScan}
+          onOpenDetail={openStockDetail}
+        />
+      </div>
+
+      {/* v31.50: tam teknik + temel tablo. Veriyi yalniz sekme acikken ceker. */}
+      <div className={`tab-content ${state.activeTab === 'stock' ? 'active' : ''}`}>
+        <StockDetailTab
+          active={state.activeTab === 'stock'}
+          symbol={detailSymbol}
+          onSymbolChange={setDetailSymbol}
+          onAnalyze={handleAIAnalyze}
+          watchlist={watchlist}
+          setWatchlist={setWatchlist}
+          livePrice={livePrice}
         />
       </div>
 
@@ -392,21 +401,10 @@ export default function App() {
         </div>
       )}
 
-      <div className={`tab-content ${state.activeTab === 'realport' ? 'active' : ''}`}>
-        <RealPortfolioTab
-          portfolio={state.portfolio}
-          updatePortfolio={state.updatePortfolio}
-          brokerConfig={state.brokerConfig}
-          setBrokerConfig={state.setBrokerConfig}
-          livePrice={livePrice}
-          watchlist={watchlist}
-          setWatchlist={setWatchlist}
-        />
-      </div>
-
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>
         <ScanScorecardPanel scorecard={scorecard} onAnalyze={handleAIAnalyze} />
         <ForwardAccuracyPanel journal={forwardJournal} signalTracker={signalTracker} />
+        <DataLayerEdgePanel signals={signalTracker.signals} />
         <SignalsTab
           tracker={signalTracker}
           onAnalyze={handleAIAnalyze}
@@ -415,6 +413,11 @@ export default function App() {
 
       <div className={`tab-content ${state.activeTab === 'paper' ? 'active' : ''}`}>
         <PaperTradingPanel paperTrading={paperTrading} paperML={paperML} />
+        {/* v31.50: Gercek Portfoy sekmesiyle birlikte buraya tasindi; acik sanal
+            pozisyon yoksa hicbir sey cizmez. */}
+        <div style={{ padding: '0 16px' }}>
+          <VirtualPositionsPanel portfolio={state.portfolio} updatePortfolio={state.updatePortfolio} />
+        </div>
       </div>
 
       <AIAdvisorDetailPanel

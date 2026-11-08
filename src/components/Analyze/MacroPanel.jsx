@@ -234,7 +234,7 @@ export default function MacroPanel() {
               <div style={{ fontSize: 12, color: 'var(--t3)', padding: 10, textAlign: 'center', background: 'var(--bg3)', borderRadius: 10, lineHeight: 1.5 }}>
                 {hasEvdsKey()
                   ? 'TCMB EVDS verisi yükleniyor…'
-                  : <>EVDS anahtarı yok — Ayarlar&apos;dan eklenince görünür (ücretsiz: evds3.tcmb.gov.tr). Hisse bazlı yabancı oranı anahtarsız: Piyasa sekmesi.</>}
+                  : <>EVDS anahtarı yok — Ayarlar&apos;dan eklenince görünür (ücretsiz: evds3.tcmb.gov.tr). Hisse bazlı yabancı payı anahtarsız: Hisse detayı sekmesi.</>}
               </div>
             ) : foreignFlow.error ? (
               <div style={{ fontSize: 12, color: 'var(--red)', padding: 10, textAlign: 'center', background: 'var(--red2)', borderRadius: 10 }}>

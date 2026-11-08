@@ -2,7 +2,7 @@
 // miyiz?" is answered on the phone itself. __APP_BUILD__ is injected by Vite
 // (vite.config.js define) — the Vercel commit, or local git in dev.
 /* global __APP_BUILD__ */
-export const APP_VERSION = '31.49';
+export const APP_VERSION = '31.50';
 
 export const BUILD = (typeof __APP_BUILD__ !== 'undefined' && __APP_BUILD__)
   ? __APP_BUILD__

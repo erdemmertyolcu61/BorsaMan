@@ -12,6 +12,10 @@
  * v31.47: emoji icons (📄 💼 📡 rendered as colour bitmaps next to two unicode
  * glyphs) were the most visible part of the "pixel-art" look the user named.
  * One stroke-icon set now, drawn in currentColor so the active tab tints it.
+ *
+ * v31.50 (user decision): Portföy (real holdings) and Piyasa are gone. Hisse —
+ * every technical and fundamental value of one stock, 16 quarters of FAVÖK and
+ * profit — takes their place.
  */
 const ICONS = {
   analyze: (
@@ -29,18 +33,10 @@ const ICONS = {
       <path d="M9 8.5h6M9 12h6M9 15.5h3.5" />
     </>
   ),
-  realport: (
+  stock: (
     <>
-      <rect x="3.5" y="7" width="17" height="12.5" rx="2.5" />
-      <path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7" />
-      <path d="M3.5 12.5h17" />
-    </>
-  ),
-  market: (
-    <>
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M3.5 12h17" />
-      <path d="M12 3.5c2.4 2.4 3.6 5.2 3.6 8.5s-1.2 6.1-3.6 8.5c-2.4-2.4-3.6-5.2-3.6-8.5S9.6 5.9 12 3.5z" />
+      <rect x="4" y="3.5" width="16" height="17" rx="2.5" />
+      <path d="M8.5 16.5v-3M12 16.5v-6M15.5 16.5V8" />
     </>
   ),
 };
@@ -57,10 +53,9 @@ function NavIcon({ id }) {
 export default function MobileNav({ activeTab, onTabChange }) {
   const tabs = [
     { id: 'analyze',  label: 'Analiz' },
+    { id: 'stock',    label: 'Hisse' },
     { id: 'signals',  label: 'Sinyal' },
     { id: 'paper',    label: 'Paper' },
-    { id: 'realport', label: 'Portföy' },
-    { id: 'market',   label: 'Piyasa' },
   ];
 
   return (

@@ -64,7 +64,7 @@ function SectionNotifications({ notifications }) {
   );
 }
 
-export default function MobileProfilePage({ notifications, portfolio, onTabChange, onClose, brokerConfig, setBrokerConfig }) {
+export default function MobileProfilePage({ notifications, portfolio, onClose, brokerConfig, setBrokerConfig }) {
   const [activeSection, setActiveSection] = useState(null);
 
   const positions = portfolio?.positions || [];
@@ -84,14 +84,6 @@ export default function MobileProfilePage({ notifications, portfolio, onTabChang
       label: 'Ayarlar',
       sublabel: 'Aracı kurum, API anahtarları, arka plan bildirimi, proxy',
       color: 'var(--cyan)',
-    },
-    {
-      id: 'realport',
-      icon: '💼',
-      label: 'Portfoy',
-      sublabel: `${positions.length} pozisyon`,
-      color: 'var(--green)',
-      action: () => onTabChange?.('realport'),
     },
   ];
 

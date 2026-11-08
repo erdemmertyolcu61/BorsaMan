@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import NotificationSettings from '../Notifications/NotificationSettings.jsx';
 import ProxySettings from '../Common/ProxySettings.jsx';
+import BrokerSettings from '../Portfolio/BrokerSettings.jsx';
 import MobileProfilePage from '../MobileProfile/MobileProfilePage.jsx';
 import { isMarketOpen } from '../../hooks/useAIAdvisor.js';
 
@@ -38,7 +39,7 @@ function formatClock(d) {
   return { date, time };
 }
 
-export default function PremiumHeader({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze, onTabChange, brokerConfig, setBrokerConfig }) {
+export default function PremiumHeader({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze, brokerConfig, setBrokerConfig }) {
   const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMobileProfile, setShowMobileProfile] = useState(false);
@@ -190,7 +191,11 @@ export default function PremiumHeader({ badge, notifications, alertLog, advisor,
                 ✕
               </button>
             </div>
-            <ProxySettings />
+            {/* v31.50: araci kurum ayarlari masaustunde Gercek Portfoy sekmesinin
+                altindaydi; sekme kaldirildi. BrokerSettings ProxySettings'i de icerir. */}
+            {setBrokerConfig
+              ? <BrokerSettings brokerConfig={brokerConfig} setBrokerConfig={setBrokerConfig} />
+              : <ProxySettings />}
           </div>
         </div>
       )}
@@ -201,7 +206,6 @@ export default function PremiumHeader({ badge, notifications, alertLog, advisor,
           portfolio={portfolio}
           brokerConfig={brokerConfig}
           setBrokerConfig={setBrokerConfig}
-          onTabChange={(tab) => { setShowMobileProfile(false); onTabChange?.(tab); }}
           onClose={() => setShowMobileProfile(false)}
         />
       )}

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  parseIsyForeignPayload, summarizeForeignBreadth, topRelativeMomentum,
+  parseIsyForeignPayload,
   parseEvdsWeeklyFlow, EVDS_FOREIGN_EQUITY_SERIES, ISY_FOREIGN_FIELDS, evdsErrorMessage,
 } from '../foreignFlowEngine.js';
 import proxyHandler from '../../../proxy/api/proxy.js';
@@ -39,38 +39,6 @@ describe('parseIsyForeignPayload', () => {
   it('is defensive against garbage', () => {
     expect(parseIsyForeignPayload(null)).toEqual({});
     expect(parseIsyForeignPayload({ d: '{not json' })).toEqual({});
-  });
-});
-
-describe('summarizeForeignBreadth', () => {
-  const map = parseIsyForeignPayload(RAW_ROWS);
-
-  it('counts rises vs falls and weights the average by market cap', () => {
-    const b = summarizeForeignBreadth(map);
-    expect(b).toMatchObject({ n: 3, up: 2, down: 1, flat: 0, medianChg1w: 0.92 });
-    // (414345*3.06 + 1795500*0.92 + 48444*-10.25) / 2258289 = 1.0730 → 1.07
-    expect(b.capWeightedChg1w).toBe(1.07);
-    expect(b.topIn.map(r => r.symbol)).toEqual(['THYAO', 'ASELS']);
-    expect(b.topOut.map(r => r.symbol)).toEqual(['EUPWR']);
-  });
-
-  it('applies a market-cap floor to the mover lists only', () => {
-    const b = summarizeForeignBreadth(map, { minMcapMnTL: 100000 });
-    expect(b.n).toBe(3);
-    expect(b.topOut).toEqual([]);
-  });
-
-  it('returns an empty summary without data', () => {
-    expect(summarizeForeignBreadth({})).toMatchObject({ n: 0, medianChg1w: null, capWeightedChg1w: null });
-  });
-});
-
-describe('topRelativeMomentum', () => {
-  it('ranks by relative return above the market-cap floor', () => {
-    const map = parseIsyForeignPayload(RAW_ROWS);
-    expect(topRelativeMomentum(map, { minMcapMnTL: 0 }).map(r => r.symbol)).toEqual(['EUPWR', 'THYAO', 'ASELS']);
-    expect(topRelativeMomentum(map, { minMcapMnTL: 100000 }).map(r => r.symbol)).toEqual(['THYAO', 'ASELS']);
-    expect(topRelativeMomentum(map, { key: 'rel1m', minMcapMnTL: 0, topN: 1 })[0].symbol).toBe('ASELS');
   });
 });
 

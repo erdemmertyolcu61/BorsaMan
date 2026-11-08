@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { PROXY_BASE_URL, setProxyBaseUrl, getProxyStats } from '../../utils/fetchEngine.js';
 import { getApiKey, setApiKey } from '../../utils/claude.js';
-import { getGeminiApiKey, setGeminiApiKey } from '../../utils/gemini.js';
 import { getEvdsApiKey, setEvdsApiKey } from '../../utils/foreignFlowEngine.js';
 import { isPushSupported, pushBlockedReason, enablePush, disablePush, getPushSubscription, syncTracking } from '../../utils/pushClient.js';
 import { getTradingCapital, setTradingCapital, DEFAULT_CAPITAL } from '../../utils/positionSizing.js';
@@ -9,7 +8,6 @@ import { getTradingCapital, setTradingCapital, DEFAULT_CAPITAL } from '../../uti
 export default function ProxySettings() {
   const [url, setUrl] = useState(PROXY_BASE_URL || '');
   const [claudeKey, setClaudeKey] = useState('');
-  const [geminiKey, setGeminiKey] = useState('');
   const [evdsKey, setEvdsKey] = useState('');
   // v31.47: lot onerisinin sermayesi (AI Firsatlar kartlari + Analiz ekrani)
   const [capital, setCapital] = useState(() => {
@@ -32,7 +30,6 @@ export default function ProxySettings() {
 
   useEffect(() => {
     setClaudeKey(getApiKey());
-    setGeminiKey(getGeminiApiKey());
     setEvdsKey(getEvdsApiKey());
     getPushSubscription().then(sub => setPushOn(!!sub));
   }, []);
@@ -40,7 +37,6 @@ export default function ProxySettings() {
   const save = () => {
     setProxyBaseUrl(url.trim());
     setApiKey(claudeKey.trim());
-    setGeminiApiKey(geminiKey.trim());
     setEvdsApiKey(evdsKey.trim());
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -110,25 +106,6 @@ export default function ProxySettings() {
           onChange={e => setClaudeKey(e.target.value)}
           onBlur={save}
           placeholder="sk-ant-api03-..."
-          style={{ flex: 1, fontSize: 10, padding: 7 }}
-        />
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 14 }}>✨</span>
-        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Inter,sans-serif', color: 'var(--cyan)' }}>
-          Gemini API Anahtari (Haberler Icin)
-        </span>
-      </div>
-
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 16 }}>
-        <input
-          className="inp"
-          type="password"
-          value={geminiKey}
-          onChange={e => setGeminiKey(e.target.value)}
-          onBlur={save}
-          placeholder="AIzaSy..."
           style={{ flex: 1, fontSize: 10, padding: 7 }}
         />
       </div>
