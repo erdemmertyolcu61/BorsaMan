@@ -96,8 +96,18 @@ async function probe(path) {
   return { status: r.status, json, text, ms: Date.now() - t0 };
 }
 
+// v31.47: a network-level failure (connection reset / DNS / no route) says
+// nothing about the deployment's age. Measured 2026-11-08: from the user's dev
+// machine every *.vercel.app request is reset (ECONNRESET) while api.vercel.com —
+// the deploy path — works, so the deploy succeeded and all 8 checks still read
+// "fetch failed" followed by advice to redeploy. Those are reported apart.
+const NET_CODES = new Set(['ECONNRESET', 'ENOTFOUND', 'ECONNREFUSED', 'EAI_AGAIN', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET']);
+const netCodeOf = (e) => e?.cause?.code || e?.cause?.cause?.code || null;
+
 console.log(`Proxy: ${base}\n`);
 let failed = 0;
+let netFailed = 0;
+const netCodes = new Set();
 for (const c of CHECKS) {
   try {
     const { status, json, text, ms } = await probe(c.path);
@@ -110,7 +120,9 @@ for (const c of CHECKS) {
     }
   } catch (e) {
     failed++;
-    const why = e?.name === 'TimeoutError' ? `${TIMEOUT_MS / 1000} sn zaman asimi` : e?.message;
+    const code = netCodeOf(e);
+    if (code && NET_CODES.has(code)) { netFailed++; netCodes.add(code); }
+    const why = e?.name === 'TimeoutError' ? `${TIMEOUT_MS / 1000} sn zaman asimi` : `${e?.message}${code ? ` (${code})` : ''}`;
     console.log(`  HATA  ${c.name}: ${why}`);
   }
 }
@@ -124,6 +136,12 @@ try {
     : '\n  bilgi /index.js servis edilmiyor (beklenen).');
 } catch { /* bilgi amacli; sonucu etkilemez */ }
 
+if (failed && netFailed === failed) {
+  console.log(`\n${failed} kontrol sunucuya HIC ulasamadi (${[...netCodes].join(', ')}).`);
+  console.log('Bu ag/baglanti sorunu — proxy\'nin eski oldugunu GOSTERMEZ; tekrar deploy etmek cozmez.');
+  console.log(`Baska bir agdan (ornegin telefonda mobil veri) ac: ${base}/api/proxy?source=tcmb_rate`);
+  process.exit(2);
+}
 if (failed) {
   console.log(`\n${failed} kontrol basarisiz. "Invalid source parameter" = yayindaki proxy eski.`);
   console.log('Deploy (depo kokunden): npm run deploy:proxy');

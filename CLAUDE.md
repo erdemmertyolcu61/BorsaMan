@@ -33,6 +33,7 @@ npm run build:engine      # engine-rs → wasm32 → src/engine/bistEngineWasm.j
 npm run parity:engine     # JS motoru vs Rust motoru, 130 gerçek seri × 5 yıl, bit düzeyinde
 npm run deploy:proxy      # proxy/ projesini yayınla + canlı doğrula (kökten çalıştır)
 npm run check:proxy       # yayındaki proxy'yi doğrula; argümanla başka origin: -- https://bist-terminal-project.vercel.app
+                          # çıkış 2 = sunucuya hiç ulaşılamadı (ağ, ör. bu makinede *.vercel.app sıfırlanıyor) — eski proxy demek değil
 npm run electron:dev      # Electron + Vite
 pytest tests/             # bist_bridge.py
 
