@@ -57,7 +57,7 @@ node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk
 | Canlı fiyat | `hooks/useLivePrices.js` (5 sn / 15 sn / 45 sn kademeler) → `fetchQuotesBatch` |
 | Sinyal takibi | `hooks/useSignalTracker.js` (`bist_signal_history`, 500 kayıt, 10 dk kontrol, gün-sonu kapanıştan kesin kayıt) |
 | Paper | `utils/PaperTradeEngine.js` + `hooks/usePaperTradeML.js` (ML AUTO), `hooks/usePaperTrading.js` (standart) |
-| Yapay zekâ | `utils/claude.js` (JARVIS, uzman analizi, günlük notlar, KAP, istihbarat), `utils/gemini.js` (İstihbarat sekmesi) |
+| Yapay zekâ | `utils/claude.js` (JARVIS sohbeti, uzman analizi, KAP yorumu, tarama sonrası günlük notlar), `utils/gemini.js` (İstihbarat sekmesi) |
 | Proxy | `api/` (PWA ile aynı origin) ve `proxy/api/` (Electron/Capacitor; `DEFAULT_PROXY_URL` = `proxy-delta-mocha-43.vercel.app`) — `proxy.js` ve `claude.js` iki kopyada **birebir aynı** |
 | Masaüstü / mobil | `electron/main.cjs` + `preload.cjs`; Capacitor `android/`, `ios/` |
 | Sunucu tarafı takip | `.github/workflows/signal-tracker.yml` — seans içinde 15 dk'da bir sinyal fiyatı + Web Push |
@@ -115,11 +115,15 @@ istemci eski dağıtımı "boş" değil `proxy_outdated` olarak raporlar. `.verc
 
 ## Yapay zekâ entegrasyonu (`utils/claude.js`)
 
+- **Maliyet yalnız kullanıcı Ayarlar'a Claude anahtarı girerse oluşur.** Anahtar yoksa hiçbir istek gitmez:
+  JARVIS sessizce kurala dayalı çevrimdışı moda düşer (`jarvisOffline`), tarama notlandırması atlanır.
+  Anahtar varsa her taramadan sonra otomatik bir notlandırma isteği gider (`useAIAdvisor`, 25 sn kesme —
+  kesilen istek yine faturalanır).
 - Model **`claude-opus-5-5`** (`CLAUDE_MODEL`), tüm rotalarda. İstek `/api/claude` proxy'si üzerinden gider;
   kullanıcının kendi anahtarı `x-api-key` başlığında, proxy `anthropic-beta`'yı yukarı iletir.
 - Opus 5.5'te **örnekleme parametresi yok** (`temperature`/`top_p`/`top_k` → 400) ve **düşünme hep açık**:
-  tek kontrol `output_config.effort` (API varsayılanı `medium`), her rota açıkça verir — sohbet / KAP /
-  strateji kodu `low`, uzman analizi / günlük notlar / istihbarat `medium`.
+  tek kontrol `output_config.effort` (API varsayılanı `medium`), her rota açıkça verir — sohbet / KAP
+  `low`, uzman analizi / günlük notlar `medium`. (`askMarketIntel` ve `generateStrategyCode` tüketicisiz.)
 - Düşünme `max_tokens`'a sayılır; çağıran yanıt bütçesini verir, `THINKING_HEADROOM` üstüne eklenir.
 - Yanıt blok **türüne** göre okunur (düşünme blokları önce gelebilir). `stop_reason: "refusal"` açık bir
   hata mesajına çevrilir; sunucu tarafı yedek (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) açık.
