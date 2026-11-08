@@ -6,8 +6,7 @@
  *  - Daily picks prompt with A/B/C setup grades
  *  - KAP disclosure sentiment analysis (via proxy backend)
  *  - Web search tool use (news lookup)
- *  - Temperature 0.6 for consistent Wall-Street style reasoning
- *  - claude-sonnet-4-20250514 model by default
+ *  - Claude Opus 5.5 (claude-opus-5-5) on every route — see CLAUDE_MODEL below
  */
 
 import { logError } from './errorLogger.js';
@@ -17,9 +16,37 @@ import { KAP_EVENT_EVIDENCE } from './kapFeed.js';
 
 const API_KEY_STORAGE = 'claude_api_key';
 const PROXY_CLAUDE_ENDPOINT = '/api/claude'; // relative — served by proxy server
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
-const DEFAULT_TEMPERATURE = 0.6;
-const CLAUDE_TIMEOUT_MS = 60_000;
+
+// v31.46: every route runs on Claude Opus 5.5. The previous default,
+// claude-sonnet-4-20250514, was RETIRED on 2026-06-15 — from then on every
+// JARVIS chat, expert analysis, KAP and market-intel request failed upstream.
+// Opus 5.5's request surface differs from Sonnet 4 in ways that 400 if ignored:
+//   - no sampling parameters (temperature / top_p / top_k)
+//   - thinking is ALWAYS on; `output_config.effort` is the only control and its
+//     default is "medium" — so every route sets it explicitly
+//   - thinking tokens count toward max_tokens (see THINKING_HEADROOM)
+//   - web search is `web_search_20260209`
+export const CLAUDE_MODEL = 'claude-opus-5-5';
+
+// Thinking counts toward max_tokens even though its text is not returned. Callers
+// pass the REPLY budget they want; this headroom is added on top so a long think
+// can never truncate the answer itself (a 1,200-token cap sized for Sonnet 4
+// would otherwise be eaten by reasoning and come back empty).
+export const THINKING_HEADROOM = Object.freeze({ low: 2000, medium: 6000, high: 12000 });
+
+// Opt into server-side refusal fallbacks: if a safety classifier declines a
+// request, Anthropic re-runs it on its recommended fallback model inside the
+// same call instead of returning an empty refusal.
+export const CLAUDE_BETA = 'server-side-fallback-2026-07-01';
+
+// Client wait must outlast the proxy's own limit (vercel.json maxDuration 60 s),
+// otherwise the browser gives up on a request the function is still serving.
+const CLAUDE_TIMEOUT_MS = 65_000;
+
+export const WEB_SEARCH_TOOL_TYPE = 'web_search_20260209';
+export function webSearchTool(maxUses = 2) {
+  return { type: WEB_SEARCH_TOOL_TYPE, name: 'web_search', max_uses: maxUses };
+}
 
 export function setApiKey(key) {
   if (typeof key === 'string' && key.trim()) {
@@ -352,30 +379,62 @@ function buildCachedSystem(dynamicSystemText) {
 // Accepts either { prompt } (single user turn) or { messages } (multi-turn history).
 // `useCache`: default true — enables Anthropic prompt-caching of the SMC rulebook.
 // When false (e.g. short one-off KAP JSON calls), bypasses caching overhead.
-async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAULT_MODEL, temperature = DEFAULT_TEMPERATURE, maxTokens = 1024, useCache = true, outputConfig = null }) {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    return { error: 'Claude API anahtari tanimlanmamis. Ayarlardan ekle.' };
-  }
+// `maxTokens` is the REPLY budget; thinking headroom for `effort` is added on top.
 
+/**
+ * Pure request builder (tested): what callClaude sends to the proxy.
+ * @returns {{ payload: object, headers: object }}
+ */
+export function buildClaudeRequest({ prompt, messages, systemPrompt, tools, effort = 'medium', maxTokens = 1024, useCache = true, outputConfig = null }) {
   const finalMessages = Array.isArray(messages) && messages.length
     ? messages
     : [{ role: 'user', content: prompt }];
-
-  // Opus 4.7+ / Sonnet 5 / Fable 5 reject sampling params (temperature/top_p/top_k → 400).
-  const samplingRemoved = /claude-(opus-4-[78]|sonnet-5|fable-5)/.test(model);
-
+  const level = THINKING_HEADROOM[effort] != null ? effort : 'medium';
   const payload = {
-    model,
-    max_tokens: maxTokens,
+    model: CLAUDE_MODEL,
+    max_tokens: Math.max(256, Math.round(maxTokens)) + THINKING_HEADROOM[level],
     system: useCache
       ? buildCachedSystem(systemPrompt)
       : (systemPrompt || undefined),
     messages: finalMessages,
+    output_config: { ...(outputConfig || {}), effort: level },
+    fallbacks: 'default',
   };
-  if (!samplingRemoved && temperature != null) payload.temperature = temperature;
-  if (outputConfig) payload.output_config = outputConfig;
   if (tools && tools.length) payload.tools = tools;
+  return {
+    payload,
+    headers: { 'Content-Type': 'application/json', 'anthropic-beta': CLAUDE_BETA },
+  };
+}
+
+/**
+ * Text out of a Messages API response. Reads blocks by TYPE: on Opus 5.5 a
+ * response can open with (empty) thinking blocks before the text. A classifier
+ * decline or a reply cut by max_tokens becomes an explicit error instead of an
+ * empty answer the UI would show as "nothing to say".
+ */
+export function readClaudeResponse(data) {
+  const text = (data?.content || [])
+    .filter(c => c.type === 'text')
+    .map(c => c.text)
+    .join('\n')
+    .trim();
+  if (data?.stop_reason === 'refusal') {
+    const cat = data?.stop_details?.category;
+    return { error: `Claude bu istegi guvenlik filtresi nedeniyle yanitlamadi${cat ? ` (${cat})` : ''}. Soruyu farkli ifade etmeyi deneyin.`, raw: data };
+  }
+  if (!text && data?.stop_reason === 'max_tokens') {
+    return { error: 'Claude yaniti token sinirina takildi (bos cevap). Daha kisa bir soru deneyin.', raw: data };
+  }
+  return { text, raw: data };
+}
+
+async function callClaude(opts) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    return { error: 'Claude API anahtari tanimlanmamis. Ayarlardan ekle.' };
+  }
+  const { payload, headers } = buildClaudeRequest(opts);
 
   let tid;
   try {
@@ -388,11 +447,7 @@ async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAU
     tid = setTimeout(() => controller.abort(), CLAUDE_TIMEOUT_MS);
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-beta': 'prompt-caching-2024-07-31',
-      },
+      headers: { ...headers, 'x-api-key': apiKey },
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
@@ -401,13 +456,7 @@ async function callClaude({ prompt, messages, systemPrompt, tools, model = DEFAU
       const text = await res.text().catch(() => '');
       return { error: `Claude HTTP ${res.status}: ${text.slice(0, 200)}` };
     }
-    const data = await res.json();
-    const text = (data.content || [])
-      .filter(c => c.type === 'text')
-      .map(c => c.text)
-      .join('\n')
-      .trim();
-    return { text, raw: data };
+    return readClaudeResponse(await res.json());
   } catch (err) {
     clearTimeout(tid);
     if (err.name === 'AbortError')
@@ -438,7 +487,7 @@ Format: [{"id":"...","sentiment":"Pozitif","score":7,"reason":"..."}]`;
   const result = await callClaude({
     prompt,
     systemPrompt: 'Sen BIST KAP analisti uzmanisin. Sadece gecerli JSON dondur.',
-    temperature: 0.3,
+    effort: 'low',          // short classification — no deep reasoning needed
     maxTokens: 1200,
     useCache: false, // short JSON output — caching overhead not worth it
   });
@@ -456,37 +505,35 @@ Format: [{"id":"...","sentiment":"Pozitif","score":7,"reason":"..."}]`;
 // ── Expert analysis with web search ────────────────────────────────────────
 export async function askExpert(symbol, analysis, market, opts = {}) {
   const useWebSearch = opts.webSearch !== false;
-  const tools = useWebSearch ? [{
-    type: 'web_search_20241020',
-    name: 'web_search',
-    max_uses: 2,
-  }] : undefined;
+  const tools = useWebSearch ? [webSearchTool(2)] : undefined;
 
   return callClaude({
     prompt: buildExpertPrompt(symbol, analysis, market, opts.portfolio || null),
     systemPrompt: 'Sen Wall Street tarzi BIST stratejistisin. Turkce cevap ver. Gerekirse haberlere web_search ile bak. Emin olmadigin yerde "emin degilim" de, uydurma.',
     tools,
-    temperature: DEFAULT_TEMPERATURE,
+    effort: 'medium',       // the deep single-stock analysis — quality over latency
     maxTokens: 1600,
   });
 }
 
 // Multi-turn chat with conversation history (used by JARVIS for contextual dialogue)
+// `opts.webSearch`: give the model the web_search tool. JARVIS tags a question
+// "[WEB ARAMA AKTIF]" when it needs fresh news; before v31.46 the tag was sent
+// but the tool never was, so the model was told to search with nothing to search with.
 export async function chatClaudeHistory(messages, systemPrompt, opts = {}) {
   return callClaude({
     messages,
     systemPrompt,
-    temperature: opts.temperature ?? DEFAULT_TEMPERATURE,
+    effort: opts.effort || 'low',   // conversational — keep the reply quick on a phone
     maxTokens: opts.maxTokens || 1400,
-    tools: opts.tools,
+    tools: opts.tools || (opts.webSearch ? [webSearchTool(2)] : undefined),
   });
 }
 
 // ── Daily Picks (WS8) — structured, evidence-fed grading ────────────────────
-// Model: claude-opus-4-8 (sampling params removed on 4.7+ — callClaude strips
-// temperature automatically). Output is schema-constrained JSON so grades can
-// be parsed into pick.claudeGrade and tracked in the forward journal.
-const DAILY_PICKS_MODEL = 'claude-opus-4-8';
+// Output is schema-constrained JSON (output_config.format) so grades can be
+// parsed into pick.claudeGrade and tracked in the forward journal. Runs on the
+// same CLAUDE_MODEL as every other route (was a separate claude-opus-4-8 pin).
 const DAILY_PICKS_SCHEMA = {
   type: 'object',
   properties: {
@@ -554,7 +601,7 @@ export async function askDailyPicks(picks, market, opts = {}) {
     prompt,
     systemPrompt: 'Sen BIST gunluk strateji uzmanisin. Turkce yaz.',
     maxTokens: 1400,
-    model: DAILY_PICKS_MODEL,
+    effort: 'medium',
     outputConfig: { format: { type: 'json_schema', schema: DAILY_PICKS_SCHEMA } },
   });
   if (result.error) return result;
@@ -603,19 +650,17 @@ JSON formati su sekilde olmali:
   const result = await callClaude({
     prompt,
     systemPrompt: 'Sen BIST piyasa istihbarati analistisin. Istenilen formati (JSON) kesinlikle bozma.',
-    temperature: 0.6,
+    effort: 'medium',
     maxTokens: 1500,
-    tools: [{
-      type: 'web_search_20241020',
-      name: 'web_search',
-      max_uses: 3,
-    }],
+    tools: [webSearchTool(3)],
     useCache: false
   });
 
   if (result.error) return { error: result.error };
   try {
-    const m = result.text.match(/\\{[\s\S]*\\}/);
+    // v31.46: the old pattern /\\{...\\}/ required a literal backslash before each
+    // brace, so it never matched and any prose around the JSON broke the parse.
+    const m = result.text.match(/\{[\s\S]*\}/);
     if (!m) return JSON.parse(result.text); // Try direct parse
     return JSON.parse(m[0]);
   } catch (e) {
@@ -710,7 +755,7 @@ export async function generateStrategyCode(userInput) {
   const result = await callClaude({
     prompt,
     systemPrompt: 'Sen BIST strateji kodlayicisin. Sadece JS arrow function dondur.',
-    temperature: 0.4,
+    effort: 'low',
     maxTokens: 800,
   });
   if (result && result.text && !result.error) {
@@ -732,8 +777,8 @@ export async function chatClaude(userMsg, systemPrompt, opts = {}) {
   return callClaude({
     prompt: userMsg,
     systemPrompt,
-    temperature: opts.temperature || DEFAULT_TEMPERATURE,
+    effort: opts.effort || 'low',
     maxTokens: opts.maxTokens || 1200,
-    tools: opts.tools,
+    tools: opts.tools || (opts.webSearch ? [webSearchTool(2)] : undefined),
   });
 }

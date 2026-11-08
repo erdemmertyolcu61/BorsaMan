@@ -434,7 +434,7 @@ export default function ChatPanel({ symbol, ind, sig, fundamentals, bilanco, log
 
       const systemPrompt = buildSystemPrompt();
       const convo = [...history.slice(-10), { role: 'user', content: userMsg }];
-      const result = await chatClaudeHistory(convo, systemPrompt, { maxTokens: 1200 });
+      const result = await chatClaudeHistory(convo, systemPrompt, { maxTokens: 1200, webSearch: useWeb });
 
       let answer;
       let isOffline = false;
