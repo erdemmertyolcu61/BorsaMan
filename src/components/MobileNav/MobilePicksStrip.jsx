@@ -103,6 +103,14 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
           />
         </div>
       )}
+      {/* v31.48: ekran kapaninca tarama ne olur — kullanici bilsin */}
+      {scanning && (
+        <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 5 }}>
+          {advisor.scanKeepAwake === 'active'
+            ? 'Tarama bitene kadar ekran açık tutuluyor.'
+            : 'Ekran kapanırsa tarama duraklar, uygulamaya dönünce kaldığı yerden sürer.'}
+        </div>
+      )}
 
       {/* Row 2: Top picks chips (scrollable) */}
       {sortedPicks.length > 0 && !scanning && (

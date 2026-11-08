@@ -61,6 +61,7 @@ export const TRACKING_KEYS = [
   // sifirlamadan sonra sistem "bugunun kapanisi zaten kaydedildi" sanip
   // gun-sonu taramasini ATLIYORDU. Yukaridaki ile ayni gerekce.
   'bist_last_eod_scan_day',   // gun-sonu tarama damgasi (reset sonrasi yeniden kurulmali)
+  'bist_scan_in_progress',    // v31.48: yarim kalan tarama isareti (sifirlamadan sonra surdurulmesin)
   'bist_jarvis_memory',       // JARVIS conversation memory
   'bist_portfolio',           // virtual (paper) positions — headless but still paper
   'bist_tracker_reset_v3',    // legacy one-shot flag, superseded by the epoch
@@ -74,6 +75,7 @@ export const TRACKING_KEYS = [
  *   bist_proxy_url, bist_evds_api_key, bist_tcmb_override
  *   bist_trading_capital  (v31.47) lot onerisinin sermayesi — bir ayar
  *   bist_tcmb_rate_cache_v1 (v31.47) TCMB politika faizi onbellegi
+ *   bist_econ_calendar_v1 (v31.48) makroekonomik takvim onbellegi
  *   bist_notification_settings, bist_telemetry_enabled
  *   bist_fetch_l2_cache_v1, bist_isyatirim_cache_v3, bist_daily_intel_cache,
  *   bist_foreign_flow_cache/_breaker  — price/news caches, not learned state

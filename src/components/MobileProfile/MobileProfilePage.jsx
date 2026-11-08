@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { buildLabel } from '../../utils/buildInfo.js';
 import ProxySettings from '../Common/ProxySettings.jsx';
 import BrokerSettings from '../Portfolio/BrokerSettings.jsx';
 
@@ -180,7 +181,7 @@ export default function MobileProfilePage({ notifications, portfolio, onTabChang
                 width: 6, height: 6, borderRadius: '50%',
                 background: 'var(--green)', display: 'inline-block',
               }} />
-              AI Trading Terminal v21
+              {buildLabel()}
             </div>
           </div>
 

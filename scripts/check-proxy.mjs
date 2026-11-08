@@ -53,6 +53,13 @@ const CHECKS = [
       ? `%${j.rate} (${j.date})` : null),
   },
   {
+    // v31.48: makroekonomik takvim (doviz.com, sunucuda ayristirilir)
+    name: 'econ_calendar (makroekonomik takvim)',
+    path: '/api/proxy?source=econ_calendar',
+    verify: j => (j?.ok === true && Array.isArray(j.events) && j.count > 20
+      ? `${j.count} etkinlik (${j.events.filter(e => e.c === 'TR').length} Turkiye)` : null),
+  },
+  {
     // Tatil gunleri 0 bildirim donebilir; dogru sekil yeterli.
     name: 'kap_disclosures (KAP bildirim akisi)',
     path: '/api/proxy?source=kap_disclosures&days=3',

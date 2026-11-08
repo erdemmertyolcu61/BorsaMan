@@ -34,6 +34,9 @@ const _sourceHealth = createSourceHealth();
 import { scoreNewSignal } from '../utils/ML_BacktestEngine.js';
 import { classifyBistRegime, regimeLabel, applyRegimeGate, ensureBestOfDay } from '../utils/regimeGate.js';
 import { applyConvictionSizing } from '../utils/positionSizing.js';
+import {
+  createVisibilityClock, createScanWakeLock, markScanRunning, clearScanRunning, readUnfinishedScan,
+} from '../utils/scanKeepAlive.js';
 import { createPhaseTracker, formatPhaseSummary } from '../utils/scanPhases.js';
 import { computeRelativeStrength } from '../utils/relativeStrength.js';
 import { computeTopGainerPotential, topGainerConfidenceAdjust } from '../utils/topGainerPotential.js';
@@ -693,6 +696,8 @@ export function useAIAdvisor(portfolio) {
   // v26: Piyasa rejimi (BULL/NEUTRAL/BEAR) — BIST100 gunluk performansina dayanir.
   // Tarama agresifligini belirler (BEAR=3 pick, NEUTRAL=5, BULL=8).
   const [marketRegime, setMarketRegime] = useState({ regime: 'NEUTRAL', bistChangePct: 0 });
+  // v31.48: tarama surerken ekran uyanik mi? 'active' | 'paused' | 'unsupported' | 'denied' | 'off'
+  const [scanKeepAwake, setScanKeepAwake] = useState('off');
   const runningRef = useRef(false);
   const lastAutoScanRef = useRef(0); // ML-auto continuous-scan throttle (mobile "keep working")
   // v31.25: gun-sonu taramasi icin gun-basina deneme sayaci (ag kopukken sonsuz
@@ -746,9 +751,23 @@ export function useAIAdvisor(portfolio) {
     if (runningRef.current) return;
     runningRef.current = true;
     setScanning(true);
-    pushLog({ type: 'info', msg: 'AI taramasi baslatildi' });
+    pushLog({ type: 'info', msg: opts.resumed ? 'Yarim kalan tarama yeniden baslatildi' : 'AI taramasi baslatildi' });
     // try'dan ONCE tanimli: tarama hata verse bile `finally` sure dokumunu basar.
     let phases = null;
+    // v31.48: "ekran kapaninca gitmesin" — bkz. utils/scanKeepAlive.js.
+    // Ekran uyanik kilidi + gizli sureyi butceden dusen saat + yarim kalan tarama isareti.
+    if (typeof window !== 'undefined') window.__bistScanActive = true;   // SW guncellemesi taramayi kesmesin
+    const visClock = createVisibilityClock();
+    const wakeLock = createScanWakeLock();
+    wakeLock.start().then(st => setScanKeepAwake(st)).catch(() => {});
+    const onKeepAwakeVis = () => setScanKeepAwake(wakeLock.status);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onKeepAwakeVis);
+    markScanRunning({
+      startedAt: Date.now(), done: 0, total: 0,
+      universe: opts.universe || SCAN_UNIVERSE, afterHours: !!opts.afterHours,
+      eodTargetDay: opts.eodTargetDay || null, resumes: opts.resumes || 0,
+    });
+    let frozenRequeued = 0;
 
     try {
       const universeName = opts.universe || SCAN_UNIVERSE;
@@ -1215,7 +1234,14 @@ export function useAIAdvisor(portfolio) {
       let scanBudgetHit = false;
       let budgetExtended = false;
       for (let i = 0; i < symbols.length; ) {
-        const elapsedMs = Date.now() - scanStart;
+        // v31.48: ekran kapaliyken yeni grup baslatma — donmus sayfaya istek atmak
+        // o grubu toptan "basarisiz" yapiyordu. Gorunur olunca kaldigi yerden.
+        if (visClock.isHidden()) {
+          await visClock.waitVisible();
+          pushLog({ type: 'info', msg: `Ekran kapaliydi — tarama ${done}/${symbols.length} noktasindan devam ediyor` });
+        }
+        // Butce GORUNUR sureyle olculur: kilitli gecen dakikalar taramayi kesmez.
+        const elapsedMs = visClock.activeElapsed(scanStart);
         const successRatio = done > 0 ? results.length / done : 1;
         if (elapsedMs > SCAN_HARD_BUDGET_MS || (elapsedMs > SCAN_BUDGET_MS && successRatio < 0.5)) {
           scanBudgetHit = true;
@@ -1228,25 +1254,44 @@ export function useAIAdvisor(portfolio) {
         const { delayMs, concurrency } = pace.current();
         const chunk = symbols.slice(i, i + concurrency);
         const before = failedSyms.size;
+        const epochBefore = visClock.epoch;
         const chunkResults = await Promise.all(chunk.map(s => processSymbol(s)));
         chunkResults.forEach(r => { if (r) results.push(r); });
-        // processSymbol basarisizlari failedSyms'e ekler; bir grupta ANİ bir
-        // basarisizlik sicramasi kisitlamanin en guvenilir isareti (HTTP durum
-        // kodu proxy zincirinin arkasinda gorunmuyor).
-        const newlyFailed = failedSyms.size - before;
-        pace.onBatch(newlyFailed >= Math.max(2, Math.ceil(chunk.length * 0.4))
-          ? { throttled: newlyFailed }
-          : { ok: chunk.length - newlyFailed });
+        if (visClock.epoch !== epochBefore) {
+          // v31.48: grup surerken ekran kapandi. Dusenler ag/kaynak hatasi degil
+          // donma kaynakli — kisitlama sayilmaz (hiz dusurulmez), gorunur olunca
+          // hemen yeniden denenir.
+          const frozen = chunk.filter(sym => failedSyms.has(sym));
+          if (frozen.length) {
+            if (visClock.isHidden()) await visClock.waitVisible();
+            frozen.forEach(sym => failedSyms.delete(sym));
+            frozenRequeued += frozen.length;
+            const again = await Promise.all(frozen.map(sym => processSymbol(sym)));
+            again.forEach(r => { if (r) results.push(r); });
+          }
+        } else {
+          // processSymbol basarisizlari failedSyms'e ekler; bir grupta ANİ bir
+          // basarisizlik sicramasi kisitlamanin en guvenilir isareti (HTTP durum
+          // kodu proxy zincirinin arkasinda gorunmuyor).
+          const newlyFailed = failedSyms.size - before;
+          pace.onBatch(newlyFailed >= Math.max(2, Math.ceil(chunk.length * 0.4))
+            ? { throttled: newlyFailed }
+            : { ok: chunk.length - newlyFailed });
+        }
         i += chunk.length;
         done = Math.min(i, symbols.length);
         setScanProgress({ done, total: symbols.length, phase: 'hisseler taraniyor' });
+        markScanRunning({ done, total: symbols.length });
         if (i < symbols.length) await sleep(delayMs);
+      }
+      if (frozenRequeued) {
+        pushLog({ type: 'info', msg: `Ekran kapaliyken dusen ${frozenRequeued} sembol yeniden denendi (hiz dusurulmedi)` });
       }
       if (scanBudgetHit) {
         const left = symbols.length - Math.min(done, symbols.length);
         pushLog({
           type: 'warn',
-          msg: `Tarama sure butcesi doldu (${Math.round((Date.now() - scanStart) / 60000)} dk) — ${left} sembol taranmadi. `
+          msg: `Tarama sure butcesi doldu (${Math.round(visClock.activeElapsed(scanStart) / 60000)} dk) — ${left} sembol taranmadi. `
              + 'Ust kaynak yavas/kisitli; sonuclar eksik ama gecerli.',
         });
       }
@@ -1286,7 +1331,8 @@ export function useAIAdvisor(portfolio) {
         const retryStart = Date.now();
         let budgetHit = false;
         for (let i = 0; i < retryList.length; i += RETRY_CONCURRENCY) {
-          if (Date.now() - retryStart > RETRY_BUDGET_MS) { budgetHit = true; break; }
+          if (visClock.isHidden()) await visClock.waitVisible();   // v31.48
+          if (visClock.activeElapsed(retryStart) > RETRY_BUDGET_MS) { budgetHit = true; break; }
           const chunk = retryList.slice(i, i + RETRY_CONCURRENCY);
           const rr = await Promise.all(chunk.map(s => processSymbol(s, RETRY_TIMEOUT_MS)));
           rr.forEach(r => { if (r) results.push(r); });
@@ -3412,8 +3458,42 @@ export function useAIAdvisor(portfolio) {
       setScanProgress(prev => ({ ...prev, phase: '' }));
       setScanning(false);
       runningRef.current = false;
+      // v31.48: tarama bitti (basarili ya da hatayla) — kilit, saat ve isaret birakilir.
+      // Sayfa tarama sirasinda olurse buraya hic gelinmez; isaret kalir, acilista surdurulur.
+      wakeLock.stop().catch(() => {});
+      visClock.dispose();
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onKeepAwakeVis);
+      setScanKeepAwake('off');
+      clearScanRunning();
+      if (typeof window !== 'undefined') window.__bistScanActive = false;
     }
   }, [portfolio, pushLog, riskAlerts]);
+
+  // ── v31.48: YARIM KALAN TARAMA ──
+  // Telefon arka plandaki PWA'yi tamamen kapattiysa tarama iz birakmadan kayboluyordu.
+  // Isaret 45 dk'dan tazeyse acilista yeniden baslatilir. Ust uste iki kez yarim
+  // kaldiysa (taramanin kendisi sayfayi dusuruyor olabilir) dongu kurulmaz.
+  useEffect(() => {
+    const m = readUnfinishedScan();
+    if (!m) return undefined;
+    if ((m.resumes || 0) >= 2) { clearScanRunning(); return undefined; }
+    const t = setTimeout(() => {
+      if (runningRef.current) return;   // bu arada baska bir tarama basladi
+      pushLog({
+        type: 'info',
+        msg: `Yarim kalan tarama bulundu (${m.done || 0}/${m.total || '?'}) — yeniden baslatiliyor`,
+      });
+      runScan({
+        universe: m.universe || SCAN_UNIVERSE,
+        afterHours: !!m.afterHours,
+        eodTargetDay: m.eodTargetDay || undefined,
+        resumed: true,
+        resumes: (m.resumes || 0) + 1,
+      });
+    }, 4000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const manualScan = useCallback(() => {
     runScan({ universe: SCAN_UNIVERSE });
@@ -3541,6 +3621,7 @@ export function useAIAdvisor(portfolio) {
     scanProgress,
     lastUpdate,
     marketRegime,    // v26 FIX 2: { regime: 'BULL'|'NEUTRAL'|'BEAR', bistChangePct }
+    scanKeepAwake,   // v31.48: tarama surerken ekran uyanik kilidi durumu
     coverage,        // v31.40: { scanned, total, missing, added, dropped, verified, sessionDay, laggingDay, at }
     manualScan,
     runScan,

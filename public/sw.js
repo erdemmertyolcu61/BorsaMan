@@ -6,6 +6,16 @@ precacheAndRoute(self.__WB_MANIFEST);
 
 const CACHE_NAME = 'bist-ai-v3';
 
+// v31.48: a new version used to WAIT until every window of the app was closed.
+// A home-screen PWA is almost never fully closed, so the phone kept running the
+// old build for days after a deploy ("mobilde guncel degiliz") while precache
+// kept serving the old index.html. Activate immediately; the page reloads itself
+// on controllerchange (main.jsx), deferring while a scan is running.
+self.addEventListener('install', () => { self.skipWaiting(); });
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
 // Activate: clean old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(

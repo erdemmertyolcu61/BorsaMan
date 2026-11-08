@@ -60,6 +60,8 @@ const ALLOWED_SOURCES = new Set([
   'bars',
   // v31.47: TCMB policy rate parsed server-side (see handleTcmbRate)
   'tcmb_rate',
+  // v31.48: economic calendar (doviz.com) parsed server-side (see handleEconCalendar)
+  'econ_calendar',
 ]);
 
 const ALLOWED_ORIGINS = [
@@ -636,6 +638,97 @@ async function handleTcmbRate(req, res) {
   }
 }
 
+// v31.48: MAKROEKONOMIK TAKVIM. doviz.com/ekonomik-takvim renders ~1,600 events
+// server-side (Turkey included: TUFE, sanayi uretimi, cari denge, guven endeksleri,
+// with actual / expected / previous). No key. ~1 MB of HTML in, a few KB of JSON
+// out. The parser below is an exact copy of src/utils/econCalendar.js
+// (parseDovizCalendarHtml) — a test asserts both give identical output.
+const DOVIZ_CALENDAR_URL = 'https://www.doviz.com/ekonomik-takvim';
+
+const DOVIZ_REGIONS = {
+  'Türkiye': 'TR', 'ABD': 'US', 'Euro Bölgesi': 'EU', 'Almanya': 'DE',
+  'İngiltere': 'GB', 'Çin': 'CN', 'Japonya': 'JP',
+};
+const DOVIZ_MONTHS = {
+  Ocak: 1, Şubat: 2, Mart: 3, Nisan: 4, Mayıs: 5, Haziran: 6,
+  Temmuz: 7, Ağustos: 8, Eylül: 9, Ekim: 10, Kasım: 11, Aralık: 12,
+};
+
+const dovizStrip = (html) => String(html || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+
+function dovizDayKey(text) {
+  const m = /^(\d{1,2})\s+(\S+)\s+(\d{4})$/.exec(dovizStrip(text));
+  if (!m || !DOVIZ_MONTHS[m[2]]) return null;
+  return `${m[3]}-${String(DOVIZ_MONTHS[m[2]]).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+}
+
+/**
+ * doviz.com/ekonomik-takvim HTML'i → etkinlik listesi (tekil, kronolojik).
+ * Yalniz ECON_REGIONS ulkeleri; Turkiye icin dusuk onem de tutulur, digerleri orta+.
+ * @returns {Array<{d:string,t:string|null,c:string,imp:'low'|'mid'|'high',ev:string,act:string|null,exp:string|null,prev:string|null}>}
+ */
+export function parseDovizCalendar(html) {
+  if (typeof html !== 'string' || !html) return [];
+  const headRe = /<div class="text-center mt-8 mb-8 text-bold">([^<]+)<\/div>/g;
+  const heads = [];
+  let m;
+  while ((m = headRe.exec(html)) !== null) heads.push({ at: m.index, end: headRe.lastIndex, d: dovizDayKey(m[1]) });
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < heads.length; i++) {
+    const h = heads[i];
+    if (!h.d) continue;
+    const block = html.slice(h.end, i + 1 < heads.length ? heads[i + 1].at : html.length);
+    const rowRe = /<tr>([\s\S]*?)<\/tr>/g;
+    let r;
+    while ((r = rowRe.exec(block)) !== null) {
+      const cells = [];
+      const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/g;
+      let c;
+      while ((c = cellRe.exec(r[1])) !== null) cells.push(c[1]);
+      if (cells.length < 7) continue;
+      const code = DOVIZ_REGIONS[dovizStrip(cells[1])];
+      if (!code) continue;
+      const impM = /importance\s+(low|mid|high)/.exec(cells[2]);
+      const imp = impM ? impM[1] : 'low';
+      if (code !== 'TR' && imp === 'low') continue;
+      const ev = dovizStrip(cells[3]).replace(/\s*\(-\)\s*$/, '').replace(/\s+\)/g, ')').replace(/\(\s+/g, '(');
+      const t = /^\d{1,2}:\d{2}$/.test(dovizStrip(cells[0])) ? dovizStrip(cells[0]) : null;
+      const key = `${h.d}|${t}|${code}|${ev}`;
+      if (!ev || seen.has(key)) continue;
+      seen.add(key);
+      const val = (x) => dovizStrip(x) || null;
+      out.push({ d: h.d, t, c: code, imp, ev, act: val(cells[4]), exp: val(cells[5]), prev: val(cells[6]) });
+    }
+  }
+  return out.sort((a, b) => (a.d + (a.t || '99:99') < b.d + (b.t || '99:99') ? -1 : a.d + (a.t || '99:99') > b.d + (b.t || '99:99') ? 1 : 0));
+}
+
+
+async function handleEconCalendar(req, res) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const r = await fetch(DOVIZ_CALENDAR_URL, {
+      headers: { 'User-Agent': BROWSER_UA, 'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'tr-TR,tr;q=0.9' },
+      signal: controller.signal,
+    });
+    if (r.status !== 200) return res.status(502).json({ ok: false, error: 'upstream_status', status: r.status });
+    const all = parseDovizCalendar(await r.text());
+    if (!all.length) return res.status(502).json({ ok: false, error: 'upstream_shape' });
+    const since = new Date(Date.now() + 3 * 3600 * 1000 - 7 * 86400000).toISOString().slice(0, 10);
+    const events = all.filter(e => e.d >= since);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600');
+    res.setHeader('X-Proxy-Source', 'econ_calendar');
+    return res.status(200).json({ ok: true, source: 'doviz.com', fetchedAt: Date.now(), count: events.length, events });
+  } catch (err) {
+    return sendUpstreamError(res, err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function handler(req, res) {
   // CORS — restrict to known origins; Electron has no origin header (allowed)
   const allowedOrigin = getCorsOrigin(req);
@@ -670,6 +763,7 @@ export default async function handler(req, res) {
   if (rawSource === 'isy_valuation') return handleIsyValuation(req, res);
   if (rawSource === 'bars') return handleBars(req, res);
   if (rawSource === 'tcmb_rate') return handleTcmbRate(req, res);
+  if (rawSource === 'econ_calendar') return handleEconCalendar(req, res);
 
   let targetUrl = req.query.url;
   let sourceType = rawSource;
@@ -700,6 +794,7 @@ export default async function handler(req, res) {
         isy_foreign: '/api/proxy?source=isy_foreign',
         isy_valuation: '/api/proxy?source=isy_valuation',
         tcmb_rate: '/api/proxy?source=tcmb_rate',
+        econ_calendar: '/api/proxy?source=econ_calendar',
       },
     });
   }

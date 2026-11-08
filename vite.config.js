@@ -1,11 +1,22 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'node:child_process';
 
 const isElectron = process.env.BUILD_TARGET === 'electron';
 
+// v31.48: build stamp shown in Profil — "is the phone on the latest deploy?" must be
+// answerable without a laptop. Vercel provides the commit; locally fall back to git.
+function buildSha() {
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 7);
+  try { return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return 'dev'; }
+}
+
 export default defineConfig({
   base: isElectron ? './' : '/',
+  define: {
+    __APP_BUILD__: JSON.stringify({ sha: buildSha(), time: new Date().toISOString() }),
+  },
   plugins: [
     react(),
     !isElectron && VitePWA({
@@ -43,6 +54,14 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/yahoo\/v10/, '/v10'),
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        configure: (proxy) => { proxy.on('proxyReq', (pReq) => { pReq.removeHeader('cookie'); pReq.removeHeader('origin'); }); },
+      },
+      // v31.48: makroekonomik takvim (yerelde HTML burada ayristirilir, bkz. econCalendar.js)
+      '/api/doviz-takvim': {
+        target: 'https://www.doviz.com',
+        changeOrigin: true,
+        rewrite: () => '/ekonomik-takvim',
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept-Language': 'tr-TR,tr;q=0.9' },
         configure: (proxy) => { proxy.on('proxyReq', (pReq) => { pReq.removeHeader('cookie'); pReq.removeHeader('origin'); }); },
       },
       '/api/tcmb': {

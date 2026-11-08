@@ -109,11 +109,19 @@ panel ise state'ten beslenir. Dispatch'i asla sessiz `catch` ile yutma.
 
 **Mobil WebView arka planda JS'i dondurur.** Uygulama kapalıyken olan hiçbir şey istemcide görülmez:
 paper çıkışları uzun aradan sonra seviyeden dolar (`exitFill.js`), arka plan takibi GitHub Actions'ta.
+**Tarama ekran kapanınca kaybolmaz** (`scanKeepAlive.js`): tarama süresince Wake Lock, gizliyken yeni grup
+başlamaz ve gizli süre bütçeden düşer, donma sırasında düşen semboller kısıtlama sayılmadan yeniden denenir,
+sayfa ölürse `bist_scan_in_progress` işaretiyle açılışta yeniden başlar (45 dk, en fazla 2 kez).
 Bu yüzden **ölçüm kayıtları resmi kapanıştan yerleşir**, canlı fiyat yalnız geçicidir: sinyal takibi
 (`perfDaily`), tahmin defteri (`settleJournalFromBars`, canlı mandal `perfLive`'da denetim için durur)
 ve tahmin karnesi. Defter skora geri döner (profit governor + adaptif stop), canlı mandal orada yanlıştı:
 uygulama günlerce kapalıysa d1/d3/d5 aynı geç fiyatı alıyordu. Barlar taramanın anahtarıyla çekilir
 (`dailyBarsBatch.js`, `SYM_1y_1d`); ağ hatası deneme sayılmaz, kaynak bar yayınlamadan önceki akşam da.
+
+**PWA güncellemesi.** `public/sw.js` kurulumda `skipWaiting` yapar; `main.jsx` controllerchange'de sayfayı
+yeniler ama tarama sürerken (`window.__bistScanActive`) bitene kadar bekler, öne gelişte güncelleme arar.
+Eskiden yeni sürüm uygulama tamamen kapanana kadar "bekliyor"da kalıyordu — telefon günlerce eski paketi
+açıyordu. Telefondaki paket Profil'deki "Sürüm 31.x · <commit>" satırından okunur (`buildInfo.js`).
 
 **Gizlilik.** Gerçek portföy yalnız `localStorage` (`bist_real_portfolio`) ve gitignore'lu
 `src/data/realPortfolio.local.json`'da durur; kök `.vercelignore` onu ve `.env*`'yi açıkça hariç tutar.
@@ -158,6 +166,7 @@ istemci eski dağıtımı "boş" değil `proxy_outdated` olarak raporlar. `.verc
 | Yahoo chart / quoteSummary | bar yedeği, temel veri | çalışıyor (crumb `/v(7|8|10)/finance/`); BIST değerlemesi delikli (THYAO PD/DD 46 kat hatalı) → F/K-PD/DD İş'ten |
 | RSS (BloombergHT, Dünya, Borsanın Gündemi, Sabah) | haber | çalışıyor; şirket adı → kod eşlemesi kısmi (`NAME_ALIASES`) |
 | TCMB EVDS (evds3, `key` başlığı, `TP.MKNETHAR.M7`) | haftalık yabancı akış | anahtar gerekiyor, anahtarlı yanıt henüz doğrulanmadı |
+| doviz.com/ekonomik-takvim | makroekonomik takvim (`econCalendar.js`, proxy `source=econ_calendar`) | çalışıyor, anahtarsız; sunucu tarafı HTML (~1 MB, TR dahil, gerçekleşen/beklenti/önceki). Ay sekmesi ayın sonunda biter → PPK günleri ayrıca TCMB'nin 2026 takviminden (`PPK_DATES_2026`). Ayrıştırıcı proxy'de birebir kopya, test eşitliği kilitler. ForexFactory JSON'da TR yok |
 | TCMB "1 Hafta Repo" sayfası | politika faizi (`tcmbRate.js`, proxy `source=tcmb_rate`) | çalışıyor, anahtarsız; HTML olduğu için proxy sunucuda ayrıştırır (istemci zinciri HTML'i reddeder), yerelde Vite `/api/tcmb`. 23.10.2026: %36 |
 | Yahoo makro (`USDTRY=X`, `^VIX`, `BZ=F`, emtia) | makro kutular + rejim ayarı + Claude makro satırı | çalışıyor; `fetchYahooSeries` → `getData` (yerelde Vite `/yahoo`, PWA'da kendi proxy). Gelmezse kutu "veri yok" der, sabit değer basmaz |
 | biquote.io, Foreks, BigPara liste/HTML, eski İş yabancı sayfası | — | ölü (biquote'ta BIST hiç yok) |
@@ -192,7 +201,7 @@ gününün kapanışı ayrıca bir kez kaydedilir (`scanSchedule.js`, damga yaln
 
 ## Test ve CI
 
-- Vitest, 69 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
+- Vitest, 71 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
   ölçüde testsiz — mantığı saf bir modüle çıkarıp test etmek tercih edilen yol.
 - `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 73).
 - GitHub Actions `ci.yml`: test-js (lint + coverage), build-web, test-python, ci-gate.
