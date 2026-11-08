@@ -18,6 +18,11 @@ const REASON_TEXT = {
   shape: 'kaynak biçimi değişmiş',
 };
 
+// v31.49: "anahtar yok" ile "yukleniyor" ayni metni gosteriyordu.
+function hasEvdsKey() {
+  try { return !!localStorage.getItem('bist_evds_api_key'); } catch { return false; }
+}
+
 const nf = (d) => new Intl.NumberFormat('tr-TR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const nf2 = nf(2);
 
@@ -111,11 +116,15 @@ export default function MacroPanel() {
     let alive = true;
     getLiveIndicators().then(data => { if (alive) setIndicators(data); });
     fetchEconCalendar().then(data => { if (alive) setCalendar(data); });
-    import('../../utils/foreignFlowEngine.js')
+    const loadFlow = () => import('../../utils/foreignFlowEngine.js')
       .then(m => m.fetchMarketForeignFlow())
       .then(data => { if (alive) setForeignFlow(data); })
       .catch(() => {});
-    return () => { alive = false; };
+    loadFlow();
+    // v31.49: a key entered in Ayarlar after start-up refetches here at once.
+    const onKey = () => { if (alive) { setForeignFlow(null); loadFlow(); } };
+    window.addEventListener('bist-evds-key-changed', onKey);
+    return () => { alive = false; window.removeEventListener('bist-evds-key-changed', onKey); };
   }, []);
 
   return (
@@ -223,8 +232,9 @@ export default function MacroPanel() {
             </div>
             {!foreignFlow ? (
               <div style={{ fontSize: 12, color: 'var(--t3)', padding: 10, textAlign: 'center', background: 'var(--bg3)', borderRadius: 10, lineHeight: 1.5 }}>
-                EVDS anahtarı yok — Ayarlar&apos;dan eklenince görünür (ücretsiz: evds3.tcmb.gov.tr).
-                Hisse bazlı yabancı oranı anahtarsız: Piyasa sekmesi.
+                {hasEvdsKey()
+                  ? 'TCMB EVDS verisi yükleniyor…'
+                  : <>EVDS anahtarı yok — Ayarlar&apos;dan eklenince görünür (ücretsiz: evds3.tcmb.gov.tr). Hisse bazlı yabancı oranı anahtarsız: Piyasa sekmesi.</>}
               </div>
             ) : foreignFlow.error ? (
               <div style={{ fontSize: 12, color: 'var(--red)', padding: 10, textAlign: 'center', background: 'var(--red2)', borderRadius: 10 }}>

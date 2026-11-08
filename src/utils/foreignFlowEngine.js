@@ -451,9 +451,18 @@ export function getEvdsApiKey() {
   return localStorage.getItem('bist_evds_api_key') || '';
 }
 
+export const EVDS_KEY_EVENT = 'bist-evds-key-changed';
+
 export function setEvdsApiKey(key) {
+  const prev = getEvdsApiKey();
   if (!key) localStorage.removeItem('bist_evds_api_key');
   else localStorage.setItem('bist_evds_api_key', key);
+  // v31.49: the analyse screen's macro panel is mounted once at start-up and read
+  // the key only then — a key entered later showed nothing until the app was
+  // reopened. Panels listen for this and refetch.
+  if ((key || '') !== prev && typeof window !== 'undefined') {
+    try { window.dispatchEvent(new CustomEvent(EVDS_KEY_EVENT)); } catch { /* no window */ }
+  }
 }
 
 // ── TCMB EVDS — weekly net equity purchases by non-residents ───────────────
