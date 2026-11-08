@@ -56,6 +56,8 @@ node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk
 | Tarama / öneri | `hooks/useAIAdvisor.js` (623 hisse), kapılar `utils/regimeGate.js`, `utils/pumpGuard.js`, gösterim `utils/displayPicks.js` |
 | Canlı fiyat | `hooks/useLivePrices.js` (5 sn / 15 sn / 45 sn kademeler) → `fetchQuotesBatch` |
 | Sinyal takibi | `hooks/useSignalTracker.js` (`bist_signal_history`, 500 kayıt, 10 dk kontrol, gün-sonu kapanıştan kesin kayıt) |
+| Tahmin karnesi | `utils/scanScorecard.js` + `hooks/useScanScorecard.js` (`bist_scan_scorecard_v1`, 60 gün): gösterilen AL önerileri, yargılayan seansın kapanışı + 1G/5G; ekran `components/Signals/ScanScorecardPanel.jsx`, AI panelinde tek satır özet |
+| Lot önerisi | `utils/positionSizing.suggestPosition` — AI kartları ve Analiz ekranı aynı fonksiyon; sermaye `bist_trading_capital` (Ayarlar, yoksa 100.000 TL) |
 | Paper | `utils/PaperTradeEngine.js` + `hooks/usePaperTradeML.js` (ML AUTO), `hooks/usePaperTrading.js` (standart) |
 | Yapay zekâ | `utils/claude.js` (JARVIS sohbeti, uzman analizi, KAP yorumu, tarama sonrası günlük notlar), `utils/gemini.js` (İstihbarat sekmesi) |
 | Proxy | `api/` (PWA ile aynı origin) ve `proxy/api/` (Electron/Capacitor; `DEFAULT_PROXY_URL` = `proxy-delta-mocha-43.vercel.app`) — `proxy.js` ve `claude.js` iki kopyada **birebir aynı** |
@@ -65,12 +67,17 @@ node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk
 
 **Sekmeler** — masaüstü: Tekil Analiz (varsayılan), Günlük İntraday Trade, Sinyal Takibi, Paper Trading,
 Gerçek Portföy, İstihbarat, Piyasa Nabzı. Mobil: Analiz · Sinyal · Paper · Portföy · Piyasa (Intraday ve
-İstihbarat mobilde mount edilmez; ayarlar Profil › Ayarlar'da). Sanal portföy UI'sı yok ama durumu
-arka planda çalışır (risk uyarıları, trailing stop, otomatik stop/hedef).
+İstihbarat mobilde mount edilmez; ayarlar Profil › Ayarlar'da). Sinyal sekmesi tahmin karnesiyle açılır.
+Sanal portföy UI'sı yok ama durumu arka planda çalışır (risk uyarıları, trailing stop, otomatik stop/hedef).
 
 **Tekil Analiz ekranı sade tutulur** (kullanıcı isteği): bir satır ancak başka bir satırın söylemediği bir
 şey söylüyorsa ekranda kalır. Temel analiz tek kutuda (F/K, PD/DD, özkaynak, piyasa değeri, 12 aylık
 kâr/ROE, YoY büyüme); başlık fiyatın hangi oturumdan geldiğini yazar.
+
+**Görsel dil** (kullanıcı: "pixel-art havası var"): emoji ikon yok (alt menü SVG), başlık ve düğmelerde
+büyük harf + geniş harf aralığı yok, neon parlama/nabız yok. Renk değişkenleri `globals.css` sonundaki
+v31.47 bloğunda (sakin Tailwind-500 ailesi); satır içinde neon hex yazma. AI kartında rozetler
+`utils/pickChips.js`'ten öncelik sırasıyla gelir, ilk 3'ü görünür, gerisi "+N" ipucunda.
 
 ## Değişmezler — ihlal edilirse bir şey sessizce bozulur
 
@@ -101,6 +108,11 @@ panel ise state'ten beslenir. Dispatch'i asla sessiz `catch` ile yutma.
 
 **Mobil WebView arka planda JS'i dondurur.** Uygulama kapalıyken olan hiçbir şey istemcide görülmez:
 paper çıkışları uzun aradan sonra seviyeden dolar (`exitFill.js`), arka plan takibi GitHub Actions'ta.
+Bu yüzden **ölçüm kayıtları resmi kapanıştan yerleşir**, canlı fiyat yalnız geçicidir: sinyal takibi
+(`perfDaily`), tahmin defteri (`settleJournalFromBars`, canlı mandal `perfLive`'da denetim için durur)
+ve tahmin karnesi. Defter skora geri döner (profit governor + adaptif stop), canlı mandal orada yanlıştı:
+uygulama günlerce kapalıysa d1/d3/d5 aynı geç fiyatı alıyordu. Barlar taramanın anahtarıyla çekilir
+(`dailyBarsBatch.js`, `SYM_1y_1d`); ağ hatası deneme sayılmaz, kaynak bar yayınlamadan önceki akşam da.
 
 **Gizlilik.** Gerçek portföy yalnız `localStorage` (`bist_real_portfolio`) ve gitignore'lu
 `src/data/realPortfolio.local.json`'da durur; kök `.vercelignore` onu ve `.env*`'yi açıkça hariç tutar.
@@ -145,6 +157,8 @@ istemci eski dağıtımı "boş" değil `proxy_outdated` olarak raporlar. `.verc
 | Yahoo chart / quoteSummary | bar yedeği, temel veri | çalışıyor (crumb `/v(7|8|10)/finance/`); BIST değerlemesi delikli (THYAO PD/DD 46 kat hatalı) → F/K-PD/DD İş'ten |
 | RSS (BloombergHT, Dünya, Borsanın Gündemi, Sabah) | haber | çalışıyor; şirket adı → kod eşlemesi kısmi (`NAME_ALIASES`) |
 | TCMB EVDS (evds3, `key` başlığı, `TP.MKNETHAR.M7`) | haftalık yabancı akış | anahtar gerekiyor, anahtarlı yanıt henüz doğrulanmadı |
+| TCMB "1 Hafta Repo" sayfası | politika faizi (`tcmbRate.js`, proxy `source=tcmb_rate`) | çalışıyor, anahtarsız; HTML olduğu için proxy sunucuda ayrıştırır (istemci zinciri HTML'i reddeder), yerelde Vite `/api/tcmb`. 23.10.2026: %36 |
+| Yahoo makro (`USDTRY=X`, `^VIX`, `BZ=F`, emtia) | makro kutular + rejim ayarı + Claude makro satırı | çalışıyor; `fetchYahooSeries` → `getData` (yerelde Vite `/yahoo`, PWA'da kendi proxy). Gelmezse kutu "veri yok" der, sabit değer basmaz |
 | biquote.io, Foreks, BigPara liste/HTML, eski İş yabancı sayfası | — | ölü (biquote'ta BIST hiç yok) |
 
 Borsa MCP uzak sunucusu bağlı (`borsa`, borsa.surucu.dev/mcp) — oturumda araştırma için; uygulama kullanmaz.
@@ -156,7 +170,7 @@ Borsa MCP uzak sunucusu bağlı (`borsa`, borsa.surucu.dev/mcp) — oturumda ara
 | Rejim kapısı | YÜKSELİŞ serbest; YATAY taban skor **70**, en fazla 4 AL; DÜŞÜŞ taban 58 ama AL'lar `_watchOnly` (görünür, açılmaz) | YATAY'da yalnız 70 iki dönemde de pozitif, walk-forward'da veriden seçmek 70'i geçemedi; DÜŞÜŞ her dönemde negatif |
 | Günlük garanti | `ensureBestOfDay`: AL kalmazsa tek ⭐ aday (patlamamış, aşırı alımda değil) | kullanıcı: "her gün bir aday görmeliyim"; edge yaratmaz, rejim uyarısını taşır |
 | Çıkış | yalnız trailing stop (+%3 başabaş, +%5 üstü yarısını kilitle); hedefler referans, satış emri değil | kademeli satış getirinin yarısını yok ediyordu (26.855 sinyal, 5 yılın 5'inde) |
-| Boyutlandırma | paper: risk %2 / stop mesafesi, %33 tavan; konviksiyon çarpanı (sniper 1 / flagged 0,75 / early 0,5, YATAY ×0,5) | gösterilen lot önerisiyle aynı kural; parametre taramaları portföy getirisiyle puanlanır |
+| Boyutlandırma | paper: risk %2 / stop mesafesi, %33 tavan; konviksiyon çarpanı (sniper 1 / flagged 0,75 / early 0,5, YATAY ×0,5) | gösterilen lot önerisiyle aynı kural (`suggestPosition`, çarpan `_positionSizeMult`, izle-only = 0); parametre taramaları portföy getirisiyle puanlanır |
 | Öğrenme | kalibrasyon planın çıkışından öğrenir (`planSimulation`), canlı-edge hücresi ≥8 örnekte devreye girer | ham 5 gün getirisi farklı bir stratejiyi ölçüyordu |
 | Veri katmanı | yabancı akış ve KAP katalizörü skora **kapalı**; KAP tedbiri AL'dan çıkarır; geri alım bildirimi +3 | kullanıcı: "göster + ölç, sonra aç" (`dataLayerPolicy.js`); geri alım tek sağlam olumlu KAP olayı (10 seans +%1,16) |
 | Anlaşma haberi | "yeni iş / sözleşme" haberi güvene artı vermez (ne bonus ne skor ağırlığı) | 1.132 olay: haber anında fiyatlanmış, sonrasında piyasanın gerisinde |
@@ -177,9 +191,9 @@ gününün kapanışı ayrıca bir kez kaydedilir (`scanSchedule.js`, damga yaln
 
 ## Test ve CI
 
-- Vitest, 66 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
+- Vitest, 69 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
   ölçüde testsiz — mantığı saf bir modüle çıkarıp test etmek tercih edilen yol.
-- `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 78).
+- `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 73).
 - GitHub Actions `ci.yml`: test-js (lint + coverage), build-web, test-python, ci-gate.
 - Arayüz değişikliği önizlemede doğrulanır (`.claude/launch.json` → `dev`). Önizleme tarayıcısında dış istekler
   CORS'a takılır ve `innerWidth` 0 okunup masaüstü dalı mobil sanılabilir; canlı veri için yayındaki siteyi kullan.

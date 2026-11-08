@@ -3173,6 +3173,9 @@ export function useAIAdvisor(portfolio) {
               _thematicBoost: p._thematicBoost, _thematicReasons: p._thematicReasons,
               _liveEdge: p._liveEdge,
               _sessionDay: p._sessionDay, // v31.40: verinin oturum gunu
+              // v31.47: kayitli kartlarin lot onerisi canli kartla ayni carpani kullansin
+              // (rejim × governor × konviksiyon); yoksa YATAY'daki yarim pozisyon kaybolur.
+              _positionSizeMult: p._positionSizeMult, _regime: p._regime,
             })),
             // ── COMPACT VERDICT MAP — ALL scanned symbols ──
             // Tekil Analiz icin kullanilir: herhangi bir hisse ne karar aldi?

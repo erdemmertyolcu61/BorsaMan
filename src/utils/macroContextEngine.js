@@ -13,7 +13,8 @@
 //   buildMacroPromptLine(context) -> string  (claude.js icin)
 // ════════════════════════════════════════════════════════════════════
 
-import { getDataViaProxies } from './fetchEngine.js';
+import { getData } from './fetchEngine.js';
+import { fetchTcmbPolicyRate } from './tcmbRate.js';
 
 // ── In-memory cache (10 dakika TTL) ────────────────────────────────
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -31,10 +32,14 @@ let _inflight = null;    // dedupe parallel calls
 //     it is current. The real fix is a live source: with a TCMB EVDS key
 //     (Ayarlar -> EVDS) the engine fetches the actual policy rate and this
 //     fallback is never used.
+// v31.47: the old snapshot (50.0 / 2026-04-17) was simply wrong — TCMB's own
+// "1 Hafta Repo" table had 37.00 since 2026-01-23 and 36.00 since 2026-10-23
+// (read 2026-11-08). The live source is tcmbRate.fetchTcmbPolicyRate; this is
+// only the last value that was VERIFIED, shown as "son bilinen" when live fails.
 const TCMB_FALLBACK_RAW = {
-  rate: 50.0,
-  lastDecision: '2026-04-17',
-  nextMeeting: '2026-05-15',  // PPK takvimi (TCMB.gov.tr)
+  rate: 36.0,
+  lastDecision: '2026-10-23',
+  nextMeeting: null,          // PPK takvimi dogrulanmadi — yakinlik cezasi uydurulmaz
   isStale: true,
 };
 
@@ -72,7 +77,10 @@ function parseYahooSeries(text) {
 export async function fetchYahooSeries(symbol, range = '1mo', interval = '1d', ms = 8000) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${range}&interval=${interval}`;
   try {
-    const text = await getDataViaProxies(url, ms);
+    // v31.47: getData = the bar fetcher's path (local Vite /yahoo route in dev,
+    // self-proxy on the PWA). getDataViaProxies alone skipped the local route, so
+    // in dev every macro tile read "VERI YOK" while Yahoo answered fine.
+    const text = await getData(url, ms);
     return parseYahooSeries(text);
   } catch { return null; }
 }
@@ -177,6 +185,20 @@ async function fetchTCMB() {
       if (obj?.rate != null && obj?.nextMeeting) return { ...obj, isStale: false };
     }
   } catch {}
+  // v31.47: live policy rate from TCMB's own table (no EVDS key needed).
+  try {
+    const live = await fetchTcmbPolicyRate();
+    if (live && Number.isFinite(live.rate)) {
+      return {
+        rate: live.rate,
+        lastDecision: live.date || null,
+        previousRate: live.previousRate ?? null,
+        nextMeeting: null,
+        isStale: false,
+        source: 'tcmb.gov.tr',
+      };
+    }
+  } catch { /* fall back below, labelled stale */ }
   return _tcmbFallback();
 }
 

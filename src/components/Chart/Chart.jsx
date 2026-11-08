@@ -305,11 +305,11 @@ export default function Chart({ prices, ind, mcData, smcData, entryZone }) {
         position: 'absolute', top: 6, left: 14, zIndex: 10,
         display: 'flex', gap: 10, fontSize: 9, alignItems: 'center',
       }}>
-        <span style={{ color: '#ffd600', pointerEvents: 'none' }}>MA20</span>
-        <span style={{ color: '#ff9100', pointerEvents: 'none' }}>MA50</span>
-        <span style={{ color: '#d500f9', pointerEvents: 'none' }}>MA100</span>
-        {ind.ma200 && <span style={{ color: '#00e5ff', pointerEvents: 'none' }}>MA200</span>}
-        {ind.bollinger && <span style={{ color: 'rgba(41,121,255,0.6)', pointerEvents: 'none' }}>BB</span>}
+        <span style={{ color: '#eab308', pointerEvents: 'none' }}>MA20</span>
+        <span style={{ color: '#f97316', pointerEvents: 'none' }}>MA50</span>
+        <span style={{ color: '#a855f7', pointerEvents: 'none' }}>MA100</span>
+        {ind.ma200 && <span style={{ color: '#22d3ee', pointerEvents: 'none' }}>MA200</span>}
+        {ind.bollinger && <span style={{ color: 'rgba(59,130,246,0.6)', pointerEvents: 'none' }}>BB</span>}
         {mcData && <span style={{ color: 'rgba(139,92,246,0.8)', pointerEvents: 'none' }}>MC</span>}
       </div>
       {/* Zoom controls */}

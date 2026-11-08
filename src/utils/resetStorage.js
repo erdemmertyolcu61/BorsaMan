@@ -51,6 +51,7 @@ export const TRACKING_KEYS = [
   'bist_paper_ml_auto',       // ML auto-trade toggle
   'bist_ml_signals_v2',       // DatabaseManager  — ML signal store (web fallback)
   'bist_forward_journal_v1',  // forwardTestJournal — forward-test accuracy record
+  'bist_scan_scorecard_v1',   // v31.47: tahmin karnesi — gosterilen oneriler × kapanis
   'bist_last_ai_picks',       // AIAdvisorPanel   — cached scan output
   'bist_scan_coverage',       // v31.40: son taramanin kapsama ozeti (taranan/evren/veri gunu)
   'bist_ai_pick_memory',      // useAIAdvisor     — stagnant-pick memory
@@ -71,6 +72,8 @@ export const TRACKING_KEYS = [
  *   bist_watchlist        user's own watchlist
  *   bist_broker_config    broker settings
  *   bist_proxy_url, bist_evds_api_key, bist_tcmb_override
+ *   bist_trading_capital  (v31.47) lot onerisinin sermayesi — bir ayar
+ *   bist_tcmb_rate_cache_v1 (v31.47) TCMB politika faizi onbellegi
  *   bist_notification_settings, bist_telemetry_enabled
  *   bist_fetch_l2_cache_v1, bist_isyatirim_cache_v3, bist_daily_intel_cache,
  *   bist_foreign_flow_cache/_breaker  — price/news caches, not learned state

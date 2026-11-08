@@ -21,10 +21,10 @@ import {
 // ── Session context banner ───────────────────────────────────────────────────
 const SESSION_TIPS = {
   PRE:       { icon: '\u{1F319}', bg: 'rgba(139,92,246,.06)',  tip: 'Piyasa acilmadi. Watchlist hazirla, gap adaylarini belirle.' },
-  OPEN:      { icon: '⚡',    bg: 'rgba(255,214,0,.07)',   tip: 'Acilis 30 dk — fake-out yuksek. ORB olusmadan islem acma. Hacim onay iste.' },
-  MORNING:   { icon: '☀️', bg: 'rgba(0,229,255,.05)', tip: 'En iyi kurumsal islem saati. Hacim teyitli ORB kirilimi ve VWAP ust bandini takip et.' },
+  OPEN:      { icon: '⚡',    bg: 'rgba(234,179,8,.07)',   tip: 'Acilis 30 dk — fake-out yuksek. ORB olusmadan islem acma. Hacim onay iste.' },
+  MORNING:   { icon: '☀️', bg: 'rgba(34,211,238,.05)', tip: 'En iyi kurumsal islem saati. Hacim teyitli ORB kirilimi ve VWAP ust bandini takip et.' },
   LUNCH:     { icon: '\u{1F550}', bg: 'rgba(100,100,100,.05)', tip: 'Hacim dusiyor — manipulasyon riski artar. Mevcut pozisyon yonet, yeni acma.' },
-  AFTERNOON: { icon: '\u{1F324}️', bg: 'rgba(0,229,255,.04)', tip: 'Ikinci momentum dalgasi. VWAP toparlanma ve trend devami en guclu burada.' },
+  AFTERNOON: { icon: '\u{1F324}️', bg: 'rgba(34,211,238,.04)', tip: 'Ikinci momentum dalgasi. VWAP toparlanma ve trend devami en guclu burada.' },
   CLOSE:     { icon: '\u{1F6A8}', bg: 'rgba(255,99,71,.07)',   tip: 'Son 30 dk — kapanis pozisyonlamasi. Gece riski tasimayin, kar al veya stop koy.' },
   POST:      { icon: '\u{1F512}', bg: 'rgba(0,0,0,.1)',        tip: 'Piyasa kapali. Yarinin ORB adaylarini ve haber akisini analiz et.' },
   WEEKEND:   { icon: '\u{1F3D6}️', bg: 'rgba(0,0,0,.1)', tip: 'Hafta sonu. Pazartesi sabahi gap adaylarini ve haftalik trend degisimlerini hazirla.' },
@@ -506,7 +506,7 @@ export default function TradesTab({ addToPortfolio, portfolio, signalTracker, ad
           </div>
           <div style={{ fontSize: 9, color: 'var(--t3)', lineHeight: 1.4, marginTop: 2 }}>{sessionMeta.tip}</div>
         </div>
-        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--cyan)', fontFamily: 'Space Grotesk,sans-serif' }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--cyan)', fontFamily: 'Inter,sans-serif' }}>
           {new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
         </div>
       </div>
@@ -537,7 +537,7 @@ export default function TradesTab({ addToPortfolio, portfolio, signalTracker, ad
 
       {/* AI Advisor banner */}
       {advisorData?.marketSentiment && !scanComplete && !loading && (
-        <div style={{ padding: '7px 14px', borderRadius: 6, marginBottom: 12, background: 'rgba(0,229,255,.04)', border: '1px solid rgba(0,229,255,.1)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ padding: '7px 14px', borderRadius: 6, marginBottom: 12, background: 'rgba(34,211,238,.04)', border: '1px solid rgba(34,211,238,.1)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--cyan)', boxShadow: '0 0 4px var(--cyan)' }} />
           <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)' }}>AI ADVISOR AKTIF</span>
           <span style={{ fontSize: 9, color: advisorData.marketSentiment.color, fontWeight: 600 }}>{advisorData.marketSentiment.sentiment}</span>
@@ -574,7 +574,7 @@ export default function TradesTab({ addToPortfolio, portfolio, signalTracker, ad
         <div>
           {/* Header */}
           <div style={{ textAlign: 'center', marginBottom: 16 }}>
-            <div style={{ fontFamily: 'Space Grotesk,sans-serif', fontSize: 20, fontWeight: 700, color: 'var(--yellow)' }}>
+            <div style={{ fontFamily: 'Inter,sans-serif', fontSize: 20, fontWeight: 700, color: 'var(--yellow)' }}>
               {'★'} {isMarketOpen() ? 'Gunluk Trade Firsatlari (Intraday)' : 'Yarinin Firsatlari (EOD)'}
             </div>
             <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 3 }}>{today}</div>
@@ -678,7 +678,7 @@ export default function TradesTab({ addToPortfolio, portfolio, signalTracker, ad
                     <span style={{ fontSize: 12, fontWeight: 700 }}>{r.symbol}</span>
                     <span style={{ fontSize: 8, color: 'var(--t3)' }}>{r.sector}</span>
                     {r.intVwapZone && r.intVwapZone !== 'unknown' && (
-                      <span style={{ fontSize: 7, background: 'rgba(0,229,255,.12)', color: 'var(--cyan)', padding: '1px 4px', borderRadius: 2 }}>
+                      <span style={{ fontSize: 7, background: 'rgba(34,211,238,.12)', color: 'var(--cyan)', padding: '1px 4px', borderRadius: 2 }}>
                         VWAP:{r.intVwapZone.replace('_', ' ')}
                       </span>
                     )}
@@ -731,12 +731,12 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
             background: confColor, color: '#000',
-            fontFamily: 'Space Grotesk', fontSize: 18, fontWeight: 700,
+            fontFamily: 'Inter', fontSize: 18, fontWeight: 700,
             width: 34, height: 34, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
             flexShrink: 0,
           }}>{index + 1}</div>
           <div>
-            <div style={{ fontFamily: 'Space Grotesk', fontSize: 17, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+            <div style={{ fontFamily: 'Inter', fontSize: 17, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
               {r.symbol}
               {/* Play type badge */}
               {r.playType !== 'none' && (
@@ -747,7 +747,7 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
               {hasDivergence && <span style={{ fontSize: 7, background: 'var(--purple)', color: '#fff', padding: '1px 5px', borderRadius: 3 }}>DIV</span>}
               {isLeader && <span style={{ fontSize: 7, background: 'var(--cyan)', color: '#000', padding: '1px 5px', borderRadius: 3 }}>RS LIDER</span>}
               {orbBroke && <span style={{ fontSize: 7, background: 'var(--yellow)', color: '#000', padding: '1px 5px', borderRadius: 3 }}>ORB{'↗'}</span>}
-              {r.intraday15mLoaded && <span style={{ fontSize: 7, background: 'rgba(0,229,255,.15)', color: 'var(--cyan)', padding: '1px 4px', borderRadius: 2 }}>15dk</span>}
+              {r.intraday15mLoaded && <span style={{ fontSize: 7, background: 'rgba(34,211,238,.15)', color: 'var(--cyan)', padding: '1px 4px', borderRadius: 2 }}>15dk</span>}
             </div>
             <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2 }}>
               {r.sector} | Vol: %{r.dailyRange.toFixed(1)}
@@ -797,7 +797,7 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
           {/* ORB status pill */}
           {r.orbData?.formed && (
             <span style={{ fontSize: 8, padding: '2px 8px', borderRadius: 10,
-              background: r.orbData.breakoutUp ? 'rgba(255,214,0,.15)' : r.orbData.nearBreakoutUp ? 'rgba(255,214,0,.08)' : 'rgba(0,0,0,.15)',
+              background: r.orbData.breakoutUp ? 'rgba(234,179,8,.15)' : r.orbData.nearBreakoutUp ? 'rgba(234,179,8,.08)' : 'rgba(0,0,0,.15)',
               color: r.orbData.breakoutUp ? 'var(--yellow)' : r.orbData.nearBreakoutUp ? 'var(--yellow)' : 'var(--t3)',
               fontWeight: 700, border: '1px solid ' + (r.orbData.breakoutUp ? 'var(--yellow)' : 'var(--border)'),
             }}>
@@ -808,7 +808,7 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
           {/* 15m momentum pill */}
           {r.intMomentumScore != null && (
             <span style={{ fontSize: 8, padding: '2px 8px', borderRadius: 10,
-              background: r.intMomentumScore >= 65 ? 'rgba(0,229,255,.1)' : r.intMomentumScore <= 35 ? 'rgba(255,80,80,.1)' : 'rgba(255,255,255,.05)',
+              background: r.intMomentumScore >= 65 ? 'rgba(34,211,238,.1)' : r.intMomentumScore <= 35 ? 'rgba(255,80,80,.1)' : 'rgba(255,255,255,.05)',
               color: r.intMomentumScore >= 65 ? 'var(--cyan)' : r.intMomentumScore <= 35 ? 'var(--red)' : 'var(--t3)',
               fontWeight: 700, border: '1px solid transparent',
             }}>
@@ -819,7 +819,7 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
           {/* Volume rate */}
           {r.volRate?.rate != null && r.volRate.rate !== 1 && (
             <span style={{ fontSize: 8, padding: '2px 8px', borderRadius: 10,
-              background: r.volRate.surge ? 'rgba(255,165,0,.15)' : r.volRate.onPace ? 'rgba(0,229,255,.08)' : 'rgba(0,0,0,.1)',
+              background: r.volRate.surge ? 'rgba(255,165,0,.15)' : r.volRate.onPace ? 'rgba(34,211,238,.08)' : 'rgba(0,0,0,.1)',
               color: r.volRate.surge ? 'var(--orange)' : r.volRate.onPace ? 'var(--cyan)' : 'var(--t3)',
               fontWeight: 700, border: '1px solid transparent',
             }}>
@@ -854,7 +854,7 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
 
       {/* Strategy notes */}
       {r.strategyNotes?.length > 0 && (
-        <div style={{ padding: '8px 12px', marginBottom: 10, borderRadius: 6, background: 'rgba(255,214,0,.04)', border: '1px solid rgba(255,214,0,.12)' }}>
+        <div style={{ padding: '8px 12px', marginBottom: 10, borderRadius: 6, background: 'rgba(234,179,8,.04)', border: '1px solid rgba(234,179,8,.12)' }}>
           <div style={{ fontSize: 8, fontWeight: 700, color: 'var(--yellow)', marginBottom: 4 }}>STRATEJI NOTU</div>
           {r.strategyNotes.map((n, ni) => (
             <div key={ni} style={{ fontSize: 9, color: 'var(--t2)', lineHeight: 1.5 }}>{n}</div>
@@ -939,7 +939,7 @@ const TradeResultCard = memo(({ r, index, isExpanded, onToggle, addToPortfolio, 
 
           {/* Fundamentals */}
           {r.fundScore != null && (
-            <div style={{ padding: '8px 10px', background: 'rgba(0,229,255,.04)', borderRadius: 5, marginBottom: 10, border: '1px solid rgba(0,229,255,.1)' }}>
+            <div style={{ padding: '8px 10px', background: 'rgba(34,211,238,.04)', borderRadius: 5, marginBottom: 10, border: '1px solid rgba(34,211,238,.1)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--cyan)' }}>BILANCO</span>
                 <span style={{ fontSize: 9, fontWeight: 800, padding: '1px 6px', borderRadius: 3, background: r.fundScore >= 7 ? 'var(--green)' : r.fundScore >= 5 ? 'var(--yellow)' : 'var(--red)', color: '#000' }}>

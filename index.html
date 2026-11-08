@@ -9,7 +9,7 @@
 
   <!-- PWA Manifest -->
   <link rel="manifest" href="/manifest.json">
-  <meta name="theme-color" content="#00e676">
+  <meta name="theme-color" content="#22c55e">
 
   <!-- iOS PWA Meta Tags -->
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -24,7 +24,7 @@
   <!-- Preconnect for performance -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
   <!-- Data fetch preconnects — saves 100-300ms TLS/DNS handshake on first call -->
   <link rel="preconnect" href="https://query1.finance.yahoo.com" crossorigin>
@@ -53,14 +53,14 @@
     #splash {
       position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; justify-content: center;
-      background: #06090f; z-index: 999999;
+      background: #0a0e15; z-index: 999999;
       transition: opacity 0.4s ease-out;
     }
     #splash-text {
-      font-family: 'Space Grotesk', system-ui, sans-serif;
-      font-size: 32px; font-weight: 700; color: #00e676;
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 28px; font-weight: 700; color: #e5e9f0;
       animation: splashPulse 1.5s ease-in-out infinite;
-      letter-spacing: 2px;
+      letter-spacing: -0.5px;
     }
     @keyframes splashPulse {
       0%, 100% { opacity: 1; } 50% { opacity: 0.4; }

@@ -25,9 +25,9 @@ import { computeDataLayerEdge, FOREIGN_FLOW_BAND_PP } from '../../utils/dataLaye
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const KIND = {
-  risk:    { color: 'var(--red)',    bg: 'rgba(255,23,68,0.08)', icon: '⛔' },
+  risk:    { color: 'var(--red)',    bg: 'rgba(239,68,68,0.08)', icon: '⛔' },
   caution: { color: 'var(--orange)', bg: 'rgba(255,145,0,0.08)', icon: '⚠' },
-  event:   { color: 'var(--cyan)',   bg: 'rgba(0,229,255,0.06)', icon: '📢' },
+  event:   { color: 'var(--cyan)',   bg: 'rgba(34,211,238,0.06)', icon: '📢' },
   info:    { color: 'var(--t3)',     bg: 'var(--bg3)',           icon: '•' },
 };
 
@@ -286,7 +286,7 @@ export default function MarketPulsePanel({ signals = [], watchlist = [], onAnaly
   return (
     <div style={{ padding: '14px 16px 28px', maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-        <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)', letterSpacing: 1 }}>📡 PİYASA NABZI</span>
+        <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--t1)' }}>Piyasa nabzı</span>
         <span style={{ fontSize: 10, color: 'var(--t3)' }}>KAP bildirimleri · yabancı oranı · göreli momentum</span>
         <div style={{ flex: 1 }} />
         <Pressable
@@ -306,7 +306,7 @@ export default function MarketPulsePanel({ signals = [], watchlist = [], onAnaly
       </div>
 
       <Section
-        title={`⛔ İŞLEM TEDBİRİ / RİSK (son ${KAP_RISK_WINDOW_DAYS} gün)`}
+        title={`İşlem tedbiri / risk (son ${KAP_RISK_WINDOW_DAYS} gün)`}
         accent="var(--red)"
         right={kap.ok ? <span style={{ fontSize: 10, color: 'var(--t3)' }}>{riskRows.length} hisse</span> : null}
       >
@@ -324,7 +324,7 @@ export default function MarketPulsePanel({ signals = [], watchlist = [], onAnaly
       </Section>
 
       <Section
-        title={`📢 KAP BİLDİRİMLERİ (son ${KAP_FEED_DISPLAY_DAYS} gün)`}
+        title={`KAP bildirimleri (son ${KAP_FEED_DISPLAY_DAYS} gün)`}
         right={(
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <FilterPill active={filter === 'important'} onPress={() => { setFilter('important'); setLimit(25); }}>Önemli</FilterPill>
@@ -360,7 +360,7 @@ export default function MarketPulsePanel({ signals = [], watchlist = [], onAnaly
       </Section>
 
       <Section
-        title="🌍 YABANCI ORANI (haftalık değişim)"
+        title="Yabancı oranı (haftalık değişim)"
         accent="var(--green)"
         right={foreign.fetchedAt ? <span style={{ fontSize: 10, color: 'var(--t3)' }}>İş Yatırım · {fmtStamp(foreign.fetchedAt)}</span> : null}
       >
@@ -386,7 +386,7 @@ export default function MarketPulsePanel({ signals = [], watchlist = [], onAnaly
         {evdsLine && <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 8, lineHeight: 1.5 }}>{evdsLine}</div>}
       </Section>
 
-      <Section title="🚀 GÖRELİ MOMENTUM (1 hafta, endekse göre)" accent="var(--yellow)">
+      <Section title="Göreli momentum (1 hafta, endekse göre)" accent="var(--yellow)">
         {foreign.loading ? <Muted>Yükleniyor…</Muted>
           : momentum.length === 0 ? <Muted>Veri yok.</Muted>
           : momentum.map((m) => (
@@ -404,7 +404,7 @@ export default function MarketPulsePanel({ signals = [], watchlist = [], onAnaly
         </div>
       </Section>
 
-      <Section title="📏 ÖLÇÜM — bu veriler işe yarıyor mu?" accent="var(--purple)">
+      <Section title="Ölçüm — bu veriler işe yarıyor mu?" accent="var(--purple)">
         <div style={{ fontSize: 10, color: 'var(--t3)', lineHeight: 1.5 }}>
           Sonuçlanan {edge.settled} AL sinyali · yabancı verisiyle kaydedilen {edge.withForeign} · KAP kontrolüyle kaydedilen {edge.withKap}.
           {' '}{edge.minSample} örneğin altındaki satırlar soluk — küçük örnek yanıltır. Kayıt bu sürümle başladı; kovalar zamanla dolar.

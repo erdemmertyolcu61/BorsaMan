@@ -58,6 +58,8 @@ const ALLOWED_SOURCES = new Set([
   'isy_valuation',
   // v31.40: merged daily bars — Is Yatirim days + Yahoo real opens (see handleBars)
   'bars',
+  // v31.47: TCMB policy rate parsed server-side (see handleTcmbRate)
+  'tcmb_rate',
 ]);
 
 const ALLOWED_ORIGINS = [
@@ -591,6 +593,49 @@ async function handleIsyValuation(req, res) {
   }
 }
 
+// v31.47: TCMB politika faizi. The analyse screen quoted a hard-coded 50% while
+// TCMB's own "1 Hafta Repo" table read 36.00% (23.10.2026, measured 2026-11-08).
+// The page is plain HTML — the client proxy chain rejects HTML on purpose — so
+// the table is parsed here and only {rate, date, previous} goes back. Decisions
+// change a few times a year: a 6-hour edge cache is plenty.
+const TCMB_REPO_URL = 'https://www.tcmb.gov.tr/wps/wcm/connect/TR/TCMB+TR/Main+Menu/Temel+Faaliyetler/Para+Politikasi/Merkez+Bankasi+Faiz+Oranlari/1+Hafta+Repo';
+
+async function handleTcmbRate(req, res) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 9000);
+  try {
+    const r = await fetch(TCMB_REPO_URL, {
+      headers: { 'User-Agent': BROWSER_UA, 'Accept': 'text/html,application/xhtml+xml' },
+      signal: controller.signal,
+    });
+    if (r.status !== 200) return res.status(502).json({ ok: false, error: 'upstream_status', status: r.status });
+    const html = await r.text();
+    const re = /<td[^>]*>\s*(\d{2})\.(\d{2})\.(\d{4})\s*<\/td>\s*<td[^>]*>[^<]*<\/td>\s*<td[^>]*>\s*([0-9]+(?:[.,][0-9]+)?)\s*<\/td>/g;
+    const rows = [];
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const rate = parseFloat(m[4].replace(',', '.'));
+      if (Number.isFinite(rate) && rate > 0 && rate <= 200) rows.push({ date: `${m[3]}-${m[2]}-${m[1]}`, rate });
+    }
+    if (!rows.length) return res.status(502).json({ ok: false, error: 'upstream_shape' });
+    rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    const last = rows[rows.length - 1];
+    const prev = rows.length > 1 ? rows[rows.length - 2] : null;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
+    res.setHeader('X-Proxy-Source', 'tcmb_rate');
+    return res.status(200).json({
+      ok: true, source: 'tcmb.gov.tr', fetchedAt: Date.now(),
+      rate: last.rate, date: last.date,
+      previousRate: prev ? prev.rate : null, previousDate: prev ? prev.date : null,
+    });
+  } catch (err) {
+    return sendUpstreamError(res, err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function handler(req, res) {
   // CORS — restrict to known origins; Electron has no origin header (allowed)
   const allowedOrigin = getCorsOrigin(req);
@@ -624,6 +669,7 @@ export default async function handler(req, res) {
   if (rawSource === 'isy_foreign') return handleIsyForeign(req, res);
   if (rawSource === 'isy_valuation') return handleIsyValuation(req, res);
   if (rawSource === 'bars') return handleBars(req, res);
+  if (rawSource === 'tcmb_rate') return handleTcmbRate(req, res);
 
   let targetUrl = req.query.url;
   let sourceType = rawSource;
@@ -653,6 +699,7 @@ export default async function handler(req, res) {
         kap_disclosures: '/api/proxy?source=kap_disclosures&days=3',
         isy_foreign: '/api/proxy?source=isy_foreign',
         isy_valuation: '/api/proxy?source=isy_valuation',
+        tcmb_rate: '/api/proxy?source=tcmb_rate',
       },
     });
   }

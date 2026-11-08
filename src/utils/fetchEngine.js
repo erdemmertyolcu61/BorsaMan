@@ -1376,7 +1376,8 @@ async function fetchYahooDirect(symbol, range, interval, ms = 10000) {
 }
 
 // Primary fetch: tries Vite proxy → Yahoo direct (crumb) → public CORS proxies
-async function getData(targetUrl, ms = 10000) {
+// v31.47: exported — macroContextEngine's Yahoo series reuse the same path.
+export async function getData(targetUrl, ms = 10000) {
   // Capacitor / PWA: skip direct fetch (CORS blocked) → go straight to proxy
   if (!_isCapacitor && !_isPWA) {
     const directResult = await tryDirect(targetUrl, ms);

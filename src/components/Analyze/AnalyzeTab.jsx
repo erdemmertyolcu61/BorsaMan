@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { fetchData, fetchFundamentals, fetchBigParaBatchPrices, istanbulDayKey } from '../../utils/fetchEngine.js';
-import { calcPosition, getUnifiedAnalysis } from '../../utils/signals.js';
+import { getUnifiedAnalysis } from '../../utils/signals.js';
+import { suggestPosition, sizeMultOf, getTradingCapital } from '../../utils/positionSizing.js';
 import { getUnifiedDecision } from '../../utils/unifiedDecision.js';
 import { analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
 import { fetchIsYatirimFinancials } from '../../utils/isyatirimEngine.js';
@@ -338,7 +339,7 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
               onKeyDown={e => e.key === 'Enter' && doAnalyze()} />
           </div>
           <button className="btn btn-go" disabled={loading} onClick={() => doAnalyze()}>
-            {loading ? '⟳ ÇEKİLİYOR...' : '▶ ANALİZ ET'}
+            {loading ? 'Çekiliyor…' : 'Analiz et'}
           </button>
         </div>
         <div className="divider" />
@@ -349,7 +350,7 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
             disabled={loading || !gData} 
             onClick={() => setShowJarvisModal(true)}
           >
-            <span style={{ fontSize: 16 }}>🤖</span> JARVIS AI ANALİZİ
+            JARVIS AI analizi
           </button>
         </div>
         <div className="divider" />
@@ -567,16 +568,16 @@ Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
               {(gSig.mlMatchedCount || 0) > 0 && (
                 <div style={{
                   marginTop: 6, padding: '4px 8px', borderRadius: 4,
-                  background: 'rgba(255,215,0,0.08)', border: '1px solid rgba(255,215,0,0.25)',
-                  fontSize: 9, color: '#ffd700',
+                  background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)',
+                  fontSize: 9, color: '#eab308',
                 }}>
-                  🎯 ML +{(gSig.mlConfidenceBoost || 0).toFixed(1)} · {gSig.mlMatchedCount} kural eşleşti
+                  ML +{(gSig.mlConfidenceBoost || 0).toFixed(1)} · {gSig.mlMatchedCount} kural eşleşti
                   {gSig.mlBestRule && <div style={{ fontSize: 8, color: '#fbbf24', marginTop: 1 }}>{typeof gSig.mlBestRule === 'string' ? gSig.mlBestRule : gSig.mlBestRule.setupName || JSON.stringify(gSig.mlBestRule)}</div>}
                 </div>
               )}
               {gSig.unifiedSource && (
                 <div style={{ fontSize: 8, color: 'var(--t3)', marginTop: 4, fontStyle: 'italic' }}>
-                  {gSig.unifiedOverride ? '⚡ ML Override · ' : ''}{gSig.unifiedSource}
+                  {gSig.unifiedOverride ? 'ML override · ' : ''}{gSig.unifiedSource}
                 </div>
               )}
             </div>
@@ -605,16 +606,35 @@ Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
               )}
               {/* Add to Portfolio Button */}
               {addToPortfolio && gData && (() => {
-                const pos = calcPosition(portfolio?.cash || 10000, 2, gSig.entry, gSig.stop);
+                // v31.47: AI Firsatlar kartlariyla AYNI lot kurali (paper motoru ile birebir):
+                // sermayenin %2'si stopta, %33 tavan, konviksiyon/rejim carpani. Eskiden
+                // burada sanal portfoyun 10.000 TL nakdiyle "Kelly" etiketli ayri bir hesap vardi.
+                const tradingCapital = getTradingCapital();
+                const regimeNow = advisorData?.marketRegime?.regime || null;
+                const sug = suggestPosition({
+                  capital: tradingCapital ?? undefined,
+                  entry: gSig.entry,
+                  stop: gSig.stop,
+                  mult: sizeMultOf({ score: gSig.score, cls: gSig.cls, _regime: regimeNow }),
+                });
                 const alreadyOpen = portfolio?.positions?.some(p => p.symbol === gData.symbol && p.status === 'open');
-                const shares = customShares ? parseInt(customShares, 10) : pos.shares;
                 const maxShares = Math.floor((portfolio?.cash || 10000) / gSig.entry);
+                const pos = { shares: Math.min(sug.ok ? sug.lots : 0, maxShares) };
+                const shares = customShares ? parseInt(customShares, 10) : pos.shares;
                 const validShares = shares > 0 && shares <= maxShares;
                 const cost = shares * gSig.entry;
                 const risk = shares * Math.abs(gSig.entry - gSig.stop);
                 return (
                   <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-                    <div style={{ fontSize: 9, color: 'var(--t3)', marginBottom: 6 }}>Kelly Önerisi: {pos.shares} lot (%2 risk) | Max: {maxShares} lot | Nakit: {(portfolio?.cash || 0).toFixed(0)} TL</div>
+                    <div style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 8, lineHeight: 1.5 }}>
+                      {sug.ok ? (
+                        <>Lot önerisi: <b style={{ color: 'var(--t1)' }}>{sug.lots.toLocaleString('tr-TR')} lot</b> ≈ {Math.round(sug.costTl).toLocaleString('tr-TR')} TL · risk {Math.round(sug.riskTl).toLocaleString('tr-TR')} TL</>
+                      ) : sug.reason === 'too_small' ? 'Lot önerisi: sermayeye göre pozisyon 3.000 TL altında kalıyor'
+                        : 'Lot önerisi: stop seviyesi olmadan hesaplanamıyor'}
+                      <div style={{ fontSize: 11, color: 'var(--t3)' }}>
+                        Sermaye {Math.round(sug.capital).toLocaleString('tr-TR')} TL{tradingCapital ? '' : ' (varsayılan — Ayarlar)'} · %2 risk, en fazla %33 · sanal portföy nakdi {(portfolio?.cash || 0).toFixed(0)} TL
+                      </div>
+                    </div>
                     <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
                       <button onClick={() => setPositionType('trade')} style={{ flex: 1, padding: 6, fontSize: 10, background: positionType === 'trade' ? 'var(--cyan)' : 'var(--bg3)', color: positionType === 'trade' ? '#000' : 'var(--t2)', border: 'none', borderRadius: 4, fontWeight: positionType === 'trade' ? 700 : 400, cursor: 'pointer' }}>KISA VADE (TRADE)</button>
                       <button onClick={() => setPositionType('investment')} style={{ flex: 1, padding: 6, fontSize: 10, background: positionType === 'investment' ? 'var(--purple)' : 'var(--bg3)', color: positionType === 'investment' ? '#fff' : 'var(--t2)', border: 'none', borderRadius: 4, fontWeight: positionType === 'investment' ? 700 : 400, cursor: 'pointer' }}>UZUN VADE (YATIRIM)</button>
@@ -634,7 +654,7 @@ Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
                         setPendingOrder(order);
                         setIsOrderModalOpen(true);
                       }}>
-                        {brokerConfig.type === BROKER_TYPES.MIDAS_MANUAL ? '📱 MIDAS\'TA İŞLEM YAP' : '+ PORTFÖYE EKLE'} ({shares} lot @ {gSig.entry.toFixed(2)} TL)
+                        {brokerConfig.type === BROKER_TYPES.MIDAS_MANUAL ? 'Midas\'ta işlem yap' : 'Portföye ekle'} ({shares} lot @ {gSig.entry.toFixed(2)} TL)
                       </button>
                     ) : (
                       <div style={{ fontSize: 10, color: 'var(--red)', textAlign: 'center', padding: 6 }}>

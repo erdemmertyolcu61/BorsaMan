@@ -46,6 +46,13 @@ const CHECKS = [
     },
   },
   {
+    // v31.47: TCMB politika faizi (1 Hafta Repo tablosu, sunucuda ayristirilir)
+    name: 'tcmb_rate (TCMB politika faizi)',
+    path: '/api/proxy?source=tcmb_rate',
+    verify: j => (j?.ok === true && j.rate > 0 && /^\d{4}-\d{2}-\d{2}$/.test(j.date || '')
+      ? `%${j.rate} (${j.date})` : null),
+  },
+  {
     // Tatil gunleri 0 bildirim donebilir; dogru sekil yeterli.
     name: 'kap_disclosures (KAP bildirim akisi)',
     path: '/api/proxy?source=kap_disclosures&days=3',

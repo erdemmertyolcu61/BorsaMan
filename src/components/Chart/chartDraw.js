@@ -154,7 +154,7 @@ export function drawChart({ canvas, container, prices, ind, viewRange, crosshair
   // Bollinger area
   if (ind.bollinger) {
     ctx.beginPath();
-    ctx.fillStyle = 'rgba(41, 121, 255, 0.06)';
+    ctx.fillStyle = 'rgba(59,130,246, 0.06)';
     for (let vi = 0; vi < visiblePrices.length; vi++) {
       const i = vi + startIdx;
       const y = ind.bollinger.upper[i] != null ? getY(ind.bollinger.upper[i]) : null;
@@ -272,10 +272,10 @@ export function drawChart({ canvas, container, prices, ind, viewRange, crosshair
     ctx.stroke(); ctx.setLineDash([]);
   };
 
-  drawLine(ind.ma20, '#ffd600', 1.5);
-  drawLine(ind.ma50, '#ff9100', 1.5);
-  drawLine(ind.ma100, '#d500f9', 1.5);
-  if (ind.ma200) drawLine(ind.ma200, '#00e5ff', 1, [4, 3]);
+  drawLine(ind.ma20, '#eab308', 1.5);
+  drawLine(ind.ma50, '#f97316', 1.5);
+  drawLine(ind.ma100, '#a855f7', 1.5);
+  if (ind.ma200) drawLine(ind.ma200, '#22d3ee', 1, [4, 3]);
 
   // Candlesticks
   visiblePrices.forEach((p, vi) => {

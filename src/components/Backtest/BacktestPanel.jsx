@@ -3,7 +3,7 @@ import { runBacktest, calcBacktestStats } from '../../utils/backtestEngine.js';
 import { runBacktestMonteCarlo } from '../../utils/backtestMonteCarlo.js';
 
 const STRATEGIES = [
-  { key: 'signal', label: 'Sinyal', color: '#00e5ff' },
+  { key: 'signal', label: 'Sinyal', color: '#22d3ee' },
   { key: 'rsi', label: 'RSI', color: '#ff9800' },
   { key: 'macd', label: 'MACD', color: '#e040fb' },
   { key: 'ma', label: 'MA Cross', color: '#76ff03' },
@@ -180,7 +180,7 @@ function CompareResults({ data }) {
 
   return (
     <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', marginBottom: 8, fontFamily: 'Space Grotesk,sans-serif' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', marginBottom: 8, fontFamily: 'Inter,sans-serif' }}>
         MC Strateji Karsilastirmasi
       </div>
 
@@ -343,7 +343,7 @@ function MiniTile({ label, value, color }) {
   return (
     <div style={{ background: 'var(--bg0)', padding: '4px 2px', borderRadius: 4, textAlign: 'center', border: '1px solid var(--border)' }}>
       <div style={{ fontSize: 7, textTransform: 'uppercase', color: 'var(--t3)', letterSpacing: 0.5 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700, color, fontFamily: 'Space Grotesk' }}>{value}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color, fontFamily: 'Inter' }}>{value}</div>
     </div>
   );
 }
@@ -352,7 +352,7 @@ function MCMetric({ label, value, color }) {
   return (
     <div style={{ background: 'var(--bg2)', padding: 6, borderRadius: 4, textAlign: 'center' }}>
       <div style={{ fontSize: 7, textTransform: 'uppercase', color: 'var(--t3)', letterSpacing: 0.5 }}>{label}</div>
-      <div style={{ fontSize: 16, fontWeight: 700, color, fontFamily: 'Space Grotesk' }}>{value}</div>
+      <div style={{ fontSize: 16, fontWeight: 700, color, fontFamily: 'Inter' }}>{value}</div>
     </div>
   );
 }
@@ -400,13 +400,13 @@ function MCEquityBands({ bands, tradeCount }) {
       >
         <polygon fill="rgba(139,92,246,0.08)" points={outerPoly} />
         <polygon fill="rgba(139,92,246,0.15)" points={innerPoly} />
-        <line x1="0" y1={baseY} x2={W} y2={baseY} stroke="#ffd600" strokeWidth="0.5" strokeDasharray="3,3" opacity="0.4" />
+        <line x1="0" y1={baseY} x2={W} y2={baseY} stroke="#eab308" strokeWidth="0.5" strokeDasharray="3,3" opacity="0.4" />
         <polyline fill="none" stroke="rgba(139,92,246,0.3)" strokeWidth="0.5" points={makePath(bands.p5)} />
         <polyline fill="none" stroke="rgba(139,92,246,0.5)" strokeWidth="0.5" points={makePath(bands.p25)} />
         <polyline fill="none" stroke="#8b5cf6" strokeWidth="1.5" points={makePath(bands.p50)} />
         <polyline fill="none" stroke="rgba(139,92,246,0.5)" strokeWidth="0.5" points={makePath(bands.p75)} />
         <polyline fill="none" stroke="rgba(139,92,246,0.3)" strokeWidth="0.5" points={makePath(bands.p95)} />
-        <text x="4" y={baseY - 3} fill="#ffd600" fontSize="6" fontFamily="JetBrains Mono">10K</text>
+        <text x="4" y={baseY - 3} fill="#eab308" fontSize="6" fontFamily="JetBrains Mono">10K</text>
         <text x={W - 4} y={toY(bands.p50[n-1]) - 3} fill="#8b5cf6" fontSize="6" fontFamily="JetBrains Mono" textAnchor="end">
           {(bands.p50[n-1] / 1000).toFixed(1)}K
         </text>

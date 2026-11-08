@@ -12,11 +12,14 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchQuotesBatch } from '../utils/fetchEngine.js';
+import { fetchDailyBarsMap } from '../utils/dailyBarsBatch.js';
 import {
   loadJournal,
   persistJournal,
   recordSnapshot,
   evaluateJournal,
+  settleJournalFromBars,
+  journalSymbolsToSettle,
   journalStats,
   exportJournalJSON,
 } from '../utils/forwardTestJournal.js';
@@ -66,15 +69,56 @@ export function useForwardTestJournal() {
     } catch {}
     if (!Object.keys(quoteMap).length) return;
 
-    const { days: nextDays, changed } = evaluateJournal(current, quoteMap, now);
-    if (changed) setDays(persistJournal(nextDays));
+    // Functional update: the close-settlement pass may have written in between.
+    setDays(prev => {
+      const { days: nextDays, changed } = evaluateJournal(prev, quoteMap, now);
+      return changed ? persistJournal(nextDays) : prev;
+    });
+  }, []);
+
+  // ── v31.47: close-based settlement ("gecmis verileri guncelle") ──
+  // The live latch above only fires while the app is open; this pass rebuilds
+  // d1/d3/d5, outcome and MFE/MAE from official daily closes, oldest backlog
+  // included, so the governor and the accuracy panel read real numbers.
+  const settleRunningRef = useRef(false);
+  const drainRef = useRef({ n: 0, timer: null });
+  const runCloseSettlement = useCallback(async () => {
+    if (settleRunningRef.current) return;
+    const syms = journalSymbolsToSettle(daysRef.current, Date.now());
+    if (!syms.length) return;
+    settleRunningRef.current = true;
+    try {
+      const barsMap = await fetchDailyBarsMap(syms);
+      if (!Object.keys(barsMap).length) return;
+      setDays(prev => {
+        const { days: next, changed } = settleJournalFromBars(prev, barsMap, Date.now());
+        return changed ? persistJournal(next) : prev;
+      });
+      const more = journalSymbolsToSettle(daysRef.current, Date.now(), 500).filter(s => !(s in barsMap));
+      if (more.length && drainRef.current.n < 25) {
+        drainRef.current.n += 1;
+        clearTimeout(drainRef.current.timer);
+        drainRef.current.timer = setTimeout(() => { runCloseSettlement(); }, 20_000);
+      }
+    } finally {
+      settleRunningRef.current = false;
+    }
   }, []);
 
   useEffect(() => {
     runEvaluation();
-    evalTimerRef.current = setInterval(runEvaluation, EVAL_INTERVAL_MS);
-    return () => { if (evalTimerRef.current) clearInterval(evalTimerRef.current); };
-  }, [runEvaluation]);
+    const first = setTimeout(() => { runCloseSettlement(); }, 6000);
+    evalTimerRef.current = setInterval(() => { runEvaluation(); runCloseSettlement(); }, EVAL_INTERVAL_MS);
+    const onWake = () => { if (document.visibilityState === 'visible') runCloseSettlement(); };
+    document.addEventListener('visibilitychange', onWake);
+    const drain = drainRef.current;
+    return () => {
+      if (evalTimerRef.current) clearInterval(evalTimerRef.current);
+      clearTimeout(first);
+      clearTimeout(drain.timer);
+      document.removeEventListener('visibilitychange', onWake);
+    };
+  }, [runEvaluation, runCloseSettlement]);
 
   const stats = journalStats(days);
 

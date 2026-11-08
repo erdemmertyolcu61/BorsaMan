@@ -177,7 +177,7 @@ export default function PremiumHeader({ badge, notifications, alertLog, advisor,
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               marginBottom: 16,
             }}>
-              <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 14 }}>
+              <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 14 }}>
                 AYARLAR
               </div>
               <button

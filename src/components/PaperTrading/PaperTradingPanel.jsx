@@ -20,7 +20,7 @@ import { useState, useMemo } from 'react';
 import useIsMobile from '../../hooks/useIsMobile.js';
 
 // ── Renk yardimcilari ──
-const pnlColor = (v) => v > 0 ? '#10e87a' : v < 0 ? '#f43f5e' : '#9ca3af';
+const pnlColor = (v) => v > 0 ? '#22c55e' : v < 0 ? '#f43f5e' : '#9ca3af';
 const pct = (v, dec = 1) => (v >= 0 ? '+' : '') + v.toFixed(dec) + '%';
 const tl = (v) => new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.abs(v));
 
@@ -53,7 +53,7 @@ function EquitySpark({ curve, startCapital }) {
   });
 
   const isProfit = vals[vals.length - 1] >= startCapital;
-  const color = isProfit ? '#10e87a' : '#f43f5e';
+  const color = isProfit ? '#22c55e' : '#f43f5e';
   const baselineY = H - ((startCapital - min) / range) * H;
 
   return (
@@ -81,12 +81,12 @@ function PosProgressBar({ pos }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: 'var(--t3)', marginBottom: 2 }}>
         <span style={{ color: '#f43f5e' }}>S: {stop?.toFixed(2)}</span>
         <span style={{ color: pnlColor(pnlPct), fontWeight: 700 }}>{pct(pnlPct)}</span>
-        <span style={{ color: '#10e87a' }}>H: {target?.toFixed(2)}</span>
+        <span style={{ color: '#22c55e' }}>H: {target?.toFixed(2)}</span>
       </div>
       <div style={{ height: 3, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
         <div style={{
           height: '100%', width: `${progress * 100}%`,
-          background: pnlPct > 0 ? '#10e87a' : '#f43f5e',
+          background: pnlPct > 0 ? '#22c55e' : '#f43f5e',
           transition: 'width 0.4s ease',
         }} />
       </div>
@@ -101,13 +101,13 @@ function MLBadge({ trade }) {
   const matched = trade.ml_matched || trade.mlMatched || 0;
   if (!matched) return null;
 
-  const color = boost >= 5 ? '#ffd700' : boost >= 2 ? '#06b6d4' : '#a78bfa';
+  const color = boost >= 5 ? '#eab308' : boost >= 2 ? '#06b6d4' : '#a78bfa';
   return (
     <span style={{
       fontSize: 8, fontWeight: 700, padding: '1px 5px', borderRadius: 3, marginLeft: 5,
       background: `${color}20`, border: `1px solid ${color}40`, color,
     }}>
-      {'🎯'} ML +{boost.toFixed(1)} {rule ? `· ${rule.split(' + ')[0]}` : ''}
+      ML +{boost.toFixed(1)} {rule ? `· ${rule.split(' + ')[0]}` : ''}
     </span>
   );
 }
@@ -127,7 +127,7 @@ const TIER_ROWS = [
 function edgeCellColor(cell) {
   if (!cell || cell.n === 0) return { bg: 'transparent', fg: 'var(--t3)' };
   if (!cell.reliable) return { bg: 'rgba(255,255,255,0.03)', fg: 'var(--t3)' };
-  if (cell.expectancy > 0.3) return { bg: 'rgba(16,232,122,0.12)', fg: '#10e87a' };
+  if (cell.expectancy > 0.3) return { bg: 'rgba(34,197,94,0.12)', fg: '#22c55e' };
   if (cell.expectancy < -0.3) return { bg: 'rgba(244,63,94,0.12)', fg: '#f43f5e' };
   return { bg: 'rgba(251,191,36,0.10)', fg: '#fbbf24' };
 }
@@ -144,7 +144,7 @@ function LiveEdgeMatrix({ liveEdge }) {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--t1)', letterSpacing: 0.5 }}>
-          {'🎯'} CANLI EDGE
+          Canlı edge
         </span>
         <span style={{ fontSize: 8, color: 'var(--t3)' }}>
           konviksiyon × rejim · gerçek paper-trade sonuçları (son {sampleSize} kapanış)
@@ -152,7 +152,7 @@ function LiveEdgeMatrix({ liveEdge }) {
         {overall?.n > 0 && (
           <span style={{
             marginLeft: 'auto', fontSize: 9, fontWeight: 700,
-            color: overall.expectancy > 0 ? '#10e87a' : '#f43f5e',
+            color: overall.expectancy > 0 ? '#22c55e' : '#f43f5e',
           }}>
             GENEL: WR %{overall.winRate.toFixed(0)} · beklenti {overall.expectancy >= 0 ? '+' : ''}{overall.expectancy.toFixed(2)}% · {overall.n} işlem
           </span>
@@ -246,7 +246,7 @@ function MLForwardTestPanel({ paperML }) {
   if (!snapshot) {
     return (
       <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--t3)', fontSize: 12 }}>
-        <div style={{ fontSize: 28, marginBottom: 10 }}>{'🧠'}</div>
+        
         <div>ML Forward Test motoru yukleniyor...</div>
       </div>
     );
@@ -272,13 +272,13 @@ function MLForwardTestPanel({ paperML }) {
       }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)', letterSpacing: 1 }}>
-              {'🧠'} ML FORWARD TEST
+            <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--t1)' }}>
+              ML forward test
             </span>
             <span style={{
               fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-              background: 'rgba(255,215,0,0.15)', color: '#ffd700',
-              border: '1px solid rgba(255,215,0,0.3)', letterSpacing: 1,
+              background: 'rgba(234,179,8,0.15)', color: '#eab308',
+              border: '1px solid rgba(234,179,8,0.3)', letterSpacing: 1,
             }}>SQLITE</span>
             <span style={{ fontSize: 9, color: 'var(--t3)' }}>
               TOP 3 ML · 33% alloc · -3% stop
@@ -294,17 +294,17 @@ function MLForwardTestPanel({ paperML }) {
             display: 'flex', alignItems: 'center', gap: 7,
             padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 700,
             fontSize: 11, letterSpacing: 0.5, transition: 'all 0.2s',
-            background: autoTrade ? 'rgba(255,215,0,0.15)' : 'rgba(255,255,255,0.06)',
-            border: autoTrade ? '1px solid rgba(255,215,0,0.5)' : '1px solid rgba(255,255,255,0.15)',
-            color: autoTrade ? '#ffd700' : 'var(--t2)',
-            boxShadow: autoTrade ? '0 0 16px rgba(255,215,0,0.12)' : 'none',
+            background: autoTrade ? 'rgba(234,179,8,0.15)' : 'rgba(255,255,255,0.06)',
+            border: autoTrade ? '1px solid rgba(234,179,8,0.5)' : '1px solid rgba(255,255,255,0.15)',
+            color: autoTrade ? '#eab308' : 'var(--t2)',
+            boxShadow: autoTrade ? '0 0 16px rgba(234,179,8,0.12)' : 'none',
           }}>
             <span style={{
               width: 8, height: 8, borderRadius: '50%',
-              background: autoTrade ? '#ffd700' : '#6b7280',
+              background: autoTrade ? '#eab308' : '#6b7280',
               animation: autoTrade ? 'pulseDot 1.4s ease-in-out infinite' : 'none',
             }} />
-            {autoTrade ? '⚡ ML AUTO ON' : '⏸ ML AUTO OFF'}
+            {autoTrade ? 'ML auto açık' : 'ML auto kapalı'}
           </button>
         </div>
       </div>
@@ -322,14 +322,14 @@ function MLForwardTestPanel({ paperML }) {
           sub={pct(totalPnlPct)} color={pnlColor(totalPnl)} />
         <StatCard label="WIN RATE" value={`%${winRate.toFixed(0)}`}
           sub={`${wins}K / ${losses}K`}
-          color={winRate >= 55 ? '#10e87a' : winRate >= 40 ? '#f59e0b' : '#f43f5e'} />
+          color={winRate >= 55 ? '#22c55e' : winRate >= 40 ? '#f59e0b' : '#f43f5e'} />
         <StatCard label="EXPECTANCY" value={`${expectancy >= 0 ? '+' : ''}${expectancy.toFixed(2)}%`}
           sub={`PF: ${isFinite(profitFactor) ? profitFactor.toFixed(2) : '∞'}`}
           color={pnlColor(expectancy)} />
         <StatCard label="MAX DD" value={`-%${maxDrawdown.toFixed(1)}`}
-          color={maxDrawdown > 15 ? '#f43f5e' : maxDrawdown > 8 ? '#f59e0b' : '#10e87a'} />
+          color={maxDrawdown > 15 ? '#f43f5e' : maxDrawdown > 8 ? '#f59e0b' : '#22c55e'} />
         <StatCard label="ACİK POZ" value={openTrades.length} sub="Max: 3"
-          color={openTrades.length > 0 ? '#ffd700' : 'var(--t3)'} />
+          color={openTrades.length > 0 ? '#eab308' : 'var(--t3)'} />
       </div>
 
       {/* ML / SMC Mode indicator */}
@@ -338,14 +338,14 @@ function MLForwardTestPanel({ paperML }) {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <div style={{
               padding: '4px 10px', borderRadius: 5, fontSize: 9, fontWeight: 700,
-              background: 'rgba(255,215,0,0.12)', border: '1px solid rgba(255,215,0,0.3)',
-              color: '#ffd700',
-            }}>🎯 ML KURALLARI AKTİF</div>
+              background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)',
+              color: '#eab308',
+            }}>ML kuralları aktif</div>
             {mlBuckets.map(b => (
               <div key={b.ml_tier} style={{
                 padding: '4px 10px', borderRadius: 5,
-                background: 'rgba(255,215,0,0.06)', border: '1px solid rgba(255,215,0,0.15)',
-                fontSize: 9, color: '#ffd700',
+                background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)',
+                fontSize: 9, color: '#eab308',
               }}>
                 <b>{b.ml_tier}</b>: {b.cnt} islem · WR %{b.wins && b.cnt ? ((b.wins / b.cnt) * 100).toFixed(0) : '0'}
                 {b.avg_pnl != null && ` · avg ${b.avg_pnl > 0 ? '+' : ''}${b.avg_pnl.toFixed(2)}%`}
@@ -358,7 +358,7 @@ function MLForwardTestPanel({ paperML }) {
             background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)',
             fontSize: 9, color: '#06b6d4',
           }}>
-            <span>📊 SMC FALLBACK MODU</span>
+            <span>SMC yedek modu</span>
             <span style={{ color: 'var(--t3)' }}>ML kurallari egitilmemis — score≥55 en iyi hisseler seciliyor</span>
             <span style={{ color: '#fbbf24', marginLeft: 4 }}>
               (ML egitimi her isgunu 20:00&apos;de otomatik baslar)
@@ -373,7 +373,7 @@ function MLForwardTestPanel({ paperML }) {
           margin: '0 0 12px', padding: '8px 12px', borderRadius: 8, fontSize: 10,
           background: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.25)', color: '#06b6d4',
         }}>
-          <b>⏳ Açılışta alınacak ({pendingOrders.length}):</b>{' '}
+          <b>Açılışta alınacak ({pendingOrders.length}):</b>{' '}
           {pendingOrders.map(o => `${o.symbol}${o.refPrice ? ` (ref ${Number(o.refPrice).toFixed(2)})` : ''}`).join(' · ')}
           <div style={{ color: 'var(--t3)', marginTop: 3 }}>
             Seans dışında gelen AL son kapanıştan değil, bir sonraki seansın gerçek açılışından doldurulur.
@@ -388,15 +388,15 @@ function MLForwardTestPanel({ paperML }) {
       {/* TAB NAV */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: 8 }}>
         {[
-          { id: 'positions', label: `📊 Acik (${openTrades.length})` },
-          { id: 'history',   label: `📜 Gecmis (${closedTrades.length})` },
+          { id: 'positions', label: `Açık (${openTrades.length})` },
+          { id: 'history',   label: `Geçmiş (${closedTrades.length})` },
         ].map(t => (
           <button key={t.id} onClick={() => setMlTab(t.id)} style={{
             padding: '5px 12px', borderRadius: 5, cursor: 'pointer', fontSize: 10,
             fontWeight: 700, letterSpacing: 0.3,
-            background: mlTab === t.id ? 'rgba(255,215,0,0.15)' : 'transparent',
-            border: mlTab === t.id ? '1px solid rgba(255,215,0,0.4)' : '1px solid transparent',
-            color: mlTab === t.id ? '#ffd700' : 'var(--t3)',
+            background: mlTab === t.id ? 'rgba(234,179,8,0.15)' : 'transparent',
+            border: mlTab === t.id ? '1px solid rgba(234,179,8,0.4)' : '1px solid transparent',
+            color: mlTab === t.id ? '#eab308' : 'var(--t3)',
           }}>{t.label}</button>
         ))}
         <div style={{ flex: 1 }} />
@@ -404,7 +404,7 @@ function MLForwardTestPanel({ paperML }) {
           padding: '5px 12px', borderRadius: 5, cursor: 'pointer', fontSize: 9,
           fontWeight: 700, background: 'rgba(244,63,94,0.1)',
           border: '1px solid rgba(244,63,94,0.3)', color: '#f87171',
-        }}>{'🔄'} SIFIRLA</button>
+        }}>Sıfırla</button>
       </div>
 
       {/* OPEN POSITIONS */}
@@ -412,15 +412,15 @@ function MLForwardTestPanel({ paperML }) {
         <div>
           {openTrades.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--t3)', fontSize: 12 }}>
-              <div style={{ fontSize: 28, marginBottom: 10 }}>{'🧠'}</div>
+              
               <div>ML acik pozisyon yok.</div>
               {!autoTrade ? (
                 <div style={{
                   marginTop: 12, padding: '10px 18px', borderRadius: 8, display: 'inline-block',
-                  background: 'rgba(255,215,0,0.12)', border: '1px solid rgba(255,215,0,0.4)',
-                  color: '#ffd700', fontSize: 11, fontWeight: 700,
+                  background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.4)',
+                  color: '#eab308', fontSize: 11, fontWeight: 700,
                 }}>
-                  ⚡ Yukaridaki &ldquo;ML AUTO OFF&rdquo; butonuna tikla — tarama bittikce otomatik giris yapilir
+                  Yukarıdaki &ldquo;ML auto kapalı&rdquo; düğmesine dokun — tarama bittikce otomatik giris yapilir
                 </div>
               ) : (
                 <div style={{ fontSize: 10, marginTop: 6 }}>
@@ -438,7 +438,7 @@ function MLForwardTestPanel({ paperML }) {
                 return (
                   <div key={trade.id} style={{
                     background: 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${unrlPct >= 0 ? 'rgba(255,215,0,0.2)' : 'rgba(244,63,94,0.2)'}`,
+                    border: `1px solid ${unrlPct >= 0 ? 'rgba(234,179,8,0.2)' : 'rgba(244,63,94,0.2)'}`,
                     borderRadius: 8, padding: 12,
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
@@ -469,10 +469,10 @@ function MLForwardTestPanel({ paperML }) {
                     {trade.ml_best_rule && (
                       <div style={{
                         marginTop: 6, padding: '4px 8px', borderRadius: 4,
-                        background: 'rgba(255,215,0,0.06)', border: '1px solid rgba(255,215,0,0.12)',
-                        fontSize: 8, color: '#ffd700',
+                        background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.12)',
+                        fontSize: 8, color: '#eab308',
                       }}>
-                        {'🎯'} {trade.ml_best_rule} · {trade.ml_matched || 0} kural eslesti
+                        {trade.ml_best_rule} · {trade.ml_matched || 0} kural eslesti
                       </div>
                     )}
 
@@ -502,9 +502,9 @@ function MLForwardTestPanel({ paperML }) {
             {['date', 'pnl', 'symbol'].map(s => (
               <button key={s} onClick={() => setSortHistory(s)} style={{
                 fontSize: 9, padding: '3px 8px', borderRadius: 4, cursor: 'pointer',
-                background: sortHistory === s ? 'rgba(255,215,0,0.15)' : 'rgba(255,255,255,0.05)',
-                border: `1px solid ${sortHistory === s ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.1)'}`,
-                color: sortHistory === s ? '#ffd700' : 'var(--t3)',
+                background: sortHistory === s ? 'rgba(234,179,8,0.15)' : 'rgba(255,255,255,0.05)',
+                border: `1px solid ${sortHistory === s ? 'rgba(234,179,8,0.4)' : 'rgba(255,255,255,0.1)'}`,
+                color: sortHistory === s ? '#eab308' : 'var(--t3)',
               }}>{s === 'date' ? 'Tarih' : s === 'pnl' ? 'P&L' : 'Sembol'}</button>
             ))}
           </div>
@@ -549,9 +549,9 @@ function MLForwardTestPanel({ paperML }) {
                         <td style={{ padding: '7px 10px' }}>
                           <span style={{
                             fontSize: 8, padding: '1px 5px', borderRadius: 3, fontWeight: 700,
-                            background: (t.ml_confidence || 0) >= 5 ? 'rgba(255,215,0,0.15)' : 'rgba(6,182,212,0.15)',
-                            color: (t.ml_confidence || 0) >= 5 ? '#ffd700' : '#06b6d4',
-                            border: `1px solid ${(t.ml_confidence || 0) >= 5 ? 'rgba(255,215,0,0.3)' : 'rgba(6,182,212,0.3)'}`,
+                            background: (t.ml_confidence || 0) >= 5 ? 'rgba(234,179,8,0.15)' : 'rgba(6,182,212,0.15)',
+                            color: (t.ml_confidence || 0) >= 5 ? '#eab308' : '#06b6d4',
+                            border: `1px solid ${(t.ml_confidence || 0) >= 5 ? 'rgba(234,179,8,0.3)' : 'rgba(6,182,212,0.3)'}`,
                           }}>+{(t.ml_confidence || 0).toFixed(1)}</span>
                         </td>
                         <td style={{ padding: '7px 10px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>
@@ -563,13 +563,13 @@ function MLForwardTestPanel({ paperML }) {
                         <td style={{ padding: '7px 10px' }}>
                           <span style={{
                             fontSize: 8, padding: '1px 6px', borderRadius: 3, fontWeight: 700,
-                            background: String(t.exit_reason||'').startsWith('TARGET') ? 'rgba(16,232,122,0.15)'
+                            background: String(t.exit_reason||'').startsWith('TARGET') ? 'rgba(34,197,94,0.15)'
                               : String(t.exit_reason||'').startsWith('STOP') ? 'rgba(244,63,94,0.15)'
                               : 'rgba(255,255,255,0.08)',
-                            color: String(t.exit_reason||'').startsWith('TARGET') ? '#10e87a'
+                            color: String(t.exit_reason||'').startsWith('TARGET') ? '#22c55e'
                               : String(t.exit_reason||'').startsWith('STOP') ? '#f43f5e'
                               : 'var(--t3)',
-                            border: `1px solid ${String(t.exit_reason||'').startsWith('TARGET') ? 'rgba(16,232,122,0.3)'
+                            border: `1px solid ${String(t.exit_reason||'').startsWith('TARGET') ? 'rgba(34,197,94,0.3)'
                               : String(t.exit_reason||'').startsWith('STOP') ? 'rgba(244,63,94,0.3)'
                               : 'rgba(255,255,255,0.1)'}`,
                           }}>{t.exit_reason}</span>
@@ -584,7 +584,7 @@ function MLForwardTestPanel({ paperML }) {
                         <td style={{ padding: '7px 10px', color: 'var(--t3)', whiteSpace: 'nowrap' }}>
                           {heldH > 0 ? `${heldH}s` : ''}{heldM}d
                         </td>
-                        <td style={{ padding: '7px 10px', color: '#ffd700', fontSize: 8, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <td style={{ padding: '7px 10px', color: '#eab308', fontSize: 8, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {t.ml_best_rule || '-'}
                         </td>
                       </tr>
@@ -680,12 +680,12 @@ export default function PaperTradingPanel({ paperTrading, paperML }) {
         <button onClick={() => setEngine('ml')} style={{
           padding: '8px 20px', borderRadius: '8px 8px 0 0', cursor: 'pointer',
           fontSize: 11, fontWeight: 800, letterSpacing: 0.5, transition: 'all 0.2s',
-          background: engine === 'ml' ? 'rgba(255,215,0,0.12)' : 'rgba(255,255,255,0.03)',
-          border: engine === 'ml' ? '1px solid rgba(255,215,0,0.3)' : '1px solid rgba(255,255,255,0.08)',
-          borderBottom: engine === 'ml' ? '2px solid #ffd700' : '1px solid transparent',
-          color: engine === 'ml' ? '#ffd700' : 'var(--t3)',
+          background: engine === 'ml' ? 'rgba(234,179,8,0.12)' : 'rgba(255,255,255,0.03)',
+          border: engine === 'ml' ? '1px solid rgba(234,179,8,0.3)' : '1px solid rgba(255,255,255,0.08)',
+          borderBottom: engine === 'ml' ? '2px solid #eab308' : '1px solid transparent',
+          color: engine === 'ml' ? '#eab308' : 'var(--t3)',
         }}>
-          {'🧠'} ML Forward Test
+          ML forward test
         </button>
         <button onClick={() => setEngine('standard')} style={{
           padding: '8px 20px', borderRadius: '8px 8px 0 0', cursor: 'pointer',
@@ -695,7 +695,7 @@ export default function PaperTradingPanel({ paperTrading, paperML }) {
           borderBottom: engine === 'standard' ? '2px solid #a78bfa' : '1px solid transparent',
           color: engine === 'standard' ? '#a78bfa' : 'var(--t3)',
         }}>
-          {'📄'} Standard Paper Trading
+          Standart paper trading
         </button>
       </div>
 
@@ -746,8 +746,8 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
       }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)', letterSpacing: 1 }}>
-              {'📄'} PAPER TRADING
+            <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--t1)' }}>
+              Paper trading
             </span>
             <span style={{
               fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
@@ -767,17 +767,17 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
           display: 'flex', alignItems: 'center', gap: 7,
           padding: '8px 16px', borderRadius: 8, cursor: 'pointer', fontWeight: 700,
           fontSize: 11, letterSpacing: 0.5, transition: 'all 0.2s',
-          background: autoTrade ? 'rgba(16,232,122,0.18)' : 'rgba(255,255,255,0.06)',
-          border: autoTrade ? '1px solid rgba(16,232,122,0.5)' : '1px solid rgba(255,255,255,0.15)',
-          color: autoTrade ? '#10e87a' : 'var(--t2)',
-          boxShadow: autoTrade ? '0 0 16px rgba(16,232,122,0.15)' : 'none',
+          background: autoTrade ? 'rgba(34,197,94,0.18)' : 'rgba(255,255,255,0.06)',
+          border: autoTrade ? '1px solid rgba(34,197,94,0.5)' : '1px solid rgba(255,255,255,0.15)',
+          color: autoTrade ? '#22c55e' : 'var(--t2)',
+          boxShadow: autoTrade ? '0 0 16px rgba(34,197,94,0.15)' : 'none',
         }}>
           <span style={{
             width: 8, height: 8, borderRadius: '50%',
-            background: autoTrade ? '#10e87a' : '#6b7280',
+            background: autoTrade ? '#22c55e' : '#6b7280',
             animation: autoTrade ? 'pulseDot 1.4s ease-in-out infinite' : 'none',
           }} />
-          {autoTrade ? '⚡ AUTO ON' : '⏸ AUTO OFF'}
+          {autoTrade ? 'Auto açık' : 'Auto kapalı'}
         </button>
       </div>
 
@@ -792,18 +792,18 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
           sub={pct(perf.totalPnlPct)} color={pnlColor(perf.totalPnl)} />
         <StatCard label="WIN RATE" value={`%${perf.winRate.toFixed(0)}`}
           sub={`${perf.wins}K / ${perf.losses}K`}
-          color={perf.winRate >= 55 ? '#10e87a' : perf.winRate >= 40 ? '#f59e0b' : '#f43f5e'} />
+          color={perf.winRate >= 55 ? '#22c55e' : perf.winRate >= 40 ? '#f59e0b' : '#f43f5e'} />
         <StatCard label="EXPECTANCY" value={`${perf.expectancy >= 0 ? '+' : ''}${perf.expectancy.toFixed(2)}%`}
           sub={`Sharpe: ${perf.sharpe.toFixed(2)}`} color={pnlColor(perf.expectancy)} />
         <StatCard label="MAX DRAWDOWN" value={`-%${perf.maxDD.toFixed(1)}`}
           sub={`PF: ${isFinite(perf.profitFactor) ? perf.profitFactor.toFixed(2) : '∞'}`}
-          color={perf.maxDD > 15 ? '#f43f5e' : perf.maxDD > 8 ? '#f59e0b' : '#10e87a'} />
+          color={perf.maxDD > 15 ? '#f43f5e' : perf.maxDD > 8 ? '#f59e0b' : '#22c55e'} />
         <StatCard label="ACİK POZİSYON" value={positions.length}
           sub={`Max: ${config?.maxPositions || 8}`}
           color={positions.length > 0 ? '#60a5fa' : 'var(--t3)'} />
         {perf.currentStreak !== 0 && (
           <StatCard label="STREAK"
-            value={`${perf.currentStreak > 0 ? '🔥' : '❄️'} ${Math.abs(perf.currentStreak)}`}
+            value={`${perf.currentStreak > 0 ? '+' : perf.currentStreak < 0 ? '−' : ''}${Math.abs(perf.currentStreak)}`}
             sub={perf.currentStreak > 0 ? 'kazanma serisi' : 'kayip serisi'}
             color={pnlColor(perf.currentStreak)} />
         )}
@@ -812,10 +812,10 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
       {/* TAB NAV */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: 8 }}>
         {[
-          { id: 'positions', label: `📊 Acik (${positions.length})` },
-          { id: 'history',   label: `📜 Gecmis (${closedTrades.length})` },
-          { id: 'equity',    label: '📈 Equity' },
-          { id: 'settings',  label: '⚙ Ayarlar' },
+          { id: 'positions', label: `Açık (${positions.length})` },
+          { id: 'history',   label: `Geçmiş (${closedTrades.length})` },
+          { id: 'equity',    label: 'Equity' },
+          { id: 'settings',  label: 'Ayarlar' },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             padding: '5px 12px', borderRadius: 5, cursor: 'pointer', fontSize: 10,
@@ -830,7 +830,7 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
           padding: '5px 12px', borderRadius: 5, cursor: 'pointer', fontSize: 9,
           fontWeight: 700, background: 'rgba(244,63,94,0.1)',
           border: '1px solid rgba(244,63,94,0.3)', color: '#f87171',
-        }}>{'🔄'} SIFIRLA</button>
+        }}>Sıfırla</button>
       </div>
 
       {/* OPEN POSITIONS */}
@@ -838,7 +838,7 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
         <div>
           {positions.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--t3)', fontSize: 12 }}>
-              <div style={{ fontSize: 28, marginBottom: 10 }}>{'📋'}</div>
+              
               <div>Acik pozisyon yok.</div>
               <div style={{ fontSize: 10, marginTop: 6, color: 'var(--t3)' }}>
                 {autoTrade ? 'AI Advisor sonraki taramada otomatik giris yapacak'
@@ -854,13 +854,13 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
                 return (
                   <div key={pos.id} style={{
                     background: 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${unrlPct >= 0 ? 'rgba(16,232,122,0.2)' : 'rgba(244,63,94,0.2)'}`,
+                    border: `1px solid ${unrlPct >= 0 ? 'rgba(34,197,94,0.2)' : 'rgba(244,63,94,0.2)'}`,
                     borderRadius: 8, padding: 12, transition: 'border-color 0.3s',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
                       <div>
                         <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--t1)' }}>{pos.symbol}</span>
-                        {pos._earlyPick && <span style={{ marginLeft: 5, fontSize: 8, color: '#a78bfa' }}>{'🔍'}ERKEN</span>}
+                        {pos._earlyPick && <span style={{ marginLeft: 5, fontSize: 8, color: '#a78bfa' }}>erken</span>}
                         <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 1 }}>
                           {pos.sector || ''} · {pos.tier || pos.grade || ''} · conf:{pos.confidence}
                         </div>
@@ -958,15 +958,15 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
                         <td style={{ padding: '7px 10px' }}>
                           <span style={{
                             fontSize: 8, padding: '1px 6px', borderRadius: 3, fontWeight: 700,
-                            background: String(t.exitReason||'').startsWith('TARGET') ? 'rgba(16,232,122,0.15)'
+                            background: String(t.exitReason||'').startsWith('TARGET') ? 'rgba(34,197,94,0.15)'
                               : String(t.exitReason||'').startsWith('STOP') ? 'rgba(244,63,94,0.15)'
                               : t.exitReason === 'EOD' ? 'rgba(251,191,36,0.15)'
                               : 'rgba(255,255,255,0.08)',
-                            color: String(t.exitReason||'').startsWith('TARGET') ? '#10e87a'
+                            color: String(t.exitReason||'').startsWith('TARGET') ? '#22c55e'
                               : String(t.exitReason||'').startsWith('STOP') ? '#f43f5e'
                               : t.exitReason === 'EOD' ? '#fbbf24'
                               : 'var(--t3)',
-                            border: `1px solid ${String(t.exitReason||'').startsWith('TARGET') ? 'rgba(16,232,122,0.3)'
+                            border: `1px solid ${String(t.exitReason||'').startsWith('TARGET') ? 'rgba(34,197,94,0.3)'
                               : String(t.exitReason||'').startsWith('STOP') ? 'rgba(244,63,94,0.3)'
                               : 'rgba(255,255,255,0.1)'}`,
                           }}>{t.exitReason}</span>
@@ -1014,13 +1014,13 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px', fontSize: 11 }}>
               {[
                 ['Net P&L', `${perf.totalPnl >= 0 ? '+' : ''}₺${tl(perf.totalPnl)} (${pct(perf.totalPnlPct)})`, pnlColor(perf.totalPnl)],
-                ['Win Rate', `%${perf.winRate.toFixed(1)} (${perf.wins}K/${perf.losses}K)`, perf.winRate >= 50 ? '#10e87a' : '#f43f5e'],
-                ['Avg Kazanc', `+${perf.avgWinPct.toFixed(2)}%`, '#10e87a'],
+                ['Win Rate', `%${perf.winRate.toFixed(1)} (${perf.wins}K/${perf.losses}K)`, perf.winRate >= 50 ? '#22c55e' : '#f43f5e'],
+                ['Avg Kazanc', `+${perf.avgWinPct.toFixed(2)}%`, '#22c55e'],
                 ['Avg Kayip', `${perf.avgLossPct.toFixed(2)}%`, '#f43f5e'],
                 ['Expectancy', `${perf.expectancy >= 0 ? '+' : ''}${perf.expectancy.toFixed(2)}%`, pnlColor(perf.expectancy)],
-                ['Profit Factor', isFinite(perf.profitFactor) ? perf.profitFactor.toFixed(2) : '∞', perf.profitFactor >= 1.5 ? '#10e87a' : '#f59e0b'],
-                ['Max Drawdown', `-%${perf.maxDD.toFixed(1)}`, perf.maxDD > 15 ? '#f43f5e' : perf.maxDD > 8 ? '#f59e0b' : '#10e87a'],
-                ['Sharpe Ratio', perf.sharpe.toFixed(2), perf.sharpe >= 1 ? '#10e87a' : perf.sharpe >= 0.5 ? '#f59e0b' : '#f43f5e'],
+                ['Profit Factor', isFinite(perf.profitFactor) ? perf.profitFactor.toFixed(2) : '∞', perf.profitFactor >= 1.5 ? '#22c55e' : '#f59e0b'],
+                ['Max Drawdown', `-%${perf.maxDD.toFixed(1)}`, perf.maxDD > 15 ? '#f43f5e' : perf.maxDD > 8 ? '#f59e0b' : '#22c55e'],
+                ['Sharpe Ratio', perf.sharpe.toFixed(2), perf.sharpe >= 1 ? '#22c55e' : perf.sharpe >= 0.5 ? '#f59e0b' : '#f43f5e'],
                 ['Unrealized', `${perf.unrealizedPnl >= 0 ? '+' : ''}₺${tl(perf.unrealizedPnl)}`, pnlColor(perf.unrealizedPnl)],
                 ['Total Equity', `₺${tl(perf.totalEquity)}`, pnlColor(perf.totalEquityPct)],
               ].map(([label, val, color]) => (
@@ -1036,7 +1036,7 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
                 background: 'rgba(124,58,237,0.1)', border: '1px solid rgba(124,58,237,0.3)',
                 fontSize: 10, color: '#c4b5fd',
               }}>
-                <b>{'⚡'} Phase 9 Hazir:</b> {perf.totalTrades} islem kaydedildi.
+                <b>Phase 9 hazır:</b> {perf.totalTrades} islem kaydedildi.
                 Win Rate: %{perf.winRate.toFixed(0)} · Expectancy: {perf.expectancy.toFixed(2)}% →
                 Bu parametreler terminal ayarlarina aktarilabilir.
                 {perf.winRate >= 55 && perf.expectancy > 0.5
@@ -1096,7 +1096,7 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
               background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)',
               fontSize: 9, color: '#fbbf24',
             }}>
-              {'⚡'} <b>Phase 9 Hedef:</b> Bu parametreler backtest win rate ile %5 sapmayla eslesmeli.
+              <b>Phase 9 hedef:</b> Bu parametreler backtest win rate ile %5 sapmayla eslesmeli.
               Espriyi kanitalamak icin en az 20 islem gerekli.
             </div>
           </div>

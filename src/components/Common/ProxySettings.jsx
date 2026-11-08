@@ -4,12 +4,25 @@ import { getApiKey, setApiKey } from '../../utils/claude.js';
 import { getGeminiApiKey, setGeminiApiKey } from '../../utils/gemini.js';
 import { getEvdsApiKey, setEvdsApiKey } from '../../utils/foreignFlowEngine.js';
 import { isPushSupported, pushBlockedReason, enablePush, disablePush, getPushSubscription, syncTracking } from '../../utils/pushClient.js';
+import { getTradingCapital, setTradingCapital, DEFAULT_CAPITAL } from '../../utils/positionSizing.js';
 
 export default function ProxySettings() {
   const [url, setUrl] = useState(PROXY_BASE_URL || '');
   const [claudeKey, setClaudeKey] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
   const [evdsKey, setEvdsKey] = useState('');
+  // v31.47: lot onerisinin sermayesi (AI Firsatlar kartlari + Analiz ekrani)
+  const [capital, setCapital] = useState(() => {
+    const c = getTradingCapital();
+    return c ? c.toLocaleString('tr-TR') : '';
+  });
+  const [capitalSaved, setCapitalSaved] = useState(false);
+  const saveCapital = () => {
+    const v = setTradingCapital(capital);
+    setCapital(v ? v.toLocaleString('tr-TR') : '');
+    setCapitalSaved(true);
+    setTimeout(() => setCapitalSaved(false), 1800);
+  };
   const [pushOn, setPushOn] = useState(false);
   const [pushMsg, setPushMsg] = useState('');
   const [saved, setSaved] = useState(false);
@@ -60,10 +73,32 @@ export default function ProxySettings() {
       background: 'rgba(0,0,0,0.15)', borderRadius: 6,
       border: '1px solid var(--border)',
     }}>
+      {/* v31.47: islem sermayesi — lot onerisi bununla hesaplanir */}
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>İşlem sermayesi</div>
+      <div style={{ fontSize: 11, color: 'var(--t3)', lineHeight: 1.5, marginBottom: 6 }}>
+        AI fırsat kartlarındaki ve analiz ekranındaki lot önerisi bu tutarla hesaplanır: işlem başına
+        sermayenin %2&apos;si stopta riske edilir, tek pozisyon %33&apos;ü geçmez. Boş bırakılırsa
+        {' '}{DEFAULT_CAPITAL.toLocaleString('tr-TR')} TL varsayılır. Yalnız bu cihazda saklanır.
+      </div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 16 }}>
+        <input
+          className="inp"
+          inputMode="numeric"
+          value={capital}
+          onChange={e => setCapital(e.target.value)}
+          onBlur={saveCapital}
+          placeholder={`${DEFAULT_CAPITAL.toLocaleString('tr-TR')} TL`}
+          style={{ flex: 1, fontSize: 13, padding: 8 }}
+          aria-label="İşlem sermayesi (TL)"
+        />
+        <span style={{ fontSize: 12, color: capitalSaved ? 'var(--green)' : 'var(--t3)', minWidth: 64 }}>
+          {capitalSaved ? 'Kaydedildi' : 'TL'}
+        </span>
+      </div>
+
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 14 }}>🤖</span>
-        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
-          Claude API Anahtari (Anthropic)
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--t1)' }}>
+          Claude API anahtarı (Anthropic)
         </span>
       </div>
 
@@ -81,7 +116,7 @@ export default function ProxySettings() {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 14 }}>✨</span>
-        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Inter,sans-serif', color: 'var(--cyan)' }}>
           Gemini API Anahtari (Haberler Icin)
         </span>
       </div>
@@ -104,7 +139,7 @@ export default function ProxySettings() {
           is (GitHub Actions) fiyatlari kontrol edip bildirimi gonderir. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 14 }}>{'\u{1F514}'}</span>
-        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Inter,sans-serif', color: 'var(--cyan)' }}>
           Arka Plan Bildirimi (uygulama kapaliyken)
         </span>
       </div>
@@ -138,9 +173,9 @@ export default function ProxySettings() {
           style={{
             fontSize: 10, fontWeight: 700, padding: '8px 14px', borderRadius: 5, cursor: 'pointer',
             fontFamily: 'inherit',
-            background: pushOn ? 'rgba(244,63,94,0.12)' : 'rgba(0,230,118,0.12)',
-            border: `1px solid ${pushOn ? 'rgba(244,63,94,0.5)' : 'rgba(0,230,118,0.5)'}`,
-            color: pushOn ? '#ff5470' : 'var(--green)',
+            background: pushOn ? 'rgba(244,63,94,0.12)' : 'rgba(34,197,94,0.12)',
+            border: `1px solid ${pushOn ? 'rgba(244,63,94,0.5)' : 'rgba(34,197,94,0.5)'}`,
+            color: pushOn ? '#f87171' : 'var(--green)',
           }}
         >{pushOn ? 'BILDIRIMI KAPAT' : 'BILDIRIMI AC'}</button>
         {!isPushSupported() && (
@@ -154,8 +189,7 @@ export default function ProxySettings() {
           alimi icin kullanilir — politika faizi bu anahtarla CEKILMIYORDU (eski metin
           yanlisti). Hisse bazli yabanci orani ANAHTARSIZ gelir (Is Yatirim). */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 14 }}>🏦</span>
-        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Inter,sans-serif', color: 'var(--cyan)' }}>
           TCMB EVDS Anahtarı (Haftalık Yabancı Akış)
         </span>
       </div>
@@ -179,8 +213,7 @@ export default function ProxySettings() {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 14 }}>🌐</span>
-        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Space Grotesk,sans-serif', color: 'var(--cyan)' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Inter,sans-serif', color: 'var(--cyan)' }}>
           CORS Proxy Ayarlari
         </span>
       </div>
@@ -231,7 +264,7 @@ export default function ProxySettings() {
       {testResult && (
         <div style={{
           fontSize: 9, padding: '4px 8px', borderRadius: 4, marginBottom: 6,
-          background: testResult.ok ? 'rgba(0,200,83,0.08)' : 'rgba(255,23,68,0.08)',
+          background: testResult.ok ? 'rgba(0,200,83,0.08)' : 'rgba(239,68,68,0.08)',
           color: testResult.ok ? 'var(--green)' : 'var(--red)',
         }}>
           {testResult.ok

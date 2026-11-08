@@ -42,10 +42,10 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
       <div className="m-advisor-row1">
         <div className="m-advisor-status">
           <span className={`m-advisor-dot ${scanning ? 'scanning' : 'ready'}`} />
-          <span className="m-advisor-label">AI ADVISOR</span>
+          <span className="m-advisor-label">AI Advisor</span>
           {!scanning && (
             <span className="m-advisor-mode">
-              {isMarketOpen() ? 'CANLI' : 'YARIN İÇİN'}
+              {isMarketOpen() ? 'Canlı' : 'Yarın için'}
             </span>
           )}
         </div>
@@ -90,7 +90,7 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
           onClick={() => manualScan?.()}
           disabled={scanning}
         >
-          TARA
+          Tara
         </button>
       </div>
 
@@ -125,7 +125,7 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
                     ? 'Günün en iyisi — rejim kapısı boş bıraktı, pre-pump havuzundan garanti pick (yüksek risk, küçük pozisyon)'
                     : counter ? 'Rejime karşı AL — düşüş/yatay piyasada yüksek risk, küçük pozisyon' : undefined}
                 >
-                  {watchOnly ? '👁 ' : bestOfDay ? '⭐ ' : counter ? '⚠ ' : ''}{p.symbol} ({(p.score || 0).toFixed(1)})
+                  {p.symbol} ({(p.score || 0).toFixed(1)})
                 </button>
               );
             })}
@@ -142,7 +142,7 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
       {/* Empty state */}
       {!scanning && sortedPicks.length === 0 && !scanned && (
         <div className="m-advisor-empty">
-          TARA butonuna basarak 648 hisseyi tarayın.
+          Tara düğmesiyle tüm hisseleri tarayın.
         </div>
       )}
     </div>

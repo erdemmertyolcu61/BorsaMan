@@ -20,6 +20,8 @@
 // ════════════════════════════════════════════════════════════════════
 
 import { TOTAL_COST_PCT } from './tradingCosts.js';
+import { istanbulDayKey, lastSettledTradingDay } from './signalPerfHistory.js';
+import { latestSessionDayKey } from './liveSession.js';
 
 export const JOURNAL_STORAGE_KEY = 'bist_forward_journal_v1';
 export const MAX_JOURNAL_DAYS = 180;          // ~6 months of trading days
@@ -176,6 +178,9 @@ export function evaluateJournal(days, quoteMap, now = Date.now()) {
     // day's excursion even before outcomes mature.
     let dayTouched = false;
     let predictions = day.predictions.map(pred => {
+      // v31.47: a close-settled prediction is owned by settleJournalFromBars —
+      // a live tick taken later must not rewrite it.
+      if (pred.perfSource === 'close') return pred;
       const priceNow = quoteMap[pred.symbol];
       if (priceNow == null || !pred.entryPrice) return pred;
 
@@ -200,6 +205,7 @@ export function evaluateJournal(days, quoteMap, now = Date.now()) {
     }
 
     predictions = predictions.map(pred => {
+      if (pred.perfSource === 'close') return pred;
       const priceNow = quoteMap[pred.symbol];
       if (priceNow == null) return pred;
 
@@ -239,6 +245,181 @@ export function evaluateJournal(days, quoteMap, now = Date.now()) {
     return { ...day, predictions };
   });
 
+  return { days: next, changed };
+}
+
+// ── v31.47: SETTLE FROM OFFICIAL DAILY CLOSES ─────────────────────────────
+//
+// evaluateJournal latches d1/d3/d5 from whatever live price it sees the first
+// time the app is open after each age threshold. On the phone the app is closed
+// most of the time, so a prediction opened after a three-day gap got the SAME
+// late price for d1, d3 and d5 — and this journal is not a scoreboard only: the
+// profit governor (score cutoff, pick count, position size) and the adaptive
+// stop multiplier read it on every scan. Daily closes stay retrievable, so the
+// record is rebuilt from them; the live latch is kept in `perfLive` for audit.
+//
+// Indexing matches the signal tracker (derivePerfCheckpoints): session 0 is the
+// last session the scan had seen (latestSessionDayKey), dN is the close N
+// sessions later. An evening scan's day-0 bar happened entirely BEFORE the
+// prediction, so the stop/target path starts at session 1 for off-session scans.
+
+export const CLOSE_HORIZON = 5;
+const CLOSE_RECOVERY_SESSIONS = 5;
+export const MAX_CLOSE_TRIES = 4;
+
+function scannedInSession(ts) {
+  const d = new Date(Number(ts) + 3 * 60 * 60 * 1000);
+  const dow = d.getUTCDay();
+  const min = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return dow >= 1 && dow <= 5 && min >= 9 * 60 + 55 && min < 18 * 60 + 10;
+}
+
+const round2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+
+/**
+ * Close-derived measurement for one prediction, or null when not even d1 has a
+ * settled close yet.
+ */
+export function settlePredictionFromBars(pred, scanTs, bars, now = Date.now()) {
+  const entry = pred?.entryPrice;
+  if (!(entry > 0) || !Array.isArray(bars) || !bars.length) return null;
+  const base = latestSessionDayKey(scanTs);
+  const settled = lastSettledTradingDay(now);
+  if (!base || !settled || base >= settled) return null;
+
+  const series = [];
+  for (const b of bars) {
+    const k = istanbulDayKey(b?.date);
+    if (!k || k < base || k > settled) continue;
+    const c = Number(b?.close);
+    if (!(c > 0)) continue;
+    series.push({
+      k, close: c,
+      high: Number(b.high) > 0 ? Number(b.high) : c,
+      low: Number(b.low) > 0 ? Number(b.low) : c,
+    });
+  }
+  if (!series.length) return null;
+  // Missing base bar (holiday / source gap): the first bar IS session 1.
+  const offset = series[0].k === base ? 0 : 1;
+  const at = (n) => {
+    const i = n - offset;
+    return i >= 0 && i < series.length ? series[i] : null;
+  };
+  const pctAt = (n) => (at(n) ? ((at(n).close - entry) / entry) * 100 : null);
+  const d1 = pctAt(1);
+  if (d1 == null) return null;
+
+  let runningHigh = null;
+  let runningLow = null;
+  let hard = null;
+  let stopN = null;
+  for (let n = scannedInSession(scanTs) ? 0 : 1; n <= CLOSE_HORIZON; n++) {
+    const b = at(n);
+    if (!b) break;
+    runningHigh = runningHigh == null ? b.high : Math.max(runningHigh, b.high);
+    runningLow = runningLow == null ? b.low : Math.min(runningLow, b.low);
+    if (!hard) {
+      // Both touched on one daily bar: the order is unknowable, the stop wins
+      // (same pessimistic convention as outcomeFromPrice / evaluateOutcomeFromBars).
+      if (pred.stop && b.low <= pred.stop) { hard = 'STOP_HIT'; stopN = n; }
+      else if (pred.target && b.high >= pred.target) hard = 'TARGET_HIT';
+    }
+  }
+
+  let postStopHigh = null;
+  if (stopN != null) {
+    for (let n = stopN + 1; n <= stopN + CLOSE_RECOVERY_SESSIONS; n++) {
+      const b = at(n);
+      if (!b) break;
+      postStopHigh = postStopHigh == null ? b.high : Math.max(postStopHigh, b.high);
+    }
+  }
+
+  const d5 = pctAt(5);
+  let outcome = hard;
+  if (!outcome && d5 != null) outcome = d5 >= 5 ? 'WIN' : d5 <= -3 ? 'LOSS' : 'OPEN';
+  if (!outcome) outcome = 'OPEN';
+  const recoveryDone = stopN == null || at(stopN + CLOSE_RECOVERY_SESSIONS) != null;
+
+  return {
+    perf: { d1: round2(d1), d3: round2(pctAt(3)), d5: round2(d5) },
+    outcome,
+    directionalHit: d1 > 0,
+    runningHigh,
+    runningLow,
+    postStopHigh,
+    lastPrice: series[series.length - 1].close,
+    closeSettledThrough: series[series.length - 1].k,
+    closeComplete: d5 != null && recoveryDone,
+  };
+}
+
+/** Days with a prediction that still needs (or can now get) a close-based fill. */
+export function journalDaysNeedingBars(days, now = Date.now()) {
+  const settled = lastSettledTradingDay(now);
+  return (Array.isArray(days) ? days : []).filter(day => {
+    const base = latestSessionDayKey(day.timestamp);
+    if (!base || base >= settled) return false;
+    return day.predictions.some(p => !p.closeComplete && (p.closeTries || 0) < MAX_CLOSE_TRIES
+      && (p.closeSettledThrough || '') < settled);
+  });
+}
+
+/** Symbols to fetch for the next settlement pass (newest days first, de-duped). */
+export function journalSymbolsToSettle(days, now = Date.now(), limit = 12) {
+  const settled = lastSettledTradingDay(now);
+  const out = [];
+  const due = journalDaysNeedingBars(days, now)
+    .slice()
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  for (const day of due) {
+    for (const p of day.predictions) {
+      if (p.closeComplete || (p.closeTries || 0) >= MAX_CLOSE_TRIES) continue;
+      if ((p.closeSettledThrough || '') >= settled) continue;
+      if (!out.includes(p.symbol)) out.push(p.symbol);
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
+
+/**
+ * Apply close-derived measurements. barsBySymbol: { SYM: dailyBars[] }; a symbol
+ * missing from the map was not fetched this pass and is left untouched.
+ */
+export function settleJournalFromBars(days, barsBySymbol, now = Date.now()) {
+  let changed = false;
+  const settled = lastSettledTradingDay(now);
+  const next = (Array.isArray(days) ? days : []).map(day => {
+    let touched = false;
+    const predictions = day.predictions.map(pred => {
+      if (pred.closeComplete) return pred;
+      if (!Object.prototype.hasOwnProperty.call(barsBySymbol || {}, pred.symbol)) return pred;
+      const bars = barsBySymbol[pred.symbol];
+      const s = settlePredictionFromBars(pred, day.timestamp, bars, now);
+      if (!s) {
+        const base = latestSessionDayKey(day.timestamp);
+        if (!base || base >= settled) return pred;        // nothing could be settled yet
+        // Same evening as the latest close: the source may not have published it.
+        if (settled === istanbulDayKey(now)) return pred;
+        touched = true;
+        return { ...pred, closeTries: (pred.closeTries || 0) + 1 };
+      }
+      touched = true;
+      return {
+        ...pred,
+        ...s,
+        perfLive: pred.perfSource === 'close' ? pred.perfLive : (pred.perf || null),
+        perfSource: 'close',
+        closeTries: 0,
+        evaluatedAt: now,
+      };
+    });
+    if (!touched) return day;
+    changed = true;
+    return { ...day, predictions };
+  });
   return { days: next, changed };
 }
 
@@ -438,6 +619,10 @@ export default {
   recordSnapshot,
   outcomeFromPrice,
   evaluateJournal,
+  settlePredictionFromBars,
+  settleJournalFromBars,
+  journalDaysNeedingBars,
+  journalSymbolsToSettle,
   predMetrics,
   netRealized,
   journalStats,

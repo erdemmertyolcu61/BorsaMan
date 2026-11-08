@@ -80,7 +80,7 @@ export default function KAPPanel({ symbol }) {
               disabled={aiLoading}
               style={{
                 fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 4, cursor: aiLoading ? 'default' : 'pointer',
-                background: 'rgba(213,0,249,0.12)', border: '1px solid rgba(213,0,249,0.4)', color: 'var(--purple)', fontFamily: 'inherit',
+                background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.4)', color: 'var(--purple)', fontFamily: 'inherit',
               }}
               title="Claude API anahtarı gerekir; her tıklama bir istek gönderir"
             >

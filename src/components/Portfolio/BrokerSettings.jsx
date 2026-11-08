@@ -23,7 +23,7 @@ export default function BrokerSettings({ brokerConfig, setBrokerConfig }) {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
         <div className="dot yellow" />
-        <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 14 }}>
+        <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 14 }}>
           ARACI KURUM BAĞLANTISI
         </div>
       </div>

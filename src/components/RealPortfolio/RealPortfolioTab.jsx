@@ -160,7 +160,7 @@ export default function RealPortfolioTab({ portfolio, updatePortfolio, brokerCon
     <div style={{ padding: '14px 16px 28px', fontFamily: 'JetBrains Mono, monospace', maxWidth: 1400 }}>
       {/* HEADER */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
-        <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--t1)', letterSpacing: 1 }}>{'💼'} GERÇEK PORTFÖY</span>
+        <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--t1)' }}>Gerçek portföy</span>
         <span style={{ fontSize: 9, color: 'var(--t3)' }}>ABD + BIST · gerçek pozisyonlar (sadece bu cihazda saklanır)</span>
         <div style={{ flex: 1 }} />
         {usdTry && <span style={{ fontSize: 10, color: 'var(--cyan)' }}>USD/TRY {usdTry.toFixed(2)}</span>}
@@ -192,7 +192,7 @@ export default function RealPortfolioTab({ portfolio, updatePortfolio, brokerCon
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <button onClick={save} style={{
               padding: '6px 14px', borderRadius: 5, cursor: 'pointer', fontSize: 11, fontWeight: 700,
-              background: 'rgba(16,232,122,0.15)', border: '1px solid rgba(16,232,122,0.4)', color: 'var(--green)',
+              background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.4)', color: 'var(--green)',
             }}>Kaydet & Yenile</button>
             <button onClick={() => setEditing(false)} style={{
               padding: '6px 14px', borderRadius: 5, cursor: 'pointer', fontSize: 11,
@@ -205,7 +205,7 @@ export default function RealPortfolioTab({ portfolio, updatePortfolio, brokerCon
       {/* EMPTY STATE */}
       {positions.length === 0 && !editing && (
         <div className="trade-box" style={{ textAlign: 'center', padding: '32px 20px' }}>
-          <div style={{ fontSize: 26, marginBottom: 10 }}>{'💼'}</div>
+          
           <div style={{ color: 'var(--t2)', fontSize: 12, marginBottom: 6 }}>Henüz gerçek pozisyon eklenmedi.</div>
           <div style={{ color: 'var(--t3)', fontSize: 10, maxWidth: 520, margin: '0 auto 12px' }}>
             &ldquo;Pozisyonları Düzenle&rdquo; ile ABD ve BIST hisselerini ekle. Veriler yalnızca bu
@@ -239,7 +239,7 @@ export default function RealPortfolioTab({ portfolio, updatePortfolio, brokerCon
       {/* ALERTS */}
       {alerts.length > 0 && (
         <div className="trade-box" style={{ marginBottom: 12 }}>
-          <div className="trade-title" style={{ color: 'var(--orange)' }}>{'⚠'} ALARMLAR ({alerts.length})</div>
+          <div className="trade-title" style={{ color: 'var(--orange)' }}>Alarmlar ({alerts.length})</div>
           {alerts.map(a => (
             <div key={a.ticker + a.kind} style={{ fontSize: 10, padding: '3px 0', color: a.kind === 'loss' ? 'var(--red)' : 'var(--green)' }}>
               {a.kind === 'loss' ? '▼' : '▲'} {a.message}
@@ -257,7 +257,7 @@ export default function RealPortfolioTab({ portfolio, updatePortfolio, brokerCon
           portfoy sekmesi yalniz portfoy. Masaustunde yerinde duruyor. */}
       {isMobile ? (
         <div style={{ fontSize: 10, color: 'var(--t3)', textAlign: 'center', padding: '10px 0', lineHeight: 1.5 }}>
-          ⚙ Aracı kurum, API anahtarları ve bildirim ayarları: sağ üstteki Profil › Ayarlar
+          Aracı kurum, API anahtarları ve bildirim ayarları: sağ üstteki Profil › Ayarlar
         </div>
       ) : (
         <BrokerSettings brokerConfig={brokerConfig} setBrokerConfig={setBrokerConfig} />

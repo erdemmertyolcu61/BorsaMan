@@ -8,6 +8,7 @@ import { useNotifications } from './hooks/useNotifications.jsx';
 import { usePaperTrading } from './hooks/usePaperTrading.js';
 import { usePaperTradeML } from './hooks/usePaperTradeML.js';
 import { useForwardTestJournal } from './hooks/useForwardTestJournal.js';
+import { useScanScorecard } from './hooks/useScanScorecard.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { runFreshRegimeReset } from './utils/resetStorage.js';
 import PremiumHeader from './components/Layout/PremiumHeader.jsx';
@@ -23,6 +24,7 @@ import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPa
 import RealPortfolioTab from './components/RealPortfolio/RealPortfolioTab.jsx';
 import MarketIntelPanel from './components/MarketIntel/MarketIntelPanel.jsx';
 import MarketPulsePanel from './components/MarketPulse/MarketPulsePanel.jsx';
+import ScanScorecardPanel from './components/Signals/ScanScorecardPanel.jsx';
 
 // v31.38 (user decision): tabs removed on mobile → where to land instead.
 // Desktop keeps both. On mobile they are not even mounted: a hidden TradesTab
@@ -45,6 +47,8 @@ export default function App() {
   useEffect(() => {
     window.__bistForwardJournal = forwardJournal;
   }, [forwardJournal]);
+  // v31.47: tahmin karnesi — gosterilen AL onerileri, yargilayan seansin kapanisiyla.
+  const scorecard = useScanScorecard(signalTracker.signals);
   const isMobile = useIsMobile();
   const { activeTab, setActiveTab } = state;
   // A rotation / resize can leave a phone on a tab it no longer has.
@@ -401,6 +405,7 @@ export default function App() {
       </div>
 
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>
+        <ScanScorecardPanel scorecard={scorecard} onAnalyze={handleAIAnalyze} />
         <ForwardAccuracyPanel journal={forwardJournal} signalTracker={signalTracker} />
         <SignalsTab
           tracker={signalTracker}
@@ -416,6 +421,8 @@ export default function App() {
         advisor={advisor}
         portfolio={state.portfolio}
         onAnalyze={handleAIAnalyze}
+        scorecard={scorecard}
+        onOpenScorecard={() => state.setActiveTab('signals')}
       />
       <MobileNav activeTab={state.activeTab} onTabChange={state.setActiveTab} />
     </>

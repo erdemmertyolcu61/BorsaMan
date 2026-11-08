@@ -159,7 +159,7 @@ export default function ForwardAccuracyPanel({ journal, signalTracker }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--t1, #e5e7eb)', letterSpacing: 0.5 }}>
-            🎯 TAHMİN İSABETİ <span style={{ color: 'var(--cyan, #22d3ee)' }}>
+            Tahmin isabeti <span style={{ color: 'var(--cyan, #22d3ee)' }}>
               {unifiedMode ? '(Birleşik)' : '(Forward Test)'}
             </span>
           </div>
@@ -213,7 +213,7 @@ export default function ForwardAccuracyPanel({ journal, signalTracker }) {
         </>
       ) : insufficient ? (
         <div style={{ padding: '14px 0', textAlign: 'center', color: 'var(--t2, #9ca3af)', fontSize: 13 }}>
-          <div style={{ fontSize: 28, marginBottom: 6 }}>⏳</div>
+          
           Henüz güvenilir bir isabet sayısı için yeterli tahmin olgunlaşmadı.
           <div style={{ fontSize: 12, color: 'var(--t3, #6b7280)', marginTop: 6 }}>
             Değerlendirilen: <b>{stats.evaluated}</b> / Bekleyen: <b>{stats.pending}</b> ·

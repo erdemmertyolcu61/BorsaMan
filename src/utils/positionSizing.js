@@ -69,3 +69,77 @@ export function applyConvictionSizing(current, pick = {}, regimeFallback = null)
   const out = base * tierMult * neutralMult;
   return Math.max(MIN_MULT, Math.min(MAX_MULT, Math.round(out * 1000) / 1000));
 }
+
+// ── LOT ONERISI (v31.47) — kartlarda gosterilen, paper ile AYNI kural ──────
+//
+// v31.44'te islem plani kutusu kaldirilinca lot onerisi ekrandan gitti; AI
+// Firsatlar kartlari giris/stop/hedefi gosteriyor ama "kac lot" sorusunu
+// cevapsiz birakiyordu. Analiz ekranindaki eski hesap (calcPosition, sanal
+// portfoyun 10.000 TL nakdi) konviksiyon carpanini ve %33 tavanini bilmiyordu.
+//
+// Kural PaperTradeEngine ile birebir (forward test onerilen stratejiyi olcsun):
+//   risk butcesi  = sermaye × %2 × carpan
+//   pozisyon (TL) = min(risk butcesi / stop mesafesi, sermaye × %33 × carpan, sermaye)
+// Carpan pick._positionSizeMult (rejim × governor × konviksiyon, applyConvictionSizing).
+// Izle-only (carpan 0) → pozisyon yok.
+
+export const RISK_PER_TRADE_PCT = 2;
+export const MAX_POSITION_PCT = 33;
+export const MIN_POSITION_TL = 3000;
+export const DEFAULT_CAPITAL = 100_000;
+export const CAPITAL_KEY = 'bist_trading_capital';
+
+/** Kullanicinin girdigi islem sermayesi (TL) ya da null. */
+export function getTradingCapital() {
+  try {
+    const v = Number(localStorage.getItem(CAPITAL_KEY));
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch { return null; }
+}
+
+/** 0 / bos → kaldir. */
+export function setTradingCapital(value) {
+  const v = Number(String(value ?? '').replace(/\./g, '').replace(',', '.'));
+  try {
+    if (Number.isFinite(v) && v > 0) localStorage.setItem(CAPITAL_KEY, String(Math.round(v)));
+    else localStorage.removeItem(CAPITAL_KEY);
+  } catch { /* storage yok */ }
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+}
+
+/** Pick'in boyut carpani: damga varsa o, yoksa konviksiyondan turet. */
+export function sizeMultOf(pick = {}) {
+  if (pick._watchOnly) return 0;
+  const m = pick._positionSizeMult;
+  if (Number.isFinite(m) && m >= 0) return Math.min(MAX_MULT, m);
+  return applyConvictionSizing(1, pick);
+}
+
+/**
+ * @param {{capital?:number, entry:number, stop:number, mult?:number}} p
+ * @returns {{ok:boolean, reason?:string, lots?:number, costTl?:number, riskTl?:number,
+ *            pctOfCapital?:number, capped?:boolean, capital:number, mult:number}}
+ */
+export function suggestPosition({ capital, entry, stop, mult = 1 } = {}) {
+  const cap = Number.isFinite(capital) && capital > 0 ? capital : DEFAULT_CAPITAL;
+  const m = Number.isFinite(mult) ? Math.max(MIN_MULT, Math.min(MAX_MULT, mult)) : 1;
+  const base = { capital: cap, mult: m };
+  if (!(entry > 0) || !(stop > 0) || stop >= entry) return { ...base, ok: false, reason: 'no_stop' };
+  if (m === 0) return { ...base, ok: false, reason: 'watch_only' };
+  const stopDist = (entry - stop) / entry;
+  const riskSized = (cap * (RISK_PER_TRADE_PCT / 100) * m) / stopDist;
+  const ceiling = cap * (MAX_POSITION_PCT / 100) * m;
+  const sizeTl = Math.min(riskSized, ceiling, cap);
+  const lots = Math.floor(sizeTl / entry);
+  const costTl = lots * entry;
+  if (lots < 1 || costTl < MIN_POSITION_TL) return { ...base, ok: false, reason: 'too_small', lots, costTl };
+  return {
+    ...base,
+    ok: true,
+    lots,
+    costTl,
+    riskTl: lots * (entry - stop),
+    pctOfCapital: (costTl / cap) * 100,
+    capped: ceiling < riskSized,
+  };
+}

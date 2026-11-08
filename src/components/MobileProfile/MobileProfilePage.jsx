@@ -165,11 +165,11 @@ export default function MobileProfilePage({ notifications, portfolio, onTabChang
               background: 'linear-gradient(135deg, var(--green), var(--cyan))',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 28, fontWeight: 700, color: '#000',
-              boxShadow: '0 0 24px rgba(0,229,255,0.25)',
+              boxShadow: '0 0 24px rgba(34,211,238,0.25)',
             }}>
               B
             </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--t1)', fontFamily: 'Space Grotesk, sans-serif' }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--t1)', fontFamily: 'Inter, sans-serif' }}>
               BIST Terminal
             </div>
             <div style={{
@@ -196,7 +196,7 @@ export default function MobileProfilePage({ notifications, portfolio, onTabChang
               Portfoy Ozeti
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--t1)', fontFamily: 'Space Grotesk' }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--t1)', fontFamily: 'Inter' }}>
                 {totalValue.toLocaleString('tr-TR', { minimumFractionDigits: 0 })} TL
               </div>
               <div style={{ fontSize: 13, color: 'var(--green)', fontWeight: 600 }}>

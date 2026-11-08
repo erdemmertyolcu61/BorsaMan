@@ -10,6 +10,10 @@ import {
   exportJournalJSON,
   JOURNAL_STORAGE_KEY,
   ROUND_TRIP_COST_PP,
+  settlePredictionFromBars,
+  settleJournalFromBars,
+  journalSymbolsToSettle,
+  journalDaysNeedingBars,
 } from '../forwardTestJournal.js';
 
 const DAY = 1000 * 60 * 60 * 24;
@@ -233,5 +237,72 @@ describe('forwardTestJournal v2', () => {
     expect(p.claudeGrade).toBe('A');
     expect(p.atrPct).toBe(2.1);
     expect(p.positionSizeMult).toBe(0.8);
+  });
+});
+
+// ── v31.47: close-based settlement ─────────────────────────────────────────
+
+describe('settleJournalFromBars (v31.47)', () => {
+  // 2026-09-14 is a Monday. Evening scan → day-0 is Monday, d1 Tuesday.
+  const MON_1815 = Date.parse('2026-09-14T15:15:00Z');
+  const MON_1100 = Date.parse('2026-09-14T08:00:00Z');
+  const MON_NEXT_WEEK = Date.parse('2026-09-23T16:00:00Z');
+  const b = (k, h, l, c) => ({ date: `${k}T00:00:00.000Z`, open: c, high: h, low: l, close: c });
+  const bars = [
+    b('2026-09-14', 101, 95, 100),  // day 0 — dipped to 95 BEFORE an evening scan
+    b('2026-09-15', 103, 99, 102),  // d1
+    b('2026-09-16', 104, 100, 103),
+    b('2026-09-17', 106, 101, 105), // d3
+    b('2026-09-18', 107, 103, 104),
+    b('2026-09-21', 108, 104, 106), // d5
+    b('2026-09-22', 109, 105, 107),
+  ];
+  const pred = { symbol: 'THYAO', entryPrice: 100, stop: 97, target: 112, perf: { d1: 9, d3: 9, d5: 9 } };
+
+  it('reads d1/d3/d5 from closes, not from whatever price the app saw later', () => {
+    const s = settlePredictionFromBars(pred, MON_1815, bars, MON_NEXT_WEEK);
+    expect(s.perf).toEqual({ d1: 2, d3: 5, d5: 6 });
+    expect(s.directionalHit).toBe(true);
+    expect(s.closeComplete).toBe(true);
+    // The 95 low on day 0 happened before an evening prediction: no stop.
+    expect(s.outcome).toBe('WIN');
+    expect(s.runningLow).toBe(99);
+  });
+
+  it('an in-session scan counts the rest of day 0 (bar resolution limit)', () => {
+    const s = settlePredictionFromBars(pred, MON_1100, bars, MON_NEXT_WEEK);
+    expect(s.outcome).toBe('STOP_HIT');
+    expect(s.postStopHigh).toBe(108);
+  });
+
+  it('waits until the d1 close is final', () => {
+    const tueMorning = Date.parse('2026-09-15T07:00:00Z');
+    expect(settlePredictionFromBars(pred, MON_1815, bars, tueMorning)).toBeNull();
+  });
+
+  it('keeps the live latch for audit and stops live ticks from rewriting it', () => {
+    const days = [{ date: '2026-09-14', timestamp: MON_1815, predictions: [{ ...pred }] }];
+    expect(journalSymbolsToSettle(days, MON_NEXT_WEEK)).toEqual(['THYAO']);
+    const { days: out, changed } = settleJournalFromBars(days, { THYAO: bars }, MON_NEXT_WEEK);
+    expect(changed).toBe(true);
+    const p = out[0].predictions[0];
+    expect(p.perfSource).toBe('close');
+    expect(p.perfLive).toEqual({ d1: 9, d3: 9, d5: 9 });
+    expect(p.evaluatedAt).toBe(MON_NEXT_WEEK);
+    expect(journalDaysNeedingBars(out, MON_NEXT_WEEK)).toHaveLength(0);
+    const live = evaluateJournal(out, { THYAO: 150 }, MON_NEXT_WEEK + DAY);
+    expect(live.days[0].predictions[0].perf.d1).toBe(2);
+    // stats now read the close-derived numbers
+    expect(journalStats(out).avgD1).toBe(2);
+  });
+
+  it('counts a try when bars exist but carry nothing usable, then gives up', () => {
+    const WED_MORNING = Date.parse('2026-09-23T07:00:00Z');
+    let days = [{ date: '2026-09-14', timestamp: MON_1815, predictions: [{ ...pred, symbol: 'GONE' }] }];
+    // The evening of the latest close does not count — the bar may still come.
+    expect(settleJournalFromBars(days, { GONE: [] }, MON_NEXT_WEEK).changed).toBe(false);
+    for (let i = 0; i < 4; i++) days = settleJournalFromBars(days, { GONE: [] }, WED_MORNING).days;
+    expect(days[0].predictions[0].closeTries).toBe(4);
+    expect(journalSymbolsToSettle(days, WED_MORNING)).toEqual([]);
   });
 });

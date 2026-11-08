@@ -26,7 +26,7 @@ export default function OrderModal({ isOpen, onClose, order, brokerType, onConfi
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div className={`dot ${isMidas ? 'yellow' : 'cyan'}`} style={{ width: 10, height: 10 }} />
-            <div style={{ fontFamily: 'Space Grotesk', fontWeight: 700, fontSize: 16, letterSpacing: 0.5 }}>
+            <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 16, letterSpacing: 0.5 }}>
               {isMidas ? 'MIDAS İŞLEM KÖPRÜSÜ' : 'İŞLEM ONAYI'}
             </div>
           </div>

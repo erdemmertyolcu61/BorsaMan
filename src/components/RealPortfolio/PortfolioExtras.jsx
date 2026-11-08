@@ -60,7 +60,7 @@ export function WatchlistPanel({ watchlist = [], setWatchlist, livePrice }) {
         return (
           <div key={w.symbol + i} style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px',
-            background: upHit ? 'rgba(0,200,83,0.06)' : downHit ? 'rgba(255,23,68,0.06)' : 'var(--bg3)',
+            background: upHit ? 'rgba(0,200,83,0.06)' : downHit ? 'rgba(239,68,68,0.06)' : 'var(--bg3)',
             borderLeft: `3px solid ${upHit ? 'var(--green)' : downHit ? 'var(--red)' : 'transparent'}`,
             borderRadius: 5, marginBottom: 4,
           }}>

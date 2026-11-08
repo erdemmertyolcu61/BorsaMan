@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyConvictionSizing, convictionTierOf,
   TIER_MULT, NEUTRAL_EXTRA_MULT, MAX_MULT,
+  suggestPosition, sizeMultOf, setTradingCapital, getTradingCapital, DEFAULT_CAPITAL,
 } from '../positionSizing.js';
 
 describe('positionSizing.convictionTierOf', () => {
@@ -80,5 +81,45 @@ describe('positionSizing.applyConvictionSizing', () => {
 
   it('is defensive against a missing pick', () => {
     expect(applyConvictionSizing(1, undefined)).toBe(TIER_MULT.early);
+  });
+});
+
+// ── v31.47: lot onerisi ────────────────────────────────────────────────────
+
+describe('positionSizing.suggestPosition (v31.47)', () => {
+  it('risks 2% of capital at the stop — same rule as the paper engine', () => {
+    // 100k, entry 100, stop 95 (5%) → 2,000 TL risk / 5% = 40,000 TL → capped at 33%.
+    const s = suggestPosition({ capital: 100_000, entry: 100, stop: 95, mult: 1 });
+    expect(s.ok).toBe(true);
+    expect(s.lots).toBe(330);
+    expect(s.capped).toBe(true);
+    expect(s.riskTl).toBe(330 * 5);
+    // A wide stop is NOT capped and sizes down with the distance.
+    const wide = suggestPosition({ capital: 100_000, entry: 100, stop: 90, mult: 1 });
+    expect(wide.lots).toBe(200);
+    expect(wide.capped).toBe(false);
+    expect(wide.riskTl).toBe(2000);
+  });
+
+  it('scales with the conviction multiplier and refuses watch-only picks', () => {
+    expect(suggestPosition({ capital: 100_000, entry: 100, stop: 90, mult: 0.5 }).lots).toBe(100);
+    expect(suggestPosition({ capital: 100_000, entry: 100, stop: 90, mult: 0 }).reason).toBe('watch_only');
+    expect(sizeMultOf({ _watchOnly: true, _positionSizeMult: 1 })).toBe(0);
+    expect(sizeMultOf({ _positionSizeMult: 0.4 })).toBe(0.4);
+    expect(sizeMultOf({ convictionTier: 'early', _regime: 'BULL' })).toBe(0.5);
+  });
+
+  it('needs a stop below the entry and a meaningful size', () => {
+    expect(suggestPosition({ entry: 100, stop: 0 }).reason).toBe('no_stop');
+    expect(suggestPosition({ entry: 100, stop: 101 }).reason).toBe('no_stop');
+    expect(suggestPosition({ capital: 5_000, entry: 100, stop: 90 }).reason).toBe('too_small');
+    expect(suggestPosition({ entry: 100, stop: 90 }).capital).toBe(DEFAULT_CAPITAL);
+  });
+
+  it('stores the trading capital, accepting Turkish thousands separators', () => {
+    expect(setTradingCapital('250.000')).toBe(250000);
+    expect(getTradingCapital()).toBe(250000);
+    expect(setTradingCapital('')).toBeNull();
+    expect(getTradingCapital()).toBeNull();
   });
 });
