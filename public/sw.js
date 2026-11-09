@@ -32,20 +32,19 @@ self.addEventListener('fetch', (event) => {
 
   if (event.request.method !== 'GET') return;
   if (url.protocol === 'chrome-extension:') return;
+  // v31.52: the running build compares itself with this file — never answer from cache.
+  if (url.pathname === '/version.json') return;
 
-  // API/data requests: network-first, no cache fallback for financial data
-  if (
-    url.pathname.startsWith('/api/') ||
-    url.hostname.includes('yahoo') ||
-    url.hostname.includes('anthropic') ||
-    url.hostname.includes('bigpara') ||
-    url.hostname.includes('isyatirim')
-  ) {
-    event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
-    );
-    return;
-  }
+  // v31.52: data requests are NOT intercepted. They used to go through
+  // respondWith(fetch(...)) with a cache fallback that never had an entry (API
+  // responses were never cached). That bought nothing and cost the update: during a
+  // scan (15 parallel requests for 10-20 min) the active worker always had fetch
+  // events in flight, and the browser does not activate a waiting worker while the
+  // active one is busy — measured in a local preview: new build 'installed', stuck
+  // in 'waiting' for the whole scan despite skipWaiting. Unhandled requests go
+  // straight to the network and leave the worker idle.
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;
 
   // HTML navigation: network-first (always get latest SPA shell)
   if (event.request.mode === 'navigate') {

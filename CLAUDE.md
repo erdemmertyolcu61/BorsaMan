@@ -130,10 +130,15 @@ ve tahmin karnesi. Defter skora geri döner (profit governor + adaptif stop), ca
 uygulama günlerce kapalıysa d1/d3/d5 aynı geç fiyatı alıyordu. Barlar taramanın anahtarıyla çekilir
 (`dailyBarsBatch.js`, `SYM_1y_1d`); ağ hatası deneme sayılmaz, kaynak bar yayınlamadan önceki akşam da.
 
-**PWA güncellemesi.** `public/sw.js` kurulumda `skipWaiting` yapar; `main.jsx` controllerchange'de sayfayı
-yeniler ama tarama sürerken (`window.__bistScanActive`) bitene kadar bekler, öne gelişte güncelleme arar.
-Eskiden yeni sürüm uygulama tamamen kapanana kadar "bekliyor"da kalıyordu — telefon günlerce eski paketi
-açıyordu. Telefondaki paket Profil'deki "Sürüm 31.x · <commit>" satırından okunur (`buildInfo.js`).
+**PWA güncellemesi.** `public/sw.js` kurulumda `skipWaiting` yapar ve **veri isteklerini (`/api/`, başka
+origin) yakalamaz**: tarayıcı, aktif worker'da süren fetch olayı varken bekleyen worker'ı devreye almaz; tarama
+15 paralel istekle 10–20 dk sürdüğü için yeni sürüm `skipWaiting`'e rağmen "bekliyor"da kalıyordu (ölçüldü,
+yerel önizleme). Otomatik taramalar açılıştaki güncelleme kontrolünü bekler (`utils/appUpdate.js` kapısı,
+≤10 sn) ve güncelleme bekliyorsa başlamaz; öne gelişte kontrol 1 dk'da bir. Tarama sürerken gelen sürüm
+`UpdateBanner` ile duyurulur ("Şimdi yenile" — yarım tarama açılışta devam eder); `/version.json` (her build)
+çalışan paketle karşılaştırılır, worker takılırsa şerit önbelleği temizleyip yükler. Telefondaki paket
+Profil'deki "Sürüm 31.x · <commit>" satırından okunur (`buildInfo.js`). Yerel deneme: `.claude/launch.json`
+→ `preview-dist` (vite preview :4173), iki build arasında `reg.update()`.
 
 **Gizlilik.** Gerçek portföy özelliği v31.50'de kaldırıldı; eski veri cihazda (`bist_real_portfolio`,
 gitignore'lu `src/data/realPortfolio.local.json`) kalabilir, uygulama okumaz. Kök `.vercelignore` onu ve
@@ -215,7 +220,7 @@ gününün kapanışı ayrıca bir kez kaydedilir (`scanSchedule.js`, damga yaln
 
 ## Test ve CI
 
-- Vitest, 72 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
+- Vitest, 73 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
   ölçüde testsiz — mantığı saf bir modüle çıkarıp test etmek tercih edilen yol.
 - `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 61).
 - GitHub Actions `ci.yml`: test-js (lint + coverage), build-web, test-python, ci-gate.

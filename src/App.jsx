@@ -24,6 +24,7 @@ import ScanScorecardPanel from './components/Signals/ScanScorecardPanel.jsx';
 import DataLayerEdgePanel from './components/Signals/DataLayerEdgePanel.jsx';
 import StockDetailTab from './components/StockDetail/StockDetailTab.jsx';
 import { VirtualPositionsPanel } from './components/Portfolio/PortfolioExtras.jsx';
+import UpdateBanner from './components/Common/UpdateBanner.jsx';
 
 // v31.50 (kullanici karari): Istihbarat, Gercek Portfoy ve Piyasa Nabzi kaldirildi;
 // yerlerine Hisse detayi geldi. Intraday yalniz masaustunde (v31.38): mobilde mount
@@ -419,6 +420,7 @@ export default function App() {
         onOpenScorecard={() => state.setActiveTab('signals')}
       />
       <MobileNav activeTab={state.activeTab} onTabChange={state.setActiveTab} />
+      <UpdateBanner isMobile={isMobile} />
     </>
   );
 }

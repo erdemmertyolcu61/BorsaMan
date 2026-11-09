@@ -12,13 +12,26 @@ function buildSha() {
   try { return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return 'dev'; }
 }
 
+const BUILD_STAMP = { sha: buildSha(), time: new Date().toISOString() };
+
+// v31.52: every deploy publishes its stamp; the running app compares (main.jsx) and
+// offers a hard refresh if its service worker never picked the new build up.
+const versionJson = {
+  name: 'bist-version-json',
+  apply: 'build',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify(BUILD_STAMP) });
+  },
+};
+
 export default defineConfig({
   base: isElectron ? './' : '/',
   define: {
-    __APP_BUILD__: JSON.stringify({ sha: buildSha(), time: new Date().toISOString() }),
+    __APP_BUILD__: JSON.stringify(BUILD_STAMP),
   },
   plugins: [
     react(),
+    !isElectron && versionJson,
     !isElectron && VitePWA({
       strategies: 'injectManifest',
       srcDir: 'public',

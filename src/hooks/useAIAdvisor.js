@@ -41,6 +41,7 @@ import { createPhaseTracker, formatPhaseSummary } from '../utils/scanPhases.js';
 import { computeRelativeStrength } from '../utils/relativeStrength.js';
 import { computeTopGainerPotential, topGainerConfidenceAdjust } from '../utils/topGainerPotential.js';
 import { shouldRunEndOfDayScan, isEodCatchUp, EOD_SCAN_DAY_KEY } from '../utils/scanSchedule.js';
+import { waitForUpdateCheck, isUpdatePending } from '../utils/appUpdate.js';
 import { createThrottleController } from '../utils/adaptiveThrottle.js';
 import { getMacroContext } from '../utils/macroContextEngine.js';
 import { computeThematicAdjust, activeThemes, computeSectorMacroAdjust } from '../utils/thematicMacro.js';
@@ -3478,7 +3479,12 @@ export function useAIAdvisor(portfolio) {
     const m = readUnfinishedScan();
     if (!m) return undefined;
     if ((m.resumes || 0) >= 2) { clearScanRunning(); return undefined; }
-    const t = setTimeout(() => {
+    let alive = true;
+    const t = setTimeout(async () => {
+      // v31.52: once acilistaki guncelleme kontrolu — yeni surum varsa sayfa yenilenir,
+      // tarama yeni surumde baslar (eskiden guncelleme taramanin sonuna kaliyordu).
+      await waitForUpdateCheck();
+      if (!alive || isUpdatePending()) return;
       if (runningRef.current) return;   // bu arada baska bir tarama basladi
       pushLog({
         type: 'info',
@@ -3492,7 +3498,7 @@ export function useAIAdvisor(portfolio) {
         resumes: (m.resumes || 0) + 1,
       });
     }, 4000);
-    return () => clearTimeout(t);
+    return () => { alive = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3507,6 +3513,7 @@ export function useAIAdvisor(portfolio) {
   useEffect(() => {
     const tick = () => {
       if (runningRef.current) return;
+      if (isUpdatePending()) return;           // v31.52: sayfa yeni surume gecmek uzere
       const { day, h, m } = _istanbulParts();
 
       // (1) ACILIS taramasi — saat pencereli, oldugu gibi kaldi.
@@ -3548,8 +3555,11 @@ export function useAIAdvisor(portfolio) {
     const onVisible = () => { if (document.visibilityState === 'visible') tick(); };
     document.addEventListener('visibilitychange', onVisible);
     const iv = setInterval(tick, 60000);
-    tick();                                   // acilista hemen dene (telafi yolu)
+    // acilista dene (telafi yolu) — ama once guncelleme kontrolu (v31.52)
+    let alive = true;
+    waitForUpdateCheck().then(() => { if (alive) tick(); });
     return () => {
+      alive = false;
       document.removeEventListener('visibilitychange', onVisible);
       clearInterval(iv);
     };
@@ -3578,6 +3588,7 @@ export function useAIAdvisor(portfolio) {
     const tick = () => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       if (runningRef.current) return;
+      if (isUpdatePending()) return;           // v31.52
       // (a) v31.17 GÜNDE-BİR-KEZ POPULATE — ML AUTO'dan BAĞIMSIZ. Mobilde tarama
       // yalniz ML AUTO ile kosuyordu → ML AUTO kapaliyken Sinyal Takibi bos kaliyordu
       // ("mobilde sinyal takibi calismiyor"). Uygulama acildiginda bugun henuz
@@ -3602,8 +3613,10 @@ export function useAIAdvisor(portfolio) {
     const onVisible = () => { if (document.visibilityState === 'visible') tick(); };
     document.addEventListener('visibilitychange', onVisible);
     const iv = setInterval(tick, 1000 * 60 * 5);                 // on-planda her 5 dk kontrol
-    tick();                                                      // mount/resume'da bir kez dene
+    let alive = true;
+    waitForUpdateCheck().then(() => { if (alive) tick(); });     // mount'ta, guncelleme kontrolunden sonra
     return () => {
+      alive = false;
       document.removeEventListener('visibilitychange', onVisible);
       clearInterval(iv);
     };
