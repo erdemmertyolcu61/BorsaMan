@@ -170,14 +170,17 @@ describe('regimeGate.applyRegimeGate', () => {
 describe('regimeGate.ensureBestOfDay', () => {
   const cand = (o) => ({ cls: 'buy', score: 60, rsi: 55, mfi: 50, todayPumpReal: 1, ...o });
 
-  it('injects the best pre-pump candidate when the gate left zero buys', () => {
+  it('v31.51: with zero buys it shows up to three candidates; only the first keeps the old tradeable tags', () => {
     const gated = [{ symbol: 'S', cls: 'sell', score: 80 }];
-    const pool = [cand({ symbol: 'A', score: 62 }), cand({ symbol: 'B', score: 70 })];
+    const pool = [cand({ symbol: 'A', score: 62 }), cand({ symbol: 'B', score: 70 }), cand({ symbol: 'C', score: 65 }), cand({ symbol: 'D', score: 61 })];
     const out = ensureBestOfDay(gated, pool, 'NEUTRAL');
-    expect(out[0].symbol).toBe('B');           // highest-ranked injected first
+    expect(out.map(p => p.symbol)).toEqual(['B', 'C', 'A', 'S']);
     expect(out[0]._bestOfDay).toBe(true);
     expect(out[0]._counterRegime).toBe(true);  // NEUTRAL → warned
-    expect(out).toHaveLength(2);               // sell preserved
+    expect(out[0]._watchOnly).toBeUndefined(); // the old single guarantee, unchanged
+    expect(out[1]._watchOnly).toBe(true);      // extra candidates: visible, never opened
+    expect(out[1]._fillerWatch).toBe(true);
+    expect(out[2]._bestOfDayRank).toBe(3);
   });
 
   it('prefers early-accumulation (pre-pump coil) over a higher raw score', () => {
@@ -191,14 +194,21 @@ describe('regimeGate.ensureBestOfDay', () => {
       cand({ symbol: 'HOT', score: 88, rsi: 85 }),               // overbought
       cand({ symbol: 'CALM', score: 61 }),                       // clean pre-pump
     ];
-    expect(ensureBestOfDay([], pool, 'NEUTRAL')[0].symbol).toBe('CALM');
+    const out = ensureBestOfDay([], pool, 'NEUTRAL');
+    expect(out.map(p => p.symbol)).toEqual(['CALM']);
   });
 
-  it('does nothing when a real buy already survived the gate', () => {
+  it('tops a short real list up to three with watch-only candidates, real buys first', () => {
     const gated = [{ symbol: 'REAL', cls: 'buy', score: 80, _counterRegime: true }];
-    const out = ensureBestOfDay(gated, [cand({ symbol: 'X' })], 'NEUTRAL');
-    expect(out).toEqual(gated);
-    expect(out.some(p => p._bestOfDay)).toBe(false);
+    const out = ensureBestOfDay(gated, [cand({ symbol: 'X' }), cand({ symbol: 'REAL' }), cand({ symbol: 'Y', score: 59 })], 'NEUTRAL');
+    expect(out.map(p => p.symbol)).toEqual(['REAL', 'X', 'Y']);   // no duplicate of REAL
+    expect(out[0]._bestOfDay).toBeUndefined();
+    expect(out.slice(1).every(p => p._bestOfDay && p._watchOnly)).toBe(true);
+  });
+
+  it('leaves a list that already has three buys untouched', () => {
+    const gated = ['A', 'B', 'C'].map(symbol => ({ symbol, cls: 'buy', score: 80 }));
+    expect(ensureBestOfDay(gated, [cand({ symbol: 'X' })], 'NEUTRAL')).toEqual(gated);
   });
 
   it('does NOT tag _counterRegime in BULL', () => {
@@ -208,10 +218,10 @@ describe('regimeGate.ensureBestOfDay', () => {
     expect(out[0]._watchOnly).toBeUndefined();
   });
 
-  it('v31.13: the guaranteed pick is _watchOnly in BEAR (not buy-now), not in NEUTRAL', () => {
-    const bear = ensureBestOfDay([], [cand({ symbol: 'A' })], 'BEAR');
-    expect(bear[0]._bestOfDay).toBe(true);
-    expect(bear[0]._watchOnly).toBe(true);
+  it('v31.13: every candidate is _watchOnly in BEAR (not buy-now); the first is tradeable in NEUTRAL', () => {
+    const bear = ensureBestOfDay([], [cand({ symbol: 'A' }), cand({ symbol: 'B' })], 'BEAR');
+    expect(bear.every(p => p._bestOfDay && p._watchOnly)).toBe(true);
+    expect(bear.some(p => p._fillerWatch)).toBe(false);   // the reason is the regime
     const neutral = ensureBestOfDay([], [cand({ symbol: 'A' })], 'NEUTRAL');
     expect(neutral[0]._watchOnly).toBeUndefined();
   });

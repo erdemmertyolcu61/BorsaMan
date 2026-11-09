@@ -8,7 +8,7 @@ const TONE = { up: 'var(--green)', down: 'var(--red)', warn: 'var(--orange)' };
 
 function Card({ title, children }) {
   return (
-    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px' }}>
+    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', minWidth: 0 }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)', marginBottom: 8 }}>{title}</div>
       {children}
     </div>
@@ -66,7 +66,7 @@ export default function TechnicalPanel({ snapshot, isMobile }) {
     return <div style={{ fontSize: 12, color: 'var(--t3)', padding: 12 }}>Fiyat serisi alınamadı — teknik göstergeler hesaplanamadı.</div>;
   }
   return (
-    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(330px, 1fr))', alignItems: 'start' }}>
+    <div style={{ display: 'grid', gap: 12, gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'repeat(auto-fill, minmax(330px, 1fr))', alignItems: 'start' }}>
       <Card title="Getiriler">
         <ReturnsTable returns={snapshot.returns} />
       </Card>

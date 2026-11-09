@@ -1,416 +1,216 @@
-import { useState } from 'react';
-import { runBacktest, calcBacktestStats } from '../../utils/backtestEngine.js';
+/**
+ * BacktestPanel — tek hissenin geçmişi (v31.51).
+ *
+ * Kullanıcı: "backtest kısmını güncelle". Eski panel hedefte tamamını satan bir
+ * çıkışla ölçüyordu (sistemin v31.30'da bıraktığı, getirinin yarısını götürdüğü
+ * ölçülen kural) ve Monte Carlo sonucuna göre "GİR — sermayenin %10-15'i" gibi
+ * öneri veriyordu: hem kişiye özel tavsiye hem de uygulamanın kendi lot kuralıyla
+ * (stopta %2 risk, %33 tavan) çelişkili. Şimdi:
+ *  - çıkış = canlı kural (planSimulation: iz süren stop, hedefte satış yok, ≤30 bar),
+ *  - sonuç sistemin konviksiyon kademelerine göre ayrılır (≥75 / 65–75 / 55–65),
+ *  - aynı dönemin al-tut getirisi yanında durur,
+ *  - Monte Carlo yalnız dağılımı gösterir, karar vermez.
+ */
+import { useEffect, useState } from 'react';
+import { runBacktest, calcBacktestStats, tierBreakdown, buyAndHoldReturn, BACKTEST_MIN_SCORE } from '../../utils/backtestEngine.js';
 import { runBacktestMonteCarlo } from '../../utils/backtestMonteCarlo.js';
 
 const STRATEGIES = [
-  { key: 'signal', label: 'Sinyal', color: '#22d3ee' },
-  { key: 'rsi', label: 'RSI', color: '#ff9800' },
-  { key: 'macd', label: 'MACD', color: '#e040fb' },
-  { key: 'ma', label: 'MA Cross', color: '#76ff03' },
+  { key: 'signal', label: 'Sistem sinyali', min: 25 },
+  { key: 'rsi', label: 'RSI', min: 25 },
+  { key: 'macd', label: 'MACD', min: 45 },
+  { key: 'ma', label: 'MA kesişimi', min: 60 },
 ];
 
-export default function BacktestPanel({ prices, symbol, gData }) {
-  const data = prices || gData;
-  const [active, setActive] = useState(null);
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [mcLoading, setMcLoading] = useState(false);
-  const [compareResult, setCompareResult] = useState(null);
-  const [compareLoading, setCompareLoading] = useState(false);
+const TIER_LABEL = { sniper: 'Skor ≥75', flagged: 'Skor 65–75', early: `Skor ${BACKTEST_MIN_SCORE}–65` };
+const RESULT_LABEL = { stop: 'Stop', trail: 'İz süren stop (kârda)', timeout: 'Süre doldu (30 bar)' };
 
-  const busy = loading || mcLoading || compareLoading;
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const pct = (v, d = 1) => (isNum(v) ? `${v > 0 ? '+' : v < 0 ? '−' : ''}%${Math.abs(v).toFixed(d).replace('.', ',')}` : '—');
+const plain = (v, d = 0) => (isNum(v) ? `%${v.toFixed(d).replace('.', ',')}` : '—');
+const tone = (v) => (isNum(v) && v > 0 ? 'var(--green)' : isNum(v) && v < 0 ? 'var(--red)' : 'var(--t2)');
 
-  const runSingle = (strategy) => {
-    const min = strategy === 'ma' ? 60 : strategy === 'macd' ? 45 : 25;
-    if (!data || data.length < min) return;
-    setActive(strategy);
-    setResult(null);
-    setCompareResult(null);
-    setLoading(true);
+function compute(prices, key) {
+  const trades = runBacktest(prices, key);
+  const stats = calcBacktestStats(trades, prices.length);
+  const minIdx = key === 'ma' ? 55 : key === 'macd' ? 40 : 20;
+  return { key, trades, stats, tiers: tierBreakdown(trades), bh: buyAndHoldReturn(prices, minIdx), mc: null };
+}
+
+function Tile({ label, value, color = 'var(--t1)', sub }) {
+  return (
+    <div style={{ background: 'var(--bg3)', borderRadius: 8, padding: '7px 9px', minWidth: 0 }}>
+      <div style={{ fontSize: 10.5, color: 'var(--t3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 600, color, marginTop: 1 }}>{value}</div>
+      {sub ? <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>{sub}</div> : null}
+    </div>
+  );
+}
+
+function Pill({ active, onPress, children, disabled }) {
+  return (
+    <span role="button" tabIndex={disabled ? -1 : 0} aria-pressed={active}
+      onClick={() => !disabled && onPress()}
+      onKeyDown={(e) => { if (!disabled && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onPress(); } }}
+      style={{
+        padding: '5px 11px', borderRadius: 8, fontSize: 12, cursor: disabled ? 'default' : 'pointer', userSelect: 'none',
+        background: active ? 'var(--blue2)' : 'var(--bg3)', color: active ? 'var(--t1)' : 'var(--t2)',
+        border: `1px solid ${active ? 'rgba(59,130,246,.45)' : 'var(--border)'}`, opacity: disabled ? 0.5 : 1, whiteSpace: 'nowrap',
+      }}>{children}</span>
+  );
+}
+
+export default function BacktestPanel({ prices, symbol }) {
+  const data = Array.isArray(prices) ? prices : [];
+  const [active, setActive] = useState('signal');
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [compare, setCompare] = useState(null);
+
+  // Hisse değişince eski sonuç başka hisseye ait olur — temizle.
+  useEffect(() => { setRes(null); setCompare(null); }, [symbol]);
+
+  const run = (key) => {
+    const strat = STRATEGIES.find(s => s.key === key);
+    if (!strat || data.length < strat.min) return;
+    setActive(key);
+    setCompare(null);
+    setBusy(true);
     setTimeout(() => {
-      const trades = runBacktest(data, strategy);
-      const stats = calcBacktestStats(trades, data.length);
-      setResult({ stats, mc: null, strategy, tradeCount: trades.length, trades });
-      setLoading(false);
+      try { setRes(compute(data, key)); } finally { setBusy(false); }
     }, 10);
   };
 
-  const runMC = () => {
-    if (!result || !result.trades) return;
-    const closed = result.trades.filter(t => t.result !== 'open');
-    if (closed.length < 5) return;
-    setMcLoading(true);
+  const runMc = () => {
+    if (!res) return;
+    setBusy(true);
     setTimeout(() => {
-      const mc = runBacktestMonteCarlo(result.trades, 1000);
-      setResult(prev => ({ ...prev, mc }));
-      setMcLoading(false);
+      try { setRes(r => ({ ...r, mc: runBacktestMonteCarlo(r.trades, 1000) })); } finally { setBusy(false); }
     }, 10);
   };
 
   const runCompare = () => {
-    if (!data || data.length < 60) return;
-    setActive(null);
-    setResult(null);
-    setCompareResult(null);
-    setCompareLoading(true);
+    setBusy(true);
+    setRes(null);
     setTimeout(() => {
-      const results = STRATEGIES.map(({ key }) => {
-        const min = key === 'ma' ? 60 : key === 'macd' ? 45 : 25;
-        if (data.length < min) return { key, skip: true };
-        const trades = runBacktest(data, key);
-        const stats = calcBacktestStats(trades, data.length);
-        const closed = trades.filter(t => t.result !== 'open');
-        const mc = closed.length >= 5 ? runBacktestMonteCarlo(trades, 1000) : null;
-        return { key, stats, mc, tradeCount: trades.length };
-      });
-      const best = results
-        .filter(r => r.mc && !r.skip)
-        .sort((a, b) => b.mc.profitProb - a.mc.profitProb)[0];
-      setCompareResult({ results, bestKey: best?.key });
-      setCompareLoading(false);
+      try {
+        setCompare(STRATEGIES.filter(s => data.length >= s.min).map(s => compute(data, s.key)));
+      } finally { setBusy(false); }
     }, 10);
   };
 
-  const hasTrades = result && result.trades && result.trades.filter(t => t.result !== 'open').length >= 5;
+  const closed = res ? res.trades.filter(t => t.result !== 'open') : [];
+  const s = res?.stats;
+  const byResult = res
+    ? Object.keys(RESULT_LABEL).map(k => {
+      const t = closed.filter(x => x.result === k);
+      return { k, n: t.length, avg: t.length ? t.reduce((a, x) => a + x.pnl, 0) / t.length : null };
+    }).filter(r => r.n)
+    : [];
+  const open = res?.trades.find(t => t.result === 'open');
+  const years = data.length ? (data.length / 252) : 0;
 
   return (
     <div className="trade-box fi" style={{ margin: 0 }}>
-      <div className="trade-title" style={{ color: 'var(--cyan)', fontSize: 11, fontWeight: 700, marginBottom: 8 }}>
-        Backtest & Monte Carlo
+      <div className="trade-title" style={{ marginBottom: 4 }}>Backtest{symbol ? ` · ${symbol}` : ''}</div>
+      <div style={{ fontSize: 11, color: 'var(--t3)', lineHeight: 1.5, marginBottom: 10 }}>
+        Son {years >= 1 ? `${years.toFixed(1).replace('.', ',')} yıl` : `${data.length} gün`} · giriş ertesi açılış · çıkış canlı kuralla:
+        iz süren stop (+%3 başabaş, +%5 üstü kârın yarısı kilitli), hedefte satış yok, en fazla 30 bar (sistemin ölçüm penceresi) · %0,3 gidiş-dönüş maliyet düşülmüş.
       </div>
 
-      {/* Strategy buttons */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
-        {STRATEGIES.map(({ key, label, color }) => (
-          <button
-            key={key}
-            className="btn btn-go"
-            onClick={() => runSingle(key)}
-            disabled={busy}
-            style={{
-              fontSize: 10, padding: '6px 10px', width: 'auto', flex: '1 1 auto', minWidth: 60,
-              background: active === key ? color : 'var(--bg0)',
-              color: active === key ? '#000' : 'var(--t2)',
-              border: `1px solid ${active === key ? color : 'var(--border)'}`,
-              fontWeight: active === key ? 700 : 400,
-              opacity: busy ? 0.5 : 1,
-            }}
-          >
-            {label}
-          </button>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        {STRATEGIES.map(st => (
+          <Pill key={st.key} active={!compare && active === st.key && !!res} disabled={busy || data.length < st.min} onPress={() => run(st.key)}>{st.label}</Pill>
         ))}
+        <Pill active={!!compare} disabled={busy || data.length < 60} onPress={runCompare}>Karşılaştır</Pill>
       </div>
 
-      {/* MC + Compare buttons row */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
-        <button
-          className="btn btn-go"
-          onClick={runMC}
-          disabled={busy || !hasTrades}
-          style={{
-            fontSize: 10, padding: '7px 0', flex: 1,
-            background: !hasTrades ? 'var(--bg2)' : result?.mc ? 'var(--bg2)' : 'linear-gradient(135deg, #8b5cf6, #6366f1)',
-            color: !hasTrades ? 'var(--t3)' : '#fff',
-            border: '1px solid rgba(139,92,246,0.4)',
-            opacity: busy ? 0.5 : !hasTrades ? 0.4 : 1,
-          }}
-        >
-          {mcLoading ? 'MC Hesaplaniyor...' : result?.mc ? '↻ MC Tekrar' : '🎲 Monte Carlo'}
-        </button>
-        <button
-          className="btn btn-go"
-          onClick={runCompare}
-          disabled={busy || !data || data.length < 60}
-          style={{
-            fontSize: 10, padding: '7px 0', flex: 1,
-            background: compareResult ? 'var(--bg2)' : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-            color: '#fff', border: '1px solid rgba(99,102,241,0.4)',
-            opacity: busy ? 0.5 : 1,
-          }}
-        >
-          {compareLoading ? 'Karsilastiriliyor...' : '⚔ Karsilastir'}
-        </button>
-      </div>
-
-      {/* Loading */}
-      {(loading || mcLoading || compareLoading) && (
-        <div style={{ padding: 16, textAlign: 'center', color: 'var(--cyan)', fontSize: 11 }}>
-          {compareLoading ? '4 strateji × 1000 simulasyon hesaplaniyor...' : mcLoading ? '1000 Monte Carlo simulasyonu...' : 'Backtest hesaplaniyor...'}
-        </div>
+      {busy && <div style={{ fontSize: 12, color: 'var(--t3)', padding: '10px 0' }}>Hesaplanıyor…</div>}
+      {!busy && !res && !compare && (
+        <div style={{ fontSize: 12, color: 'var(--t3)', padding: '4px 0' }}>Bir strateji seç — sonuç bu hissenin geçmiş barlarından hesaplanır.</div>
       )}
 
-      {/* Single strategy result */}
-      {result && !loading && <SingleResult r={result} />}
+      {!busy && res && s && (
+        <>
+          <div style={{ display: 'grid', gap: 6, gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', marginBottom: 10 }}>
+            <Tile label="İşlem" value={closed.length} sub={open ? '+1 açık' : null} />
+            <Tile label="Kazanma oranı" value={plain(s.winRate)} />
+            <Tile label="İşlem başına" value={pct(s.expectancy, 2)} color={tone(s.expectancy)} sub="ortalama, net" />
+            <Tile label="Kâr faktörü" value={isNum(s.profitFactor) ? s.profitFactor.toFixed(2).replace('.', ',') : '—'} />
+            <Tile label="Bileşik getiri" value={pct((s.finalEquity / 10000 - 1) * 100)} color={tone(s.finalEquity - 10000)} sub="tüm sermaye her işlemde" />
+            <Tile label="Al-tut (aynı dönem)" value={pct(res.bh)} color={tone(res.bh)} />
+            <Tile label="En büyük düşüş" value={plain(s.maxDrawdown)} />
+            <Tile label="Ort. tutma" value={closed.length ? `${(closed.reduce((a, t) => a + t.days, 0) / closed.length).toFixed(1).replace('.', ',')} bar` : '—'} />
+          </div>
 
-      {/* Compare result */}
-      {compareResult && !compareLoading && <CompareResults data={compareResult} />}
+          {byResult.length > 0 && (
+            <Table head={['Çıkış', 'İşlem', 'Ort.']} rows={byResult.map(r => [RESULT_LABEL[r.k], r.n, <span key="a" style={{ color: tone(r.avg) }}>{pct(r.avg, 2)}</span>])} />
+          )}
+
+          {res.key === 'signal' && (
+            <Table head={['Sinyal skoru', 'İşlem', 'Kazanma', 'Ort.']}
+              rows={['sniper', 'flagged', 'early'].map(k => [TIER_LABEL[k], res.tiers[k].n, plain(res.tiers[k].winRate), <span key="a" style={{ color: tone(res.tiers[k].avg) }}>{pct(res.tiers[k].avg, 2)}</span>])}
+              note="Sistemin ölçümü (piyasa geneli, 5 yıl): yalnız yükseliş rejiminde ve yüksek skorda avantaj pozitif. Tek hissenin az sayıdaki işlemi bunu ne doğrular ne çürütür." />
+          )}
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+            <Pill active={!!res.mc} disabled={busy || closed.length < 5} onPress={runMc}>{res.mc ? 'Monte Carlo’yu yenile' : 'Monte Carlo (1000 senaryo)'}</Pill>
+            {closed.length < 5 && <span style={{ fontSize: 11, color: 'var(--t3)' }}>en az 5 kapanmış işlem gerekir</span>}
+          </div>
+          {res.mc && <MonteCarlo mc={res.mc} />}
+        </>
+      )}
+
+      {!busy && compare && (
+        <Table head={['Strateji', 'İşlem', 'Kazanma', 'İşlem başına', 'Bileşik', 'Düşüş']}
+          rows={compare.map(c => {
+            const label = STRATEGIES.find(x => x.key === c.key)?.label;
+            const n = c.trades.filter(t => t.result !== 'open').length;
+            return [label, n, plain(c.stats.winRate), <span key="e" style={{ color: tone(c.stats.expectancy) }}>{pct(c.stats.expectancy, 2)}</span>,
+              <span key="b" style={{ color: tone(c.stats.finalEquity - 10000) }}>{pct((c.stats.finalEquity / 10000 - 1) * 100)}</span>, plain(c.stats.maxDrawdown)];
+          })}
+          note={`Aynı dönem al-tut: ${pct(compare[0]?.bh)}. Hepsi aynı çıkış kuralıyla; fark yalnız giriş koşulunda.`} />
+      )}
+
+      <div style={{ fontSize: 10.5, color: 'var(--t3)', lineHeight: 1.5, marginTop: 10 }}>
+        Geçmiş sonuç geleceği garanti etmez ve yatırım tavsiyesi değildir. Lot için uygulamanın tek kuralı geçerli: stopta sermayenin %2’si, pozisyon en fazla %33.
+      </div>
     </div>
   );
 }
 
-function SingleResult({ r }) {
-  const { stats: s, mc, strategy } = r;
-  const label = STRATEGIES.find(st => st.key === strategy)?.label || strategy;
-
+function Table({ head, rows, note }) {
   return (
-    <div>
-      {/* Quick stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 4, marginBottom: 8 }}>
-        <MiniTile label="Islem" value={r.tradeCount} color="var(--cyan)" />
-        <MiniTile label="Win Rate" value={`%${(s.winRate || 0).toFixed(0)}`} color={s.winRate >= 55 ? 'var(--green)' : s.winRate >= 45 ? 'var(--yellow)' : 'var(--red)'} />
-        <MiniTile label="PF" value={(s.profitFactor || 0).toFixed(2)} color={s.profitFactor >= 1.5 ? 'var(--green)' : 'var(--yellow)'} />
-        <MiniTile label="Sharpe" value={(s.sharpeRatio || 0).toFixed(2)} color={s.sharpeRatio >= 1 ? 'var(--green)' : s.sharpeRatio >= 0 ? 'var(--yellow)' : 'var(--red)'} />
-      </div>
-
-      {/* Verdict */}
-      <div style={{ fontSize: 10, color: s.verdictColor || 'var(--yellow)', fontWeight: 700, padding: 6, borderLeft: `3px solid ${s.verdictColor || 'var(--yellow)'}`, background: 'var(--bg0)', marginBottom: 8, borderRadius: 2 }}>
-        {label}: {s.verdict}
-      </div>
-
-      {/* MC results */}
-      {mc && <MonteCarloResults mc={mc} />}
-      {!mc && <div style={{ fontSize: 10, color: 'var(--t3)', padding: 8 }}>Yeterli islem yok (min 5)</div>}
-    </div>
-  );
-}
-
-function CompareResults({ data }) {
-  const { results, bestKey } = data;
-  const valid = results.filter(r => r.mc && !r.skip);
-
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', marginBottom: 8, fontFamily: 'Inter,sans-serif' }}>
-        MC Strateji Karsilastirmasi
-      </div>
-
-      {/* Comparison table */}
-      <div style={{ background: 'var(--bg0)', borderRadius: 6, border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 8 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 9 }}>
+    <div style={{ marginTop: 8 }}>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
           <thead>
-            <tr style={{ background: 'var(--bg2)' }}>
-              {['Strateji', 'Kar %', 'Yikim %', 'Medyan', 'WR', 'Sharpe'].map(h => (
-                <th key={h} style={{ padding: '5px 4px', color: 'var(--t3)', fontSize: 8, textTransform: 'uppercase', textAlign: 'center' }}>{h}</th>
-              ))}
-            </tr>
+            <tr>{head.map((h, i) => <th key={h} style={{ textAlign: i ? 'right' : 'left', color: 'var(--t3)', fontWeight: 600, fontSize: 11, padding: '0 6px 5px', whiteSpace: 'nowrap' }}>{h}</th>)}</tr>
           </thead>
           <tbody>
-            {valid.map(r => {
-              const info = STRATEGIES.find(s => s.key === r.key);
-              const isBest = r.key === bestKey;
-              return (
-                <tr key={r.key} style={{ borderBottom: '1px solid var(--border)', background: isBest ? 'rgba(139,92,246,0.08)' : 'transparent' }}>
-                  <td style={{ padding: '5px 6px', fontWeight: 700, color: info.color }}>
-                    {isBest && <span style={{ marginRight: 3 }}>★</span>}
-                    {info.label}
-                  </td>
-                  <td style={{ padding: '5px 4px', textAlign: 'center', fontWeight: 600, color: r.mc.profitProb >= 60 ? 'var(--green)' : r.mc.profitProb >= 45 ? 'var(--yellow)' : 'var(--red)' }}>
-                    %{r.mc.profitProb.toFixed(0)}
-                  </td>
-                  <td style={{ padding: '5px 4px', textAlign: 'center', color: r.mc.ruinProb <= 5 ? 'var(--green)' : r.mc.ruinProb <= 15 ? 'var(--yellow)' : 'var(--red)' }}>
-                    %{r.mc.ruinProb.toFixed(0)}
-                  </td>
-                  <td style={{ padding: '5px 4px', textAlign: 'center', color: r.mc.finalEquity.median >= 10000 ? 'var(--green)' : 'var(--red)' }}>
-                    {(r.mc.finalEquity.median / 1000).toFixed(1)}K
-                  </td>
-                  <td style={{ padding: '5px 4px', textAlign: 'center' }}>
-                    %{r.mc.winRate.median.toFixed(0)}
-                  </td>
-                  <td style={{ padding: '5px 4px', textAlign: 'center', color: r.mc.sharpe.median >= 1 ? 'var(--green)' : r.mc.sharpe.median >= 0 ? 'var(--yellow)' : 'var(--red)' }}>
-                    {r.mc.sharpe.median.toFixed(2)}
-                  </td>
-                </tr>
-              );
-            })}
+            {rows.map((r, ri) => (
+              <tr key={ri}>{r.map((c, ci) => <td key={ci} style={{ textAlign: ci ? 'right' : 'left', padding: '5px 6px', borderTop: '1px solid var(--border)', color: ci ? 'var(--t1)' : 'var(--t2)', whiteSpace: 'nowrap' }}>{c}</td>)}</tr>
+            ))}
           </tbody>
         </table>
       </div>
-
-      {/* Best strategy verdict */}
-      {bestKey && (() => {
-        const best = valid.find(r => r.key === bestKey);
-        const info = STRATEGIES.find(s => s.key === bestKey);
-        const verdictColor = best.mc.profitProb >= 65 ? 'var(--green)' : best.mc.profitProb >= 50 ? 'var(--yellow)' : 'var(--red)';
-        return (
-          <div style={{ fontSize: 10, fontWeight: 700, padding: 6, borderLeft: `3px solid ${info.color}`, background: 'var(--bg0)', borderRadius: 2, marginBottom: 8 }}>
-            <span style={{ color: info.color }}>★ {info.label}</span>
-            <span style={{ color: verdictColor, marginLeft: 6 }}>
-              %{best.mc.profitProb.toFixed(0)} kar olasılığı ile en iyi strateji
-            </span>
-          </div>
-        );
-      })()}
-
-      {/* Show best strategy MC details */}
-      {bestKey && (() => {
-        const best = valid.find(r => r.key === bestKey);
-        return best?.mc ? <MonteCarloResults mc={best.mc} /> : null;
-      })()}
+      {note && <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 5, lineHeight: 1.5 }}>{note}</div>}
     </div>
   );
 }
 
-function getActionAdvice(mc) {
-  const pp = mc.profitProb;
-  const ruin = mc.ruinProb;
-  const pf = mc.profitFactor.median;
-  const dd = mc.maxDrawdown.median;
-
-  if (pp >= 70 && ruin <= 5 && pf >= 1.3) {
-    return { icon: '✅', label: 'GIR', detail: 'Guclu setup. Sermayenin %10-15\'i ile pozisyon ac.', color: '#10b981', bg: 'rgba(16,185,129,0.08)', lot: '%10-15' };
-  }
-  if (pp >= 65 && ruin <= 10) {
-    return { icon: '✅', label: 'GIR', detail: 'Saglam. Sermayenin %8-10\'u ile gir, stop\'a sadik kal.', color: '#10b981', bg: 'rgba(16,185,129,0.08)', lot: '%8-10' };
-  }
-  if (pp >= 55 && ruin <= 15) {
-    return { icon: '⚠', label: 'DIKKATLI GIR', detail: 'Marjinal avantaj. Kucuk lot (%5). Zarar kesme disiplini sart.', color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', lot: '%5' };
-  }
-  if (pp >= 50 && ruin <= 20) {
-    return { icon: '⚠', label: 'SADECE DENEYIMLI', detail: 'Beklenti zayif. Max %3 sermaye. Stop mutlaka koy.', color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', lot: '%3' };
-  }
-  if (pp >= 45) {
-    return { icon: '❌', label: 'GIRME', detail: 'Kar olasılığı dusuk, yikim riski yuksek. Bu kombinasyonu kullanma.', color: '#ef4444', bg: 'rgba(239,68,68,0.08)', lot: '—' };
-  }
-  return { icon: '❌', label: 'KESINLIKLE GIRME', detail: `Strateji bu hissede calısmiyor. 1000 senaryonun %${(100 - pp).toFixed(0)}'inde zarar.`, color: '#ef4444', bg: 'rgba(239,68,68,0.08)', lot: '—' };
-}
-
-function MonteCarloResults({ mc }) {
-  if (!mc) return null;
-  const { finalEquity: fe, maxDrawdown: dd, winRate: wr, profitFactor: pf, sharpe: sh } = mc;
-
-  const verdictColor = mc.profitProb >= 65 ? 'var(--green)' : mc.profitProb >= 50 ? 'var(--yellow)' : 'var(--red)';
-  const verdictText = mc.profitProb >= 65
-    ? 'SAGLAM — Farkli kosullarda da karli'
-    : mc.profitProb >= 50
-      ? 'MARJINAL — Kar garantisi yok'
-      : 'RISKLI — Cogu senaryoda zarar';
-
-  const advice = getActionAdvice(mc);
-
+function MonteCarlo({ mc }) {
+  const fe = mc.finalEquity, dd = mc.maxDrawdown;
+  const k = (v) => `${(v / 1000).toFixed(1).replace('.', ',')}K`;
   return (
-    <div style={{ padding: 8, background: 'var(--bg0)', borderRadius: 6, border: '1px solid rgba(139,92,246,0.2)', marginBottom: 8 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: '#8b5cf6', marginBottom: 6 }}>
-        {mc.simulations} Sim × {mc.tradeCount} Islem
-      </div>
-
-      <MCEquityBands bands={mc.equityBands} tradeCount={mc.tradeCount} />
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 4, marginBottom: 6 }}>
-        <MCMetric label="Kar %" value={`%${mc.profitProb.toFixed(0)}`} color={mc.profitProb >= 60 ? 'var(--green)' : mc.profitProb >= 45 ? 'var(--yellow)' : 'var(--red)'} />
-        <MCMetric label="Yikim %" value={`%${mc.ruinProb.toFixed(1)}`} color={mc.ruinProb <= 5 ? 'var(--green)' : mc.ruinProb <= 15 ? 'var(--yellow)' : 'var(--red)'} />
-        <MCMetric label="Medyan" value={`${(fe.median / 1000).toFixed(1)}K`} color={fe.median >= 10000 ? 'var(--green)' : 'var(--red)'} />
-      </div>
-
-      <div style={{ fontSize: 8, color: 'var(--t3)', marginBottom: 6 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 2, textAlign: 'center', marginBottom: 2 }}>
-          <span style={{ fontWeight: 700, color: 'var(--t2)', textAlign: 'left' }}>Metrik</span>
-          <span style={{ color: 'var(--red)' }}>%5</span>
-          <span style={{ color: 'var(--t1)' }}>Med</span>
-          <span style={{ color: 'var(--green)' }}>%95</span>
-        </div>
-        <MCRow label="Bakiye" v5={`${(fe.p5/1000).toFixed(1)}K`} v50={`${(fe.median/1000).toFixed(1)}K`} v95={`${(fe.p95/1000).toFixed(1)}K`} />
-        <MCRow label="Max DD" v5={`%${dd.p95.toFixed(0)}`} v50={`%${dd.median.toFixed(0)}`} v95={`%${dd.p5.toFixed(0)}`} />
-        <MCRow label="Win Rate" v5={`%${wr.p5.toFixed(0)}`} v50={`%${wr.median.toFixed(0)}`} v95={`%${wr.p95.toFixed(0)}`} />
-        <MCRow label="PF" v5={pf.p5.toFixed(2)} v50={pf.median.toFixed(2)} v95={pf.p95.toFixed(2)} />
-      </div>
-
-      <div style={{ fontSize: 9, color: verdictColor, fontWeight: 700, padding: 5, borderLeft: `3px solid ${verdictColor}`, background: 'var(--bg2)', borderRadius: 2, marginBottom: 6 }}>
-        {verdictText}
-      </div>
-
-      <div style={{ padding: '6px 8px', background: advice.bg, borderRadius: 4, border: `1px solid ${advice.color}33` }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-          <span style={{ fontSize: 14 }}>{advice.icon}</span>
-          <span style={{ fontSize: 11, fontWeight: 800, color: advice.color, letterSpacing: 1 }}>{advice.label}</span>
-          {advice.lot !== '—' && (
-            <span style={{ fontSize: 8, color: 'var(--t2)', background: 'var(--bg2)', padding: '1px 5px', borderRadius: 3, marginLeft: 'auto' }}>
-              Sermaye: {advice.lot}
-            </span>
-          )}
-        </div>
-        <div style={{ fontSize: 8, color: 'var(--t2)', lineHeight: 1.4 }}>
-          {advice.detail}
-        </div>
-        <div style={{ fontSize: 7, color: 'var(--t3)', marginTop: 4, borderTop: '1px solid var(--border)', paddingTop: 3 }}>
-          Kar%={mc.profitProb.toFixed(0)} · Yikim%={mc.ruinProb.toFixed(1)} · PF={mc.profitFactor.median.toFixed(2)} · DD=%{mc.maxDrawdown.median.toFixed(0)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MiniTile({ label, value, color }) {
-  return (
-    <div style={{ background: 'var(--bg0)', padding: '4px 2px', borderRadius: 4, textAlign: 'center', border: '1px solid var(--border)' }}>
-      <div style={{ fontSize: 7, textTransform: 'uppercase', color: 'var(--t3)', letterSpacing: 0.5 }}>{label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700, color, fontFamily: 'Inter' }}>{value}</div>
-    </div>
-  );
-}
-
-function MCMetric({ label, value, color }) {
-  return (
-    <div style={{ background: 'var(--bg2)', padding: 6, borderRadius: 4, textAlign: 'center' }}>
-      <div style={{ fontSize: 7, textTransform: 'uppercase', color: 'var(--t3)', letterSpacing: 0.5 }}>{label}</div>
-      <div style={{ fontSize: 16, fontWeight: 700, color, fontFamily: 'Inter' }}>{value}</div>
-    </div>
-  );
-}
-
-function MCRow({ label, v5, v50, v95 }) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 2, textAlign: 'center', padding: '2px 0', borderBottom: '1px solid var(--border)' }}>
-      <span style={{ textAlign: 'left', color: 'var(--t2)', fontWeight: 600, fontSize: 8 }}>{label}</span>
-      <span style={{ color: 'var(--red)', fontSize: 8 }}>{v5}</span>
-      <span style={{ color: 'var(--t1)', fontSize: 8 }}>{v50}</span>
-      <span style={{ color: 'var(--green)', fontSize: 8 }}>{v95}</span>
-    </div>
-  );
-}
-
-function MCEquityBands({ bands, tradeCount }) {
-  const W = 400;
-  const H = 80;
-  const allVals = [...bands.p5, ...bands.p95];
-  const min = Math.min(...allVals);
-  const max = Math.max(...allVals);
-  const range = max - min || 1;
-  const n = tradeCount + 1;
-
-  const toX = (i) => (i / (n - 1)) * W;
-  const toY = (v) => H - 4 - ((v - min) / range) * (H - 8);
-
-  const makePath = (arr) => arr.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
-
-  const outerPoly = bands.p5.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ')
-    + ' ' + [...bands.p95].reverse().map((v, i) => `${toX(n - 1 - i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
-
-  const innerPoly = bands.p25.map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ')
-    + ' ' + [...bands.p75].reverse().map((v, i) => `${toX(n - 1 - i).toFixed(1)},${toY(v).toFixed(1)}`).join(' ');
-
-  const baseY = toY(10000);
-
-  return (
-    <div style={{ marginBottom: 6 }}>
-      <svg
-        width="100%"
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        style={{ display: 'block', background: 'var(--bg2)', borderRadius: 4, border: '1px solid var(--border)' }}
-      >
-        <polygon fill="rgba(139,92,246,0.08)" points={outerPoly} />
-        <polygon fill="rgba(139,92,246,0.15)" points={innerPoly} />
-        <line x1="0" y1={baseY} x2={W} y2={baseY} stroke="#eab308" strokeWidth="0.5" strokeDasharray="3,3" opacity="0.4" />
-        <polyline fill="none" stroke="rgba(139,92,246,0.3)" strokeWidth="0.5" points={makePath(bands.p5)} />
-        <polyline fill="none" stroke="rgba(139,92,246,0.5)" strokeWidth="0.5" points={makePath(bands.p25)} />
-        <polyline fill="none" stroke="#8b5cf6" strokeWidth="1.5" points={makePath(bands.p50)} />
-        <polyline fill="none" stroke="rgba(139,92,246,0.5)" strokeWidth="0.5" points={makePath(bands.p75)} />
-        <polyline fill="none" stroke="rgba(139,92,246,0.3)" strokeWidth="0.5" points={makePath(bands.p95)} />
-        <text x="4" y={baseY - 3} fill="#eab308" fontSize="6" fontFamily="JetBrains Mono">10K</text>
-        <text x={W - 4} y={toY(bands.p50[n-1]) - 3} fill="#8b5cf6" fontSize="6" fontFamily="JetBrains Mono" textAnchor="end">
-          {(bands.p50[n-1] / 1000).toFixed(1)}K
-        </text>
-      </svg>
+    <div style={{ marginTop: 8 }}>
+      <Table head={['10.000 TL ile başlayan', '%5', 'Medyan', '%95']}
+        rows={[
+          ['Son bakiye', k(fe.p5), k(fe.median), k(fe.p95)],
+          ['En büyük düşüş', plain(dd.p95), plain(dd.median), plain(dd.p5)],
+          ['Kazanma oranı', plain(mc.winRate.p5), plain(mc.winRate.median), plain(mc.winRate.p95)],
+        ]}
+        note={`${mc.simulations} senaryo, geçmiş işlemlerden rastgele yeniden örneklenerek: senaryoların ${plain(mc.profitProb)}’i kârda bitti, ${plain(mc.ruinProb, 1)}’i sermayenin %20’sinden fazlasını kaybederek bitti. Bu bir dağılım; karar değil.`} />
     </div>
   );
 }

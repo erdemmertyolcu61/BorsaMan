@@ -121,11 +121,23 @@ export function applyRegimeGate(picks, regime, neutralMaxBuys = 4, bearMaxBuys =
 // blocks). Fires ONLY when the gate leaves zero buys, so it never overrides a
 // real gated list. The pick is tagged `_bestOfDay` (⭐ GUNUN EN IYISI) and, outside
 // YUKSELIS, `_counterRegime` (⚠) so the honest regime warning stays attached.
-export function ensureBestOfDay(gatedPicks, candidates, regime) {
+//
+// v31.51 (kullanici: "hep 1 hisse oneriyor, top 3 gibi onerebilir"): panel en az
+// `minBuys` (3) AL adayi gosterir. Gercek AL azsa havuzdan tamamlanir. Maruziyet
+// DEGISMEZ: eskiden tek garanti pick neyse ilk tamamlayan yine odur (AL yokken,
+// ayni etiketler); 2. ve 3. aday — ve gercek AL varken eklenen her aday — her
+// rejimde `_watchOnly` (gorunur, paper acmaz, lot onerisi 0). Yani paper hesabin
+// ve YATAY'daki olculmus maruziyetin kurali ayni kalir; yalniz gorunurluk artar.
+export const MIN_DAILY_BUYS = 3;
+
+export function ensureBestOfDay(gatedPicks, candidates, regime, { minBuys = MIN_DAILY_BUYS } = {}) {
   const picks = Array.isArray(gatedPicks) ? gatedPicks.slice() : [];
-  if (picks.some(p => p && p.cls === 'buy')) return picks; // already have a long
+  const buyCount = picks.filter(p => p && p.cls === 'buy').length;
+  const need = Math.max(0, minBuys - buyCount);
+  if (!need) return picks;
+  const have = new Set(picks.map(p => p?.symbol).filter(Boolean));
   const pool = (Array.isArray(candidates) ? candidates : []).filter(r =>
-    r && typeof r === 'object' && r.cls !== 'sell' &&
+    r && typeof r === 'object' && r.cls !== 'sell' && !have.has(r.symbol) &&
     // henuz patlamamis (pre-pump) — piyasa acilinca hareket edecek olan
     Math.max(r.todayPumpReal || 0, r.recentPump || 0) < 7 &&
     (r.cumulativePump || 0) < 15 &&
@@ -135,12 +147,22 @@ export function ensureBestOfDay(gatedPicks, candidates, regime) {
   // Rank: early-accumulation (pre-pump coil) first, then signal strength, then score.
   const rank = (r) => (r._earlyPick ? 1000 : 0) + (r._earlyCount || 0) * 10 +
     (r.score || r.confidence || 0);
-  const best = pool.slice().sort((a, b) => rank(b) - rank(a))[0];
-  const tagged = {
-    ...best, _bestOfDay: true,
-    ...(regime !== 'BULL' ? { _counterRegime: true } : {}),
-    // v31.13: DUSUS'te garantili pick de ALIM DEGIL — izleme (olcum negatif).
-    ...(regime === 'BEAR' ? { _watchOnly: true } : {}),
-  };
-  return [tagged, ...picks];
+  const seen = new Set();
+  const chosen = pool.slice().sort((a, b) => rank(b) - rank(a))
+    .filter(r => (r.symbol ? !seen.has(r.symbol) && seen.add(r.symbol) : true))
+    .slice(0, need);
+  const tagged = chosen.map((r, i) => {
+    // Eski tek garanti pick: AL hic yokken ilk aday, eski etiketlerle.
+    const legacyGuarantee = buyCount === 0 && i === 0;
+    return {
+      ...r, _bestOfDay: true, _bestOfDayRank: buyCount + i + 1,
+      ...(regime !== 'BULL' ? { _counterRegime: true } : {}),
+      // v31.13: DUSUS'te garantili pick de ALIM DEGIL — izleme (olcum negatif).
+      ...(regime === 'BEAR' || !legacyGuarantee ? { _watchOnly: true } : {}),
+      // izleme sebebi rejim degil, tamamlayici aday olmasi (rozet metni buna gore)
+      ...(regime !== 'BEAR' && !legacyGuarantee ? { _fillerWatch: true } : {}),
+    };
+  });
+  // Gercek AL'lar onde kalir; hic yoksa adaylar listeyi acar (eski davranis).
+  return buyCount === 0 ? [...tagged, ...picks] : [...picks, ...tagged];
 }

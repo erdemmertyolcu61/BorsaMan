@@ -500,3 +500,7 @@ body{letter-spacing:0}
 .m-advisor-mode{font-size:11px;font-weight:500;padding:1px 8px;border-radius:999px;background:var(--bg3);color:var(--t2);letter-spacing:0}
 .m-advisor-tara{background:var(--green);color:#04110a;border-radius:8px;font-weight:600;font-size:12px;min-height:30px;padding:5px 14px}
 .m-advisor-tara.disabled{background:var(--bg3);color:var(--t3)}
+
+/* v31.51: yana kayan kisa seritlerde (Hisse detayi hizli hisseler) cubuk gizli */
+.no-scrollbar{scrollbar-width:none}
+.no-scrollbar::-webkit-scrollbar{display:none}

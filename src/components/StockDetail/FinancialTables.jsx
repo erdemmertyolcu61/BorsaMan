@@ -11,6 +11,32 @@ import { singleQuarter, isFlowCode, quarterName } from '../../utils/financialSta
 const R = (key, label, type = 'big', opts = {}) => ({ key, label, type, ...opts });
 
 export function incomeRows(kind) {
+  if (kind === 'finance') {
+    return [
+      R('mainOpIncome', 'Esas faaliyet gelirleri', 'big', { strong: true }),
+      R('mainOpIncomeYoY', 'Yıllık değişim', 'yoy', { sub: true }),
+      R('mainOpExpense', 'Esas faaliyet giderleri'),
+      R('otherOpIncome', 'Diğer faaliyet gelirleri'),
+      R('financeExpense', 'Finansman giderleri'),
+      R('provisions', 'Takipteki alacak karşılıkları'),
+      R('otherOpExpense', 'Diğer faaliyet giderleri'),
+      R('netOperatingProfit', 'Net faaliyet kârı', 'big', { strong: true }),
+      R('pretaxProfit', 'Vergi öncesi kâr'),
+      R('tax', 'Vergi'),
+      R('netProfit', 'Sürdürülen faaliyetler net kârı'),
+      R('parentNet', 'Net kâr (ana ortaklık)', 'big', { strong: true }),
+      R('parentNetYoY', 'Yıllık değişim', 'yoy', { sub: true }),
+    ];
+  }
+  if (kind === 'participation') {
+    return [
+      R('interestIncome', 'Kâr payı gelirleri', 'big', { strong: true }),
+      R('interestIncomeYoY', 'Yıllık değişim', 'yoy', { sub: true }),
+      R('netProfit', 'Dönem net kârı'),
+      R('parentNet', 'Net kâr (grup payı)', 'big', { strong: true }),
+      R('parentNetYoY', 'Yıllık değişim', 'yoy', { sub: true }),
+    ];
+  }
   if (kind === 'bank') {
     return [
       R('interestIncome', 'Faiz gelirleri'),
@@ -86,6 +112,27 @@ export function balanceRows(kind) {
       R('loanToDeposit', 'Kredi / mevduat', 'pct'),
       R('equity', 'Özkaynaklar', 'big', { strong: true }),
       R('paidCapital', 'Ödenmiş sermaye'),
+      ...tail,
+    ];
+  }
+  if (kind === 'finance') {
+    return [
+      R('totalAssets', 'Toplam aktifler', 'big', { strong: true }),
+      R('cash', 'Nakit değerler'),
+      R('leaseReceivables', 'Kiralama işlemlerinden alacaklar'),
+      R('equity', 'Özkaynaklar'),
+      R('parentEquity', 'Ana ortaklık özkaynağı', 'big', { strong: true }),
+      R('equityToAssets', 'Özkaynak / aktif', 'pct'),
+      R('paidCapital', 'Ödenmiş sermaye'),
+      ...tail,
+    ];
+  }
+  if (kind === 'participation') {
+    return [
+      R('totalAssets', 'Toplam aktifler', 'big', { strong: true }),
+      R('cash', 'Nakit ve merkez bankası'),
+      R('deposits', 'Toplanan fonlar'),
+      R('equity', 'Özkaynaklar', 'big', { strong: true }),
       ...tail,
     ];
   }
@@ -176,7 +223,8 @@ export function DataTable({ rows, columns, hideEmpty = true, firstColWidth = 190
           {visible.map(r => (
             <tr key={r.key}>
               <td title={r.hint || ''} style={{
-                ...stickyCol, padding: r.sub ? '4px 10px 4px 22px' : '6px 10px', whiteSpace: 'nowrap',
+                ...stickyCol, padding: r.sub ? '4px 10px 4px 22px' : '6px 10px', whiteSpace: firstColWidth < 170 ? 'normal' : 'nowrap',
+                maxWidth: firstColWidth < 170 ? firstColWidth : undefined,
                 color: r.sub ? 'var(--t3)' : r.strong ? 'var(--t1)' : 'var(--t2)',
                 fontWeight: r.strong ? 600 : 400, fontSize: r.sub ? 11 : 12,
                 borderTop: r.sub ? 'none' : '1px solid var(--border)',
@@ -229,7 +277,7 @@ export function Segmented({ options, value, onChange, size = 'md' }) {
 }
 
 /** İş Yatırım'ın tüm kalemleri — çeyreklik ya da kümülatif. */
-export function FullStatement({ statements, labels, kind }) {
+export function FullStatement({ statements, labels, kind, firstColWidth = 220 }) {
   const [section, setSection] = useState('income');
   const [mode, setMode] = useState('quarter');
   const sec = SECTIONS.find(s => s.id === section);
@@ -260,15 +308,15 @@ export function FullStatement({ statements, labels, kind }) {
         <table style={{ borderCollapse: 'separate', borderSpacing: 0, fontSize: 11.5, fontVariantNumeric: 'tabular-nums', minWidth: '100%' }}>
           <thead>
             <tr>
-              <th style={{ ...th, ...stickyCol, zIndex: 2, textAlign: 'left', minWidth: 220 }}>Kalem</th>
+              <th style={{ ...th, ...stickyCol, zIndex: 2, textAlign: 'left', minWidth: firstColWidth }}>Kalem</th>
               {labels.map(l => <th key={l} style={th}>{quarterName(l)}</th>)}
             </tr>
           </thead>
           <tbody>
             {rows.map(r => (
               <tr key={r.code}>
-                <td title={r.en} style={{
-                  ...stickyCol, padding: `5px 10px 5px ${10 + r.depth * 10}px`, maxWidth: 260, overflow: 'hidden',
+                <td title={r.en ? `${r.tr} — ${r.en}` : r.tr} style={{
+                  ...stickyCol, padding: `5px 10px 5px ${10 + r.depth * 10}px`, maxWidth: firstColWidth + 40, overflow: 'hidden',
                   textOverflow: 'ellipsis', whiteSpace: 'nowrap', borderTop: '1px solid var(--border)',
                   color: r.depth === 0 ? 'var(--t1)' : 'var(--t2)', fontWeight: r.depth === 0 ? 600 : 400,
                 }}>{r.tr}</td>

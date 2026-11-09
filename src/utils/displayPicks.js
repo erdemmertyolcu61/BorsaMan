@@ -43,6 +43,9 @@ const sortByConf = (a, b) => (b.confidence || b.score || 0) - (a.confidence || a
 
 // Buy-oriented sort: push already-pumped names to the back, else by confidence.
 const pickSort = (a, b) => {
+  // v31.51: tamamlayici gunun adaylari gercek AL'larin arkasinda, kendi sirasiyla.
+  if (!!a._bestOfDay !== !!b._bestOfDay) return a._bestOfDay ? 1 : -1;
+  if (a._bestOfDay && b._bestOfDay && a._bestOfDayRank && b._bestOfDayRank) return a._bestOfDayRank - b._bestOfDayRank;
   const aPump = Math.max(a.todayPumpReal || 0, a.recentPump || 0);
   const bPump = Math.max(b.todayPumpReal || 0, b.recentPump || 0);
   if (aPump >= 7 && bPump < 7) return 1;

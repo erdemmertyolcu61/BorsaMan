@@ -3188,6 +3188,7 @@ export function useAIAdvisor(portfolio) {
               _nearBreakoutPick: p._nearBreakoutPick, _nearBreakoutSignals: p._nearBreakoutSignals, _nearBreakoutCount: p._nearBreakoutCount,
               _bestOfDay: p._bestOfDay, // v31.6: ⭐ garantili gunluk pick (persist)
               _watchOnly: p._watchOnly, // v31.13: DUSUS'te ALIM DEGIL — izleme (persist)
+              _bestOfDayRank: p._bestOfDayRank, _fillerWatch: p._fillerWatch, // v31.51: gunun 3 adayi
               rsOutperf: p.rsOutperf, rsScore: p.rsScore, rsLeading: p.rsLeading, rsLagging: p.rsLagging, // v31.9 RS
               // v31.24 gunluk top-10 yukselen potansiyeli (rozet + tooltip icin)
               topGainerScore: p.topGainerScore, topGainerProb: p.topGainerProb,

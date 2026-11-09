@@ -60,20 +60,32 @@ node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk
 | Tahmin karnesi | `utils/scanScorecard.js` + `hooks/useScanScorecard.js` (`bist_scan_scorecard_v1`, 60 gün): gösterilen AL önerileri, yargılayan seansın kapanışı + 1G/5G; ekran `components/Signals/ScanScorecardPanel.jsx`, AI panelinde tek satır özet |
 | Lot önerisi | `utils/positionSizing.suggestPosition` — AI kartları ve Analiz ekranı aynı fonksiyon; sermaye `bist_trading_capital` (Ayarlar, yoksa 100.000 TL) |
 | Paper | `utils/PaperTradeEngine.js` + `hooks/usePaperTradeML.js` (ML AUTO), `hooks/usePaperTrading.js` (standart) |
-| Yapay zekâ | `utils/claude.js` (JARVIS sohbeti, uzman analizi, KAP yorumu, tarama sonrası günlük notlar), `utils/gemini.js` (İstihbarat sekmesi) |
+| Yapay zekâ | `utils/claude.js` — tarama sonrası günlük notlar (`useAIAdvisor`). JARVIS sohbeti, İstihbarat ve Gemini kaldırıldı (kullanıcı, v31.50–51) |
+| Hisse detayı | `components/StockDetail/` + `utils/financialStatements.js` (İş MaliTablo, 16 çeyrek, 4 istek × 4 dönem) + `utils/technicalSnapshot.js` — tüm teknik/temel değerler, karar vermez |
+| Backtest | `utils/backtestEngine.js` — çıkış `planSimulation.simulatePlanReturn` (canlı kural, trailing-only, ≤30 bar), giriş ertesi açılış |
 | Proxy | `api/` (PWA ile aynı origin) ve `proxy/api/` (Electron/Capacitor; `DEFAULT_PROXY_URL` = `proxy-delta-mocha-43.vercel.app`) — `proxy.js` ve `claude.js` iki kopyada **birebir aynı** |
 | Masaüstü / mobil | `electron/main.cjs` + `preload.cjs`; Capacitor `android/`, `ios/` |
 | Sunucu tarafı takip | `.github/workflows/signal-tracker.yml` — seans içinde 15 dk'da bir sinyal fiyatı + Web Push |
 | Python | `bist_bridge.py` (borsa-mcp köprüsü), `borsa_bot_backtest/` (çevrimdışı araştırma) |
 
-**Sekmeler** — masaüstü: Tekil Analiz (varsayılan), Günlük İntraday Trade, Sinyal Takibi, Paper Trading,
-Gerçek Portföy, İstihbarat, Piyasa Nabzı. Mobil: Analiz · Sinyal · Paper · Portföy · Piyasa (Intraday ve
-İstihbarat mobilde mount edilmez; ayarlar Profil › Ayarlar'da). Sinyal sekmesi tahmin karnesiyle açılır.
+**Sekmeler** — masaüstü: Tekil analiz (varsayılan), Hisse detayı, Günlük intraday, Sinyal takibi, Paper trading.
+Mobil: Analiz · Hisse · Sinyal · Paper (intraday mobilde mount edilmez; ayarlar Profil › Ayarlar'da, masaüstünde
+Ayarlar penceresinde aracı kurum dahil). İstihbarat, Gerçek Portföy, Piyasa Nabzı ve "Tahmin isabeti" paneli
+kullanıcı kararıyla kaldırıldı; tahmin defteri arka planda çalışır (governor + adaptif stop okur). Sinyal sekmesi
+tahmin karnesiyle açılır, veri katmanı ölçümü (yabancı/KAP) orada. İzleme listesi Hisse detayında, sanal
+pozisyonlar Paper'da.
 Sanal portföy UI'sı yok ama durumu arka planda çalışır (risk uyarıları, trailing stop, otomatik stop/hedef).
 
 **Tekil Analiz ekranı sade tutulur** (kullanıcı isteği): bir satır ancak başka bir satırın söylemediği bir
-şey söylüyorsa ekranda kalır. Temel analiz tek kutuda (F/K, PD/DD, özkaynak, piyasa değeri, 12 aylık
-kâr/ROE, YoY büyüme); başlık fiyatın hangi oturumdan geldiğini yazar.
+şey söylüyorsa ekranda kalır. İşlem kurulumu yalnız stop + hedef (hedef referans, satış emri değil); KAP
+paneli ve JARVIS yok. Temel analiz tek kutuda; ayrıntı "Hisse detayı"nda. Başlık fiyatın hangi oturumdan
+geldiğini yazar.
+
+**Hisse detayı ölçümleri.** F/K ve PD/DD aynı bilançoda İş Yatırım'ın kendi değerleriyle birebir (THYAO,
+ASELS, EREGL, SISE, BIMAS, KCHOL, AKBNK, ISFIN). Tablo türleri: XI_29 sanayi, XI_29K kiralama/faktoring,
+UFRS_K/UFRS banka-sigorta (paralel denenir). FAVÖK = 3H + 4B. 4. çeyrek = yıllık − 9 aylık (TMS 29 / kur
+yüzünden şişkin görünebilir, ekranda "*"). Grid/flex öğeleri `minWidth: 0` almazsa iç tablo kaydırıcısı
+çalışmaz (telefonda içerik taşar ve kesilir — ölçüldü).
 
 **Görsel dil** (kullanıcı: "pixel-art havası var"): emoji ikon yok (alt menü SVG), başlık ve düğmelerde
 büyük harf + geniş harf aralığı yok, neon parlama/nabız yok. Renk değişkenleri `globals.css` sonundaki
@@ -123,8 +135,9 @@ yeniler ama tarama sürerken (`window.__bistScanActive`) bitene kadar bekler, ö
 Eskiden yeni sürüm uygulama tamamen kapanana kadar "bekliyor"da kalıyordu — telefon günlerce eski paketi
 açıyordu. Telefondaki paket Profil'deki "Sürüm 31.x · <commit>" satırından okunur (`buildInfo.js`).
 
-**Gizlilik.** Gerçek portföy yalnız `localStorage` (`bist_real_portfolio`) ve gitignore'lu
-`src/data/realPortfolio.local.json`'da durur; kök `.vercelignore` onu ve `.env*`'yi açıkça hariç tutar.
+**Gizlilik.** Gerçek portföy özelliği v31.50'de kaldırıldı; eski veri cihazda (`bist_real_portfolio`,
+gitignore'lu `src/data/realPortfolio.local.json`) kalabilir, uygulama okumaz. Kök `.vercelignore` onu ve
+`.env*`'yi açıkça hariç tutar.
 API anahtarları depoya girmez, `proxy/.env` yazdırılmaz.
 
 **Depolama.** localStorage anahtarları `bist_` önekli. Sıfırlamanın neyi silip neyi koruduğu
@@ -136,8 +149,9 @@ istemci eski dağıtımı "boş" değil `proxy_outdated` olarak raporlar. `.verc
 
 ## Yapay zekâ entegrasyonu (`utils/claude.js`)
 
-- **Maliyet yalnız kullanıcı Ayarlar'a Claude anahtarı girerse oluşur.** Anahtar yoksa hiçbir istek gitmez:
-  JARVIS sessizce kurala dayalı çevrimdışı moda düşer (`jarvisOffline`), tarama notlandırması atlanır.
+- **Maliyet yalnız kullanıcı Ayarlar'a Claude anahtarı girerse oluşur.** Anahtar yoksa hiçbir istek gitmez,
+  tarama notlandırması atlanır. (JARVIS sohbeti v31.51'de kaldırıldı; `claude.js`'teki sohbet/uzman
+  fonksiyonları tüketicisiz kaldı.)
   Anahtar varsa her taramadan sonra otomatik bir notlandırma isteği gider (`useAIAdvisor`, 25 sn kesme —
   kesilen istek yine faturalanır).
 - Model **`claude-opus-5-5`** (`CLAUDE_MODEL`), tüm rotalarda. İstek `/api/claude` proxy'si üzerinden gider;
@@ -148,10 +162,10 @@ istemci eski dağıtımı "boş" değil `proxy_outdated` olarak raporlar. `.verc
 - Düşünme `max_tokens`'a sayılır; çağıran yanıt bütçesini verir, `THINKING_HEADROOM` üstüne eklenir.
 - Yanıt blok **türüne** göre okunur (düşünme blokları önce gelebilir). `stop_reason: "refusal"` açık bir
   hata mesajına çevrilir; sunucu tarafı yedek (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) açık.
-- Web arama aracı `web_search_20260209`. JARVIS geçmişi düz metin tutar, düşünme bloğu geri göndermez.
+- Web arama aracı `web_search_20260209`.
 - Süre: Vercel fonksiyonu `maxDuration: 60`, istemci 65 sn bekler. Akış (streaming) yok.
 - Prompt'lar Türkçe ve ASCII-güvenli JS dizeleri; `buildExpertPrompt` 7 katman (makro → sektör → temel →
-  teknik → zaman → risk → pozisyon), JARVIS hafızası `bist_jarvis_memory` (son 5).
+  teknik → zaman → risk → pozisyon).
 
 ## Veri kaynakları (ölçülmüş durum)
 
@@ -161,7 +175,7 @@ istemci eski dağıtımı "boş" değil `proxy_outdated` olarak raporlar. `.verc
 | İş Yatırım TumHisseSenetleri | toplu canlı fiyat (704 sembol, gerçek açılış, önceki kapanış, `updateDate`) | çalışıyor; yanıt çıplak dizi |
 | BigPara `hisseyuzeysel/<KOD>` | tek sembol canlı fiyat | çalışıyor; `X-Requested-With` olmadan 401, hızlı ardışık isteklerde geçici 401 (rate limit) |
 | İş hisse tarama (`getScreenerDataNEW`) | `isy_foreign` yabancı oranı (40, 44/45, 8, 22/23); `isy_valuation` F/K (28) + PD/DD (30) | çalışıyor; kriterlerin **kesişimini** döndürür → metrikleri ayrı istekte tut |
-| İş MaliTablo | bilanço, kümülatif | çalışıyor; dönem planı [bu dönem, geçen yılın aynı dönemi, son yıl, önceki yıl] → 12A ve YoY doğru |
+| İş MaliTablo | bilanço, kümülatif | çalışıyor; istek başına 4 dönem (5.+ yok sayılır). Analiz kutusu: [bu dönem, geçen yılın aynı dönemi, son yıl, önceki yıl] → 12A ve YoY doğru. Hisse detayı: 16 çeyrek. Spor kulüpleri (haziran–mayıs) dönem etiketleri takvime oturmuyor |
 | KAP `POST /tr/api/disclosure/list/main` | bildirim akışı | çalışıyor; içeriden öğrenen ve özet finansal uçları 404 |
 | Yahoo chart / quoteSummary | bar yedeği, temel veri | çalışıyor (crumb `/v(7|8|10)/finance/`); BIST değerlemesi delikli (THYAO PD/DD 46 kat hatalı) → F/K-PD/DD İş'ten |
 | RSS (BloombergHT, Dünya, Borsanın Gündemi, Sabah) | haber | çalışıyor; şirket adı → kod eşlemesi kısmi (`NAME_ALIASES`) |
@@ -178,7 +192,7 @@ Borsa MCP uzak sunucusu bağlı (`borsa`, borsa.surucu.dev/mcp) — oturumda ara
 | Konu | Karar | Dayanak |
 |---|---|---|
 | Rejim kapısı | YÜKSELİŞ serbest; YATAY taban skor **70**, en fazla 4 AL; DÜŞÜŞ taban 58 ama AL'lar `_watchOnly` (görünür, açılmaz) | YATAY'da yalnız 70 iki dönemde de pozitif, walk-forward'da veriden seçmek 70'i geçemedi; DÜŞÜŞ her dönemde negatif |
-| Günlük garanti | `ensureBestOfDay`: AL kalmazsa tek ⭐ aday (patlamamış, aşırı alımda değil) | kullanıcı: "her gün bir aday görmeliyim"; edge yaratmaz, rejim uyarısını taşır |
+| Günlük garanti | `ensureBestOfDay`: panelde en az **3** AL adayı (patlamamış, aşırı alımda değil). AL hiç yoksa ilki eski tek garanti pick (aynı etiketler); diğer tamamlayıcılar her rejimde `_watchOnly` (görünür, paper açmaz, lot 0) | kullanıcı: "her gün bir aday" → v31.51 "top 3". Maruziyet değişmez; edge yaratmaz |
 | Çıkış | yalnız trailing stop (+%3 başabaş, +%5 üstü yarısını kilitle); hedefler referans, satış emri değil | kademeli satış getirinin yarısını yok ediyordu (26.855 sinyal, 5 yılın 5'inde) |
 | Boyutlandırma | paper: risk %2 / stop mesafesi, %33 tavan; konviksiyon çarpanı (sniper 1 / flagged 0,75 / early 0,5, YATAY ×0,5) | gösterilen lot önerisiyle aynı kural (`suggestPosition`, çarpan `_positionSizeMult`, izle-only = 0); parametre taramaları portföy getirisiyle puanlanır |
 | Öğrenme | kalibrasyon planın çıkışından öğrenir (`planSimulation`), canlı-edge hücresi ≥8 örnekte devreye girer | ham 5 gün getirisi farklı bir stratejiyi ölçüyordu |
@@ -201,9 +215,9 @@ gününün kapanışı ayrıca bir kez kaydedilir (`scanSchedule.js`, damga yaln
 
 ## Test ve CI
 
-- Vitest, 71 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
+- Vitest, 72 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
   ölçüde testsiz — mantığı saf bir modüle çıkarıp test etmek tercih edilen yol.
-- `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 73).
+- `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 61).
 - GitHub Actions `ci.yml`: test-js (lint + coverage), build-web, test-python, ci-gate.
 - Arayüz değişikliği önizlemede doğrulanır (`.claude/launch.json` → `dev`). Önizleme tarayıcısında dış istekler
   CORS'a takılır ve `innerWidth` 0 okunup masaüstü dalı mobil sanılabilir; canlı veri için yayındaki siteyi kullan.

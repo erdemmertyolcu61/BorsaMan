@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { fetchData, fetchFundamentals, fetchBigParaBatchPrices, istanbulDayKey } from '../../utils/fetchEngine.js';
 import { getUnifiedAnalysis } from '../../utils/signals.js';
-import { suggestPosition, sizeMultOf, getTradingCapital } from '../../utils/positionSizing.js';
 import { getUnifiedDecision } from '../../utils/unifiedDecision.js';
 import { analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
 import { fetchIsYatirimFinancials } from '../../utils/isyatirimEngine.js';
@@ -11,11 +10,7 @@ import { isKapCatalystScoringEnabled } from '../../utils/dataLayerPolicy.js';
 import { runMonteCarloAsync } from '../../utils/monteCarlo.js';
 import Chart from '../Chart/Chart.jsx';
 import BacktestPanel from '../Backtest/BacktestPanel.jsx';
-import KAPPanel from './KAPPanel.jsx';
-import ChatPanel from './ChatPanel.jsx';
 import MacroPanel from './MacroPanel.jsx';
-import OrderModal from '../Common/OrderModal.jsx';
-import { createBrokerAdapter, BROKER_TYPES } from '../../utils/brokerEngine.js';
 import { useSMCEngine } from '../../hooks/useSMCEngine.js';
 
 function ReasonsGroup({ label, items, color, bg }) {
@@ -49,22 +44,16 @@ function ReasonsGroup({ label, items, color, bg }) {
   );
 }
 
-export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGSig, log, setBadge, addToPortfolio, portfolio, brokerConfig, advisorData, intradayScan, onOpenDetail }) {
+export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGSig, log, setBadge, onOpenDetail }) {
   const [symbol, setSymbol] = useState('THYAO');
   // Strict cleanup: engine resets on every symbol change, no OB/FVG bleed across assets.
   const smcEngine = useSMCEngine(symbol);
-  const [addedMsg, setAddedMsg] = useState(null);
-  const [customShares, setCustomShares] = useState('');
-  const [positionType, setPositionType] = useState('trade'); // 'trade' or 'investment'
   const [range, setRange] = useState('5y');
   const [interval, setInterval_] = useState('1d');
   const [loading, setLoading] = useState(false);
   const [fundamentals, setFundamentals] = useState(null);
   const [bilanco, setBilanco] = useState(null);
   const [valuation, setValuation] = useState(null);   // v31.44: F/K + PD/DD (Is Yatirim)
-  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
-  const [showJarvisModal, setShowJarvisModal] = useState(false);
-  const [pendingOrder, setPendingOrder] = useState(null);
   const [mcData, setMcData] = useState(null);
 
   const doAnalyze = useCallback(async (sym, overrideRange, overrideInterval) => {
@@ -84,9 +73,12 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
       // Fix: batch pre-warm önce await edilir (~1-3s ilk seferinde, cache'den 0ms sonra),
       //      sonra fetchData paralel başlar; overlay her zaman warm batch görür.
       await fetchBigParaBatchPrices().catch(() => {});
+      // v31.51 (kullanici): Analiz ekraninda KAP bildirimi gosterilmez. Akis yalniz
+      // politika KAP'i skora acmissa cekilir (varsayilan kapali, dataLayerPolicy).
+      const kapScoring = isKapCatalystScoringEnabled();
       const [data, kapDisclosures] = await Promise.all([
         fetchData(s, effectiveRange, effectiveInterval, log).catch(() => null),
-        fetchKAPDisclosures(s).catch(() => []),
+        kapScoring ? fetchKAPDisclosures(s).catch(() => []) : Promise.resolve([]),
       ]);
       if (!data) {
         setBadge({ text: 'Hata', cls: 'err' });
@@ -95,8 +87,7 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
       // v31.38: KAP artik gercek veri donduruyor. Kullanici karari (dataLayerPolicy):
       // KAP olaylari skora GIRMEZ — KAP panelinde gorunur, sinyallerde olculur.
       // Sentiment genSignal'a (±3 puan) yalniz politika acilirsa verilir.
-      const kapSentiment = calcKAPSentiment(kapDisclosures);
-      const extraContext = isKapCatalystScoringEnabled() ? { kapSentiment } : {};
+      const extraContext = kapScoring ? { kapSentiment: calcKAPSentiment(kapDisclosures) } : {};
       const { ind, sig } = getUnifiedAnalysis(s, data, extraContext);
 
       // ── Foreign Ratio Fetch (skorlama: pure computeForeignFlowScore — advisor ile AYNI) ──
@@ -343,17 +334,6 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
           </button>
         </div>
         <div className="divider" />
-        <div style={{ padding: '0 10px' }}>
-          <button 
-            className="btn btn-go" 
-            style={{ width: '100%', background: 'linear-gradient(135deg, var(--purple), #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-            disabled={loading || !gData} 
-            onClick={() => setShowJarvisModal(true)}
-          >
-            JARVIS AI analizi
-          </button>
-        </div>
-        <div className="divider" />
         <MacroPanel />
         <div className="divider" />
         <div className="disc">Bu uygulama yatırım tavsiyesi vermez.</div>
@@ -582,108 +562,28 @@ Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
               )}
             </div>
 
-            {/* Trade Setup */}
+            {/* v31.51 (kullanici): islem kurulumu yalniz stop ve hedef. Giris, ikinci
+                hedef, R/O, uzun vade metni ve lot/portfoy akisi kaldirildi — lot
+                onerisi AI kartlarinda, cikis kurali iz suren stop. */}
             <div className="trade-box fi">
-              <div className="trade-title" style={{ color: 'var(--cyan)' }}>İşlem Kurulumu</div>
-              <div className="tr-row"><span className="tr-l">Giriş</span><span className="tr-v b">{(gSig.entry || 0).toFixed(2)} TL</span></div>
-              <div className="tr-row"><span className="tr-l">Stop-Loss</span><span className="tr-v r">{(gSig.stop || 0).toFixed(2)} TL ({(((gSig.stop - gSig.entry) / gSig.entry) * 100 || 0).toFixed(1)}%)</span></div>
-              <div className="tr-row"><span className="tr-l">Hedef 1</span><span className="tr-v g">{(gSig.t1 || 0).toFixed(2)} TL (+{(((gSig.t1 - gSig.entry) / gSig.entry) * 100 || 0).toFixed(1)}%)</span></div>
-              <div className="tr-row"><span className="tr-l">Hedef 2</span><span className="tr-v g">{(gSig.t2 || 0).toFixed(2)} TL (+{(((gSig.t2 - gSig.entry) / gSig.entry) * 100 || 0).toFixed(1)}%)</span></div>
-              <div className="tr-row"><span className="tr-l">R/O</span><span className="tr-v y">1:{(gSig.rr || 0).toFixed(1)}</span></div>
-              {gSig.atr && <div className="tr-row"><span className="tr-l">ATR(14)</span><span className="tr-v" style={{ color: 'var(--cyan)' }}>{(gSig.atr || 0).toFixed(2)}</span></div>}
-              {/* v31.44 temizlik: "Chandelier Stop" ve "Piyasa Modu (ADX)" gosterge
-                  seridinde zaten var; "Tutma Suresi" ise v31.43'te olculdu —
-                  tahmin 14.3 bar, trailing-only cikista gercek tutma 6.0 bar. */}
-
-              {/* Long-term investment view */}
-              {gSig.longTermView && (
-                <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 5, background: 'var(--bg0)', borderLeft: '3px solid ' + gSig.longTermView.color }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: gSig.longTermView.color, marginBottom: 3 }}>
-                    {gSig.longTermView.recommendation} {gSig.longTermView.horizon !== '-' ? '(' + gSig.longTermView.horizon + ')' : ''}
-                  </div>
-                  <div style={{ fontSize: 9, color: 'var(--t2)', lineHeight: 1.4 }}>{gSig.longTermView.reason}</div>
-                </div>
-              )}
-              {/* Add to Portfolio Button */}
-              {addToPortfolio && gData && (() => {
-                // v31.47: AI Firsatlar kartlariyla AYNI lot kurali (paper motoru ile birebir):
-                // sermayenin %2'si stopta, %33 tavan, konviksiyon/rejim carpani. Eskiden
-                // burada sanal portfoyun 10.000 TL nakdiyle "Kelly" etiketli ayri bir hesap vardi.
-                const tradingCapital = getTradingCapital();
-                const regimeNow = advisorData?.marketRegime?.regime || null;
-                const sug = suggestPosition({
-                  capital: tradingCapital ?? undefined,
-                  entry: gSig.entry,
-                  stop: gSig.stop,
-                  mult: sizeMultOf({ score: gSig.score, cls: gSig.cls, _regime: regimeNow }),
-                });
-                const alreadyOpen = portfolio?.positions?.some(p => p.symbol === gData.symbol && p.status === 'open');
-                const maxShares = Math.floor((portfolio?.cash || 10000) / gSig.entry);
-                const pos = { shares: Math.min(sug.ok ? sug.lots : 0, maxShares) };
-                const shares = customShares ? parseInt(customShares, 10) : pos.shares;
-                const validShares = shares > 0 && shares <= maxShares;
-                const cost = shares * gSig.entry;
-                const risk = shares * Math.abs(gSig.entry - gSig.stop);
+              <div className="trade-title">İşlem kurulumu</div>
+              {(() => {
+                const ref = gSig.entry || gInd?.lastClose || 0;
+                const pctTo = (v) => (ref > 0 && v > 0 ? ((v - ref) / ref) * 100 : null);
+                const fmtPct = (v) => (v == null ? '' : ` (${v >= 0 ? '+' : '−'}%${Math.abs(v).toFixed(1).replace('.', ',')})`);
+                const stopPct = pctTo(gSig.stop);
+                const targetPct = pctTo(gSig.t1);
                 return (
-                  <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-                    <div style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 8, lineHeight: 1.5 }}>
-                      {sug.ok ? (
-                        <>Lot önerisi: <b style={{ color: 'var(--t1)' }}>{sug.lots.toLocaleString('tr-TR')} lot</b> ≈ {Math.round(sug.costTl).toLocaleString('tr-TR')} TL · risk {Math.round(sug.riskTl).toLocaleString('tr-TR')} TL</>
-                      ) : sug.reason === 'too_small' ? 'Lot önerisi: sermayeye göre pozisyon 3.000 TL altında kalıyor'
-                        : 'Lot önerisi: stop seviyesi olmadan hesaplanamıyor'}
-                      <div style={{ fontSize: 11, color: 'var(--t3)' }}>
-                        Sermaye {Math.round(sug.capital).toLocaleString('tr-TR')} TL{tradingCapital ? '' : ' (varsayılan — Ayarlar)'} · %2 risk, en fazla %33 · sanal portföy nakdi {(portfolio?.cash || 0).toFixed(0)} TL
-                      </div>
+                  <>
+                    <div className="tr-row"><span className="tr-l">Stop</span><span className="tr-v r">{gSig.stop > 0 ? `${gSig.stop.toFixed(2).replace('.', ',')} TL${fmtPct(stopPct)}` : '—'}</span></div>
+                    <div className="tr-row"><span className="tr-l">Hedef</span><span className="tr-v g">{gSig.t1 > 0 ? `${gSig.t1.toFixed(2).replace('.', ',')} TL${fmtPct(targetPct)}` : '—'}</span></div>
+                    <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 6, lineHeight: 1.5 }}>
+                      Hedef referans seviyedir, satış emri değil — çıkışı iz süren stop yapar (+%3 başabaş, +%5 üstü kârın yarısı kilitli).
                     </div>
-                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                      <button onClick={() => setPositionType('trade')} style={{ flex: 1, padding: 6, fontSize: 10, background: positionType === 'trade' ? 'var(--cyan)' : 'var(--bg3)', color: positionType === 'trade' ? '#000' : 'var(--t2)', border: 'none', borderRadius: 4, fontWeight: positionType === 'trade' ? 700 : 400, cursor: 'pointer' }}>KISA VADE (TRADE)</button>
-                      <button onClick={() => setPositionType('investment')} style={{ flex: 1, padding: 6, fontSize: 10, background: positionType === 'investment' ? 'var(--purple)' : 'var(--bg3)', color: positionType === 'investment' ? '#fff' : 'var(--t2)', border: 'none', borderRadius: 4, fontWeight: positionType === 'investment' ? 700 : 400, cursor: 'pointer' }}>UZUN VADE (YATIRIM)</button>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8 }}>
-                      <input className="inp" type="number" min="1" max={maxShares} value={customShares || pos.shares} onChange={e => setCustomShares(e.target.value)} style={{ width: 80, fontSize: 11, padding: 6, textAlign: 'center' }} />
-                      <span style={{ fontSize: 10, color: 'var(--t2)' }}>lot</span>
-                      <span style={{ fontSize: 10, color: 'var(--t3)', marginLeft: 'auto' }}>Maliyet: <b style={{ color: 'var(--cyan)' }}>{cost.toFixed(0)} TL</b> | Risk: {positionType === 'trade' ? <b style={{ color: 'var(--red)' }}>{risk.toFixed(0)} TL</b> : <span style={{color: 'var(--t2)'}}>Stopsiz (Uzun Vade)</span>}</span>
-                    </div>
-                    {alreadyOpen ? (
-                      <div style={{ fontSize: 10, color: 'var(--yellow)', textAlign: 'center', padding: 6 }}>Bu hisse zaten portföyde açık.</div>
-                    ) : addedMsg ? (
-                      <div style={{ fontSize: 10, color: 'var(--green)', textAlign: 'center', padding: 6 }}>{addedMsg}</div>
-                    ) : validShares ? (
-                      <button className="btn btn-go" style={{ width: '100%', fontSize: 11, padding: 8 }} onClick={() => {
-                        const order = { symbol: gData.symbol, price: gSig.entry, stop: gSig.stop, target: gSig.t1, shares, positionType };
-                        setPendingOrder(order);
-                        setIsOrderModalOpen(true);
-                      }}>
-                        {brokerConfig.type === BROKER_TYPES.MIDAS_MANUAL ? 'Midas\'ta işlem yap' : 'Portföye ekle'} ({shares} lot @ {gSig.entry.toFixed(2)} TL)
-                      </button>
-                    ) : (
-                      <div style={{ fontSize: 10, color: 'var(--red)', textAlign: 'center', padding: 6 }}>
-                        {shares <= 0 ? 'Lot sayısı geçersiz' : 'Yetersiz nakit (' + (portfolio?.cash || 0).toFixed(0) + ' TL)'}
-                      </div>
-                    )}
-                  </div>
+                  </>
                 );
               })()}
             </div>
-
-            <OrderModal 
-              isOpen={isOrderModalOpen} 
-              onClose={() => setIsOrderModalOpen(false)}
-              order={pendingOrder}
-              brokerType={brokerConfig.type}
-              onConfirm={async () => {
-                const adapter = createBrokerAdapter(brokerConfig.type, brokerConfig.config);
-                const result = await adapter.execute(pendingOrder, addToPortfolio);
-                if (result.success) {
-                  setAddedMsg(gData.symbol + ' portföye eklendi!');
-                  setCustomShares('');
-                  setTimeout(() => setAddedMsg(null), 4000);
-                }
-              }}
-            />
-
-            {/* KAP Panel */}
-            <KAPPanel symbol={gData.symbol} />
 
             {/* v31.44 TEMEL ANALİZ — F/K, PD/DD, özkaynak ve gerçek (yıllığa
                 çevrilmiş) kârlılık. Bilanço gelmese bile değerleme gösterilir;
@@ -784,31 +684,6 @@ Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
         <div className="disc">Teknik analiz gecmis veriye dayanir.</div>
       </div>
 
-      {/* JARVIS MODAL */}
-      {showJarvisModal && (
-        <div className="modal-overlay" onClick={() => setShowJarvisModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ width: '90%', maxWidth: 800, height: '85vh', display: 'flex', flexDirection: 'column', borderRadius: 12, padding: 0, position: 'relative', background: 'var(--bg0)' }}>
-            <button 
-              onClick={() => setShowJarvisModal(false)} 
-              style={{ position: 'absolute', top: 12, right: 12, zIndex: 100, background: 'rgba(255,255,255,0.1)', border: '1px solid var(--border)', color: 'var(--t1)', fontSize: 18, cursor: 'pointer', width: 32, height: 32, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}
-            >
-              ✕
-            </button>
-            <div style={{ flex: 1, padding: 14, overflowY: 'auto' }}>
-              <ChatPanel
-                symbol={gData?.symbol}
-                ind={gInd}
-                sig={gSig}
-                fundamentals={fundamentals}
-                bilanco={bilanco}
-                log={log}
-                advisorData={advisorData}
-                intradayScan={intradayScan}
-              />
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

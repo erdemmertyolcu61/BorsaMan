@@ -26,7 +26,10 @@ const PERIODS_PER_REQUEST = 4;
 const CACHE_KEY = 'bist_fin_history_v1';
 const CACHE_TTL = 12 * 60 * 60 * 1000;
 const CACHE_MAX_SYMBOLS = 8;
-const GROUPS = ['XI_29', 'UFRS_K', 'UFRS'];
+// v31.51: XI_29K = finansal kiralama / faktoring / finansman şirketleri ("Seri XI No:29
+// Konsolide", İş Yatırım şirket kartının açılır listesinden ölçüldü: ISFIN 184 satır,
+// diğer üç türde 0). Eskiden bu şirketler "tablo bulunamadı" gösteriyordu.
+const GROUPS = ['XI_29', 'XI_29K', 'UFRS_K', 'UFRS'];
 const BASE_URL = 'https://www.isyatirim.com.tr/_layouts/15/IsYatirim.Website/Common/Data.aspx';
 
 // ── Dönem yardımcıları ───────────────────────────────────────────────────────
@@ -127,14 +130,18 @@ export function availableLabels(rows, labels) {
 export function detectStatementKind(rows) {
   const by = Object.fromEntries((rows || []).map(r => [r.code, r]));
   if (by['3DF'] && by['3H'] && by['1BL']) return 'industrial';
+  if (by['A3AH'] && by['A1AK']) return 'finance';            // XI_29K: kiralama / faktoring
   if (by['3C'] && /FA[İI]Z/i.test(by['3C'].tr)) return 'bank';
+  // Katılım bankası: "kâr payı" ve "toplanan fonlar" — satır kodları klasik banka
+  // şablonuna uymuyor (ALBRK: 3AC "XIX. DURDURULAN..."), yalnız güvenli satırlar eşlenir.
+  if (by['3A'] && /KAR PAYI/i.test(by['3A'].tr)) return 'participation';
   if (by['3K'] && /teknik/i.test(by['3K'].tr)) return 'insurance';
   return 'unknown';
 }
 
 /** Gelir tablosu (3…) ve sanayi nakit akışı (4…) akımdır; 4BE* döviz pozisyonu stoktur. */
 export function isFlowCode(code, kind) {
-  if (code.startsWith('3')) return true;
+  if (code.startsWith('3') || code.startsWith('A3')) return true;
   if (kind === 'industrial' && code.startsWith('4')) return !code.startsWith('4BE');
   return false;
 }
@@ -184,6 +191,17 @@ const DEFS = {
     netProfitGroup: '3ZA',
     totalAssets: '1Z', cash: '1A', loans: '1AF', deposits: '2A', equity: '2O',
     paidCapital: '2OA', minorityEquity: '2OVA',
+  },
+  finance: {
+    mainOpIncome: 'A3A', mainOpExpense: 'A3ACCA', otherOpIncome: 'A3ACCG', financeExpense: 'A3AE',
+    provisions: 'A3AF', otherOpExpense: 'A3AG', netOperatingProfit: 'A3AH', pretaxProfit: 'A3AK',
+    tax: 'A3AL', netProfit: 'A3AM', netProfitParent: '3Z',
+    totalAssets: 'A1AK', cash: '1A', leaseReceivables: 'A1AGA', equity: '2N', parentEquity: '2O',
+    paidCapital: '2OA',
+  },
+  participation: {
+    interestIncome: '3A', netProfit: '3Z', netProfitGroup: '3ZA',
+    totalAssets: '1Z', cash: '1A', deposits: '2A', equity: '2O',
   },
   insurance: {
     nonLifeTechIncome: '3A', nonLifeTechExpense: '3B', techBalance: '3K', netProfit: '3Z',
@@ -237,8 +255,8 @@ export function buildFinancialView(merged) {
     for (const l of labels) Q.ebitda[l] = sumOrNull(Q.netOperatingProfit?.[l], Q.depreciation?.[l]);
   }
   // Ana ortaklık payı: sanayide 3Z, bankada grubun kârı (3ZA, sıfırsa 3Z), sigortada 3Z.
-  const parentKey = kind === 'industrial' ? 'netProfitParent'
-    : kind === 'bank' && Object.values(Q.netProfitGroup || {}).some(v => v) ? 'netProfitGroup'
+  const parentKey = kind === 'industrial' || kind === 'finance' ? 'netProfitParent'
+    : (kind === 'bank' || kind === 'participation') && Object.values(Q.netProfitGroup || {}).some(v => v) ? 'netProfitGroup'
       : 'netProfit';
   Q.parentNet = Q[parentKey] || {};
 
@@ -258,6 +276,8 @@ export function buildFinancialView(merged) {
       row.ebitdaYoY = yoy('ebitda', l);
     }
     if (kind === 'bank') row.netInterestYoY = yoy('netInterestIncome', l);
+    if (kind === 'finance') row.mainOpIncomeYoY = yoy('mainOpIncome', l);
+    if (kind === 'participation') row.interestIncomeYoY = yoy('interestIncome', l);
     row.parentNetYoY = yoy('parentNet', l);
     return row;
   });
@@ -267,7 +287,7 @@ export function buildFinancialView(merged) {
     const row = { label: l, year: parsePeriod(l).y };
     for (const k of flowKeys) row[k] = cumOf(k)[l] ?? null;
     if (kind === 'industrial') row.ebitda = sumOrNull(row.netOperatingProfit, row.depreciation);
-    row.parentNet = kind === 'industrial' ? row.netProfitParent
+    row.parentNet = parentKey === 'netProfitParent' ? row.netProfitParent
       : parentKey === 'netProfitGroup' ? row.netProfitGroup : row.netProfit;
     if (kind === 'industrial') {
       row.grossMargin = pct(row.grossProfit, row.revenue);
@@ -283,6 +303,8 @@ export function buildFinancialView(merged) {
     row.revenueYoY = growth(row.revenue, prev.revenue);
     row.ebitdaYoY = growth(row.ebitda, prev.ebitda);
     row.netInterestYoY = growth(row.netInterestIncome, prev.netInterestIncome);
+    row.mainOpIncomeYoY = growth(row.mainOpIncome, prev.mainOpIncome);
+    row.interestIncomeYoY = growth(row.interestIncome, prev.interestIncome);
     row.parentNetYoY = growth(row.parentNet, prev.parentNet);
   }
   for (const row of annual) row.name = String(row.year);
@@ -293,6 +315,9 @@ export function buildFinancialView(merged) {
   const ttm = { label: latest };
   for (const k of Object.keys(Q)) ttm[k] = ttmAt(k, latest);
   ttm.prevParentNet = ttmAt('parentNet', shiftQuarters(latest, 4));
+  if (kind === 'finance') ttm.mainOpIncomeGrowth = growth(ttm.mainOpIncome, ttmAt('mainOpIncome', shiftQuarters(latest, 4)));
+  if (kind === 'participation') ttm.interestIncomeGrowth = growth(ttm.interestIncome, ttmAt('interestIncome', shiftQuarters(latest, 4)));
+  if (kind === 'bank') ttm.netInterestGrowth = growth(ttm.netInterestIncome, ttmAt('netInterestIncome', shiftQuarters(latest, 4)));
   ttm.parentNetGrowth = growth(ttm.parentNet, ttm.prevParentNet);
   if (kind === 'industrial') {
     ttm.prevRevenue = ttmAt('revenue', shiftQuarters(latest, 4));
@@ -318,6 +343,8 @@ export function buildFinancialView(merged) {
       r.ebitdaYoY = growth(r.ebitda, ttmAt('ebitda', shiftQuarters(l, 4)));
     }
     if (kind === 'bank') r.netInterestYoY = growth(r.netInterestIncome, ttmAt('netInterestIncome', shiftQuarters(l, 4)));
+    if (kind === 'finance') r.mainOpIncomeYoY = growth(r.mainOpIncome, ttmAt('mainOpIncome', shiftQuarters(l, 4)));
+    if (kind === 'participation') r.interestIncomeYoY = growth(r.interestIncome, ttmAt('interestIncome', shiftQuarters(l, 4)));
     r.parentNetYoY = growth(r.parentNet, ttmAt('parentNet', shiftQuarters(l, 4)));
     return r;
   });
@@ -336,8 +363,9 @@ export function buildFinancialView(merged) {
       b.netDebtToEbitda = ebitdaTtm != null && ebitdaTtm > 0 ? ratio(b.netDebt, ebitdaTtm) : null;
     }
     if (kind === 'bank') b.loanToDeposit = pct(b.loans, b.deposits);
+    if (kind === 'finance') b.equityToAssets = pct(b.equity, b.totalAssets);
     if (kind === 'insurance') b.currentRatio = ratio(b.currentAssets, b.currentLiabilities);
-    b.parentEquity = kind === 'industrial' ? b.parentEquity
+    b.parentEquity = kind === 'industrial' || kind === 'finance' ? b.parentEquity
       : b.equity != null ? b.equity - (b.minorityEquity || 0) : null;
     const ni = ttmAt('parentNet', l);
     b.roe = ni != null && b.parentEquity > 0 ? (ni / b.parentEquity) * 100 : null;

@@ -1,97 +1,125 @@
-import { calcAll, calcChandelierExit } from './indicators.js';
+import { calcAll } from './indicators.js';
 import { genSignal } from './signals.js';
 import { TOTAL_COST_PCT } from './tradingCosts.js';
+import { simulatePlanReturn, MAX_PLAN_BARS } from './planSimulation.js';
 
 // Re-exported for backward compatibility — single source of truth lives in tradingCosts.js
 export { TOTAL_COST_PCT };
 
-export function runBacktest(prices, strategy = 'signal') {
+/**
+ * v31.51 — the single-stock backtest now exits the way the live system does.
+ *
+ * Before: a fixed target SOLD the whole position, a Chandelier stop trailed, and
+ * the hold was capped at 25-60 bars. That is the staged / target exit the
+ * replay measured as giving away more than half the return (26,855 signals,
+ * 5 years: trailing-only +1.30% vs staged +0.27% net per trade) and that the
+ * system stopped using in v31.30. Paper trading, the calibration and the
+ * signal tracker all exit through planSimulation.simulatePlanReturn — trailing
+ * stop only (+3% breakeven, above +5% half the gain locked), targets are
+ * reference levels, at most MAX_PLAN_BARS (30) bars. The backtest now calls the
+ * same function, so its numbers describe the rule the app actually follows.
+ *
+ * Entry is unchanged: the signal is computed on bars up to the day before and
+ * the position opens at the next bar's open (no look-ahead). Round-trip cost
+ * TOTAL_COST_PCT is deducted from every trade.
+ */
+export const BACKTEST_MIN_SCORE = 55;
+
+export function scoreTier(score) {
+  const s = Number(score) || 0;
+  return s >= 75 ? 'sniper' : s >= 65 ? 'flagged' : 'early';
+}
+
+function entryFires(strategy, ind, sig) {
+  const len = ind?.closes?.length || 0;
+  if (strategy === 'signal') return sig.cls !== 'sell' && (sig.score || 0) >= BACKTEST_MIN_SCORE;
+  if (strategy === 'rsi') {
+    let enter = ind.lastRSI != null && ind.lastRSI < 35;
+    if (enter && len >= 2 && ind.rsi[len - 2] != null) enter = ind.lastRSI >= ind.rsi[len - 2];
+    return enter;
+  }
+  if (strategy === 'macd') {
+    const m = ind.macd.macd[len - 1], s = ind.macd.signal[len - 1];
+    const pm = len >= 2 ? ind.macd.macd[len - 2] : null, ps = len >= 2 ? ind.macd.signal[len - 2] : null;
+    return m != null && s != null && pm != null && ps != null && m > s && pm <= ps;
+  }
+  if (strategy === 'ma') {
+    const m20 = ind.ma20[len - 1], m50 = ind.ma50[len - 1];
+    const pm20 = len >= 2 ? ind.ma20[len - 2] : null, pm50 = len >= 2 ? ind.ma50[len - 2] : null;
+    return m20 != null && m50 != null && pm20 != null && pm50 != null && m20 > m50 && pm20 <= pm50;
+  }
+  return false;
+}
+
+/**
+ * @param {Array} prices chronological daily bars
+ * @param {'signal'|'rsi'|'macd'|'ma'} strategy
+ * @param {{maxBars?: number, cost?: number}} [opts]
+ * @returns {Array<{entry, exit, entryDate, exitDate, days, pnl, result: 'stop'|'trail'|'timeout'|'open', score, tier}>}
+ */
+export function runBacktest(prices, strategy = 'signal', { maxBars = MAX_PLAN_BARS, cost = TOTAL_COST_PCT } = {}) {
   const trades = [];
+  if (!Array.isArray(prices) || prices.length < 25) return trades;
   const minBars = strategy === 'ma' ? 55 : strategy === 'macd' ? 40 : 20;
-  const maxHold = strategy === 'ma' ? 60 : strategy === 'macd' ? 45 : 25;
-  let inPos = false;
-  let pos = null;
 
   for (let i = minBars; i < prices.length; i++) {
     const window = prices.slice(Math.max(0, i - 200), i);
     if (window.length < minBars) continue;
     const ind = calcAll(window);
     const sig = genSignal(ind, window);
-    const close = prices[i].close;
-    const len = window.length;
+    if (!entryFires(strategy, ind, sig)) continue;
 
-    if (inPos) {
-      const trailWindow = prices.slice(Math.max(0, i - 200), i);
-      const ch = calcChandelierExit(trailWindow, 22, 3);
-      if (ch.longStop && ch.longStop > pos.stop && ch.longStop < prices[i].close) {
-        pos.stop = ch.longStop;
-      }
-      const hitStop = prices[i].low <= pos.stop;
-      const hitTarget = prices[i].high >= pos.target;
-      const held = i - pos.idx;
-      if (hitStop) {
-        const exit = pos.stop * (1 - TOTAL_COST_PCT);
-        const pnl = ((exit - pos.price) / pos.price) * 100;
-        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: prices[i].date, days: held, pnl, result: 'stop' });
-        inPos = false;
-      } else if (hitTarget) {
-        const exit = pos.target * (1 - TOTAL_COST_PCT);
-        const pnl = ((exit - pos.price) / pos.price) * 100;
-        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: prices[i].date, days: held, pnl, result: 'target' });
-        inPos = false;
-      } else if (held > maxHold) {
-        const exit = close * (1 - TOTAL_COST_PCT);
-        const pnl = ((exit - pos.price) / pos.price) * 100;
-        trades.push({ entry: pos.price, exit, entryDate: pos.date, exitDate: prices[i].date, days: held, pnl, result: 'timeout' });
-        inPos = false;
-      }
-    } else {
-      let enter = false;
-      if (strategy === 'signal') {
-        enter = sig.score >= 55;
-      } else if (strategy === 'rsi') {
-        enter = ind.lastRSI != null && ind.lastRSI < 35;
-        if (enter && len >= 2 && ind.rsi[len - 2] != null) enter = ind.lastRSI >= ind.rsi[len - 2];
-      } else if (strategy === 'macd') {
-        const m = ind.macd.macd[len - 1];
-        const s = ind.macd.signal[len - 1];
-        const pm = len >= 2 ? ind.macd.macd[len - 2] : null;
-        const ps = len >= 2 ? ind.macd.signal[len - 2] : null;
-        enter = m != null && s != null && pm != null && ps != null && m > s && pm <= ps;
-      } else if (strategy === 'ma') {
-        const m20 = ind.ma20[len - 1];
-        const m50 = ind.ma50[len - 1];
-        const pm20 = len >= 2 ? ind.ma20[len - 2] : null;
-        const pm50 = len >= 2 ? ind.ma50[len - 2] : null;
-        enter = m20 != null && m50 != null && pm20 != null && pm50 != null && m20 > m50 && pm20 <= pm50;
-      }
-      if (enter) {
-        const entryPrice = prices[i].open * (1 + TOTAL_COST_PCT);
-        let stop = sig.stop;
-        if (!stop || stop >= entryPrice) stop = entryPrice * 0.95;
-        if (stop < entryPrice * 0.88) stop = entryPrice * 0.92;
-        let target = sig.t1;
-        if (!target || target <= entryPrice * 1.01) target = entryPrice * 1.05;
-        pos = { idx: i, price: entryPrice, date: prices[i].date, stop, target };
-        inPos = true;
-      }
-    }
-  }
+    const bar = prices[i];
+    const entry = bar.open > 0 ? bar.open : bar.close;
+    if (!(entry > 0)) continue;
+    let stop = sig.stop;
+    if (!stop || stop >= entry) stop = entry * 0.95;
+    if (stop < entry * 0.88) stop = entry * 0.92;
 
-  if (inPos) {
-    const exit = prices[prices.length - 1].close * (1 - TOTAL_COST_PCT);
+    const sim = simulatePlanReturn(
+      { entry, stop, cls: 'buy', timestamp: bar.date },
+      prices.slice(i, i + maxBars),
+      { maxBars },
+    );
+    if (!sim) continue;
+    const exitIdx = Math.min(prices.length - 1, i + sim.barsHeld - 1);
+    const reachedEnd = sim.exitReason === 'timeout' && sim.barsHeld < maxBars && exitIdx >= prices.length - 1;
+    const result = reachedEnd ? 'open'
+      : sim.exitReason === 'stop' ? (sim.planReturn > 0 ? 'trail' : 'stop')
+        : 'timeout';
+    const pnl = sim.planReturn - cost * 100;
     trades.push({
-      entry: pos.price,
-      exit,
-      entryDate: pos.date,
-      exitDate: prices[prices.length - 1].date,
-      days: prices.length - 1 - pos.idx,
-      pnl: ((exit - pos.price) / pos.price) * 100,
-      result: 'open',
+      entry, exit: entry * (1 + sim.planReturn / 100),
+      entryDate: bar.date, exitDate: prices[exitIdx].date,
+      days: sim.barsHeld, pnl, result,
+      score: Number(sig.score) || 0, tier: scoreTier(sig.score),
     });
+    i = exitIdx;   // one position at a time; the next signal is read after the exit bar
   }
-
   return trades;
+}
+
+/** Closed trades split by the live conviction tiers (≥75 / 65–75 / 55–65). */
+export function tierBreakdown(trades) {
+  const out = {};
+  for (const key of ['sniper', 'flagged', 'early']) {
+    const t = (trades || []).filter(x => x.result !== 'open' && x.tier === key);
+    const wins = t.filter(x => x.pnl > 0).length;
+    out[key] = {
+      n: t.length,
+      winRate: t.length ? (wins / t.length) * 100 : null,
+      avg: t.length ? t.reduce((s, x) => s + x.pnl, 0) / t.length : null,
+    };
+  }
+  return out;
+}
+
+/** Al-tut getirisi, ilk işlem fırsatının barından son kapanışa (karşılaştırma için). */
+export function buyAndHoldReturn(prices, fromIdx = 20) {
+  if (!Array.isArray(prices) || prices.length <= fromIdx + 1) return null;
+  const start = prices[fromIdx].open > 0 ? prices[fromIdx].open : prices[fromIdx].close;
+  const end = prices[prices.length - 1].close;
+  return start > 0 ? ((end - start) / start) * 100 : null;
 }
 
 export function calcBacktestStats(trades, totalDays) {
@@ -172,13 +200,13 @@ export function calcBacktestStats(trades, totalDays) {
 
   let verdict, verdictColor;
   if (winRate >= 55 && profitFactor >= 1.5 && expectancy > 0.5) {
-    verdict = 'GUCLU — Bu strateji calisiyor';
+    verdict = 'GUCLU — geçmişte pozitif beklenti, kazanma ve kâr faktörü yüksek';
     verdictColor = 'var(--green)';
   } else if (winRate >= 45 && expectancy > 0) {
-    verdict = 'ORTA — Disiplinle marjinal kar mumkun';
+    verdict = 'ORTA — geçmişte küçük pozitif beklenti';
     verdictColor = 'var(--yellow)';
   } else {
-    verdict = 'ZAYIF — Farkli strateji dene';
+    verdict = 'ZAYIF — geçmişte beklenti negatif ya da kazanma düşük';
     verdictColor = 'var(--red)';
   }
 

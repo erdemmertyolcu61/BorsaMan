@@ -20,7 +20,6 @@ import AIAdvisorPanel, { AIAdvisorDetailPanel } from './components/AIAdvisor/AIA
 import Tabs from './components/Tabs/Tabs.jsx';
 import MobileNav from './components/MobileNav/MobileNav.jsx';
 import MobilePicksStrip from './components/MobileNav/MobilePicksStrip.jsx';
-import ForwardAccuracyPanel from './components/ForwardAccuracy/ForwardAccuracyPanel.jsx';
 import ScanScorecardPanel from './components/Signals/ScanScorecardPanel.jsx';
 import DataLayerEdgePanel from './components/Signals/DataLayerEdgePanel.jsx';
 import StockDetailTab from './components/StockDetail/StockDetailTab.jsx';
@@ -40,10 +39,10 @@ export default function App() {
   const notifications = useNotifications();
   const paperTrading = usePaperTrading();
   const paperML = usePaperTradeML();
-  // Immutable daily prediction ledger — measures real next-day accuracy.
-  // Read-only ground truth; does not feed back into scoring (keeps it unbiased).
+  // Gunluk tahmin defteri — kapanistan yerlesen d1/d3/d5. v31.51 (kullanici):
+  // "Tahmin isabeti" paneli ekrandan kaldirildi, defter CALISMAYA DEVAM EDER:
+  // profit governor ve adaptif stop onu okur; kapatmak skoru olcmeden degistirirdi.
   const forwardJournal = useForwardTestJournal();
-  // Expose for inspection until a dedicated accuracy panel lands:
   //   __bistForwardJournal.stats  → next-day directional hit rate, expectancy, etc.
   useEffect(() => {
     window.__bistForwardJournal = forwardJournal;
@@ -73,7 +72,6 @@ export default function App() {
       return [];
     }
   });
-  const [intradayScan, setIntradayScan] = useState(null);
   const [scanHistory, setScanHistory] = useState([]);
   const scanningRef = useRef(false);
   const livePrice = useLivePrices(state.portfolio, state.updatePortfolio, watchlist, alertLog);
@@ -103,7 +101,6 @@ export default function App() {
 
   // ── Shared callback: TradesTab scan results flow to all systems ──
   const onTradesScanComplete = useCallback((scanData) => {
-    setIntradayScan(scanData);
     window.__tradesLastScan = scanData;
   }, []);
 
@@ -367,11 +364,6 @@ export default function App() {
           gInd={state.gInd} setGInd={state.setGInd}
           gSig={state.gSig} setGSig={state.setGSig}
           log={state.log} setBadge={state.setBadge}
-          addToPortfolio={state.addToPortfolio}
-          portfolio={state.portfolio}
-          brokerConfig={state.brokerConfig}
-          advisorData={advisor}
-          intradayScan={intradayScan}
           onOpenDetail={openStockDetail}
         />
       </div>
@@ -403,7 +395,6 @@ export default function App() {
 
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>
         <ScanScorecardPanel scorecard={scorecard} onAnalyze={handleAIAnalyze} />
-        <ForwardAccuracyPanel journal={forwardJournal} signalTracker={signalTracker} />
         <DataLayerEdgePanel signals={signalTracker.signals} />
         <SignalsTab
           tracker={signalTracker}

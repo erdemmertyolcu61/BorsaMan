@@ -205,3 +205,44 @@ describe('banka', () => {
     expect(val.pb).toBeCloseTo((100 * 5 * M) / (500 * M), 9);
   });
 });
+
+describe('v31.51: kiralama/faktoring (XI_29K) ve katılım bankası', () => {
+  const labels = ['2026/6', '2026/3', '2025/12', '2025/9', '2025/6'];
+  const vals = (arr) => Object.fromEntries(labels.map((l, i) => [l, arr[i] * M]));
+
+  it('XI_29K: A-kodlu gelir satırları akım, ana ortaklık kârı 3Z', () => {
+    const rows = [
+      { code: 'A1AK', tr: 'AKTİF TOPLAMI', values: vals([136, 124, 120, 110, 100]) },
+      { code: '2N', tr: 'Özkaynaklar', values: vals([16, 15, 14, 13, 12]) },
+      { code: '2O', tr: 'Ana Ortaklığa Ait Özkaynaklar', values: vals([14.6, 13.9, 13, 12, 11]) },
+      { code: '2OA', tr: '13.1 Ödenmiş Sermaye', values: vals([0.7, 0.7, 0.7, 0.7, 0.7]) },
+      { code: 'A3A', tr: 'I. ESAS FAALİYET GELİRLERİ', values: vals([18.7, 11.6, 30, 20, 12]) },
+      { code: 'A3AH', tr: 'VII. NET FAALİYET K/Z (I+…+VI)', values: vals([4.4, 2.7, 7, 5, 3]) },
+      { code: '3Z', tr: 'NET DÖNEM KARI (ZARARI)', values: vals([3.1, 2.06, 6, 4, 2.5]) },
+    ];
+    expect(detectStatementKind(rows)).toBe('finance');
+    expect(isFlowCode('A3A', 'finance')).toBe(true);
+    expect(isFlowCode('A1AK', 'finance')).toBe(false);
+    const view = buildFinancialView({ rows, labels });
+    expect(view.quarters[0].mainOpIncome).toBeCloseTo((18.7 - 11.6) * M, 3);
+    expect(view.quarters[0].parentNet).toBeCloseTo((3.1 - 2.06) * M, 3);
+    expect(view.balance[0].totalAssets).toBe(136 * M);   // stok, farklanmaz
+    expect(computeValuation(view, 20).pb).toBeCloseTo((20 * 0.7 * M) / (14.6 * M), 9);
+  });
+
+  it('katılım bankası: "kâr payı" şablonu tanınır, yalnız güvenli satırlar eşlenir', () => {
+    const rows = [
+      { code: '1Z', tr: 'AKTİF TOPLAMI', values: vals([589, 541, 500, 480, 460]) },
+      { code: '2A', tr: 'I. TOPLANAN FONLAR', values: vals([392, 330, 320, 300, 290]) },
+      { code: '2O', tr: 'ÖZKAYNAK', values: vals([33.8, 32.2, 31, 30, 29]) },
+      { code: '3A', tr: 'I. KAR PAYI GELİRLERİ', values: vals([69.1, 43.6, 80, 55, 35]) },
+      { code: '3Z', tr: 'XVIII. NET DÖNEM KARI/ZARARI', values: vals([5.78, 3.96, 9, 6, 4]) },
+      { code: '3ZA', tr: '23.1 Grubun Karı/Zararı', values: vals([5.78, 3.96, 9, 6, 4]) },
+    ];
+    expect(detectStatementKind(rows)).toBe('participation');
+    const view = buildFinancialView({ rows, labels });
+    expect(view.quarters[0].interestIncome).toBeCloseTo((69.1 - 43.6) * M, 3);
+    expect(view.quarters[0].parentNet).toBeCloseTo((5.78 - 3.96) * M, 3);
+    expect(computeValuation(view, 10)).toBeNull();          // pay adedi yok → İş Yatırım değerleri gösterilir
+  });
+});

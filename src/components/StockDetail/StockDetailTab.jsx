@@ -39,23 +39,33 @@ const SECTIONS = [
 
 const GROUP_LABEL = {
   XI_29: 'UFRS · Seri XI No:29',
+  XI_29K: 'Seri XI No:29 · konsolide (finans şirketi)',
   UFRS_K: 'UFRS · konsolide',
   UFRS: 'UFRS · solo',
 };
 
-const KIND_LABEL = { industrial: 'sanayi/hizmet', bank: 'banka', insurance: 'sigorta', unknown: 'diğer' };
+const KIND_LABEL = { industrial: 'sanayi/hizmet', bank: 'banka', participation: 'katılım bankası', finance: 'kiralama/faktoring', insurance: 'sigorta', unknown: 'diğer' };
+
+// v31.51: kulüplerin hesap dönemi haziran–mayıs; İş Yatırım dönem etiketleri takvim
+// çeyreğine oturmuyor (BJKAS 2026/3 < 2025/12), kümülatiften çeyrek türetmek yanıltır.
+const FISCAL_JUNE_MAY = new Set(['BJKAS', 'FENER', 'GSRAY', 'TSPOR']);
 
 const CHART_METRICS = {
   industrial: [{ id: 'revenue', label: 'Hasılat' }, { id: 'ebitda', label: 'FAVÖK' }, { id: 'parentNet', label: 'Net kâr' }],
   bank: [{ id: 'netInterestIncome', label: 'Net faiz geliri' }, { id: 'parentNet', label: 'Net kâr' }],
+  finance: [{ id: 'mainOpIncome', label: 'Esas faaliyet geliri' }, { id: 'parentNet', label: 'Net kâr' }],
+  participation: [{ id: 'interestIncome', label: 'Kâr payı geliri' }, { id: 'parentNet', label: 'Net kâr' }],
   insurance: [{ id: 'techBalance', label: 'Teknik denge' }, { id: 'parentNet', label: 'Net kâr' }],
   unknown: [{ id: 'parentNet', label: 'Net kâr' }],
 };
-const YOY_KEY = { revenue: 'revenueYoY', ebitda: 'ebitdaYoY', parentNet: 'parentNetYoY', netInterestIncome: 'netInterestYoY' };
+const YOY_KEY = { revenue: 'revenueYoY', ebitda: 'ebitdaYoY', parentNet: 'parentNetYoY', netInterestIncome: 'netInterestYoY', mainOpIncome: 'mainOpIncomeYoY', interestIncome: 'interestIncomeYoY' };
 
+// v31.51: minWidth 0 — grid/flex öğesi varsayılan olarak içeriğinden dar olamaz;
+// tablo kartı genişleyip ekranın dışına taşıyor, iç kaydırıcı hiç devreye girmiyordu
+// (ölçüldü: 375 px telefonda içerik 488 px, sağ taraf kesik, sağa kaydırılamıyor).
 function Card({ title, right, children, style }) {
   return (
-    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', ...style }}>
+    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', minWidth: 0, ...style }}>
       {(title || right) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           {title && <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)' }}>{title}</div>}
@@ -199,6 +209,7 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
   const periodTitle = periodMode === 'annual' ? 'yıllık' : periodMode === 'ttm' ? 'son 12 ay, her çeyrek sonunda' : 'çeyreklik';
 
   const gutter = isMobile ? 12 : 16;
+  const labelW = isMobile ? 130 : 190;
   const busy = !!(st.finLoading || st.pxLoading);
   const refreshing = (st.finLoading && st.fin) || (st.pxLoading && st.prices);
   const fadeStyle = refreshing ? { opacity: 0.55, transition: 'opacity .2s' } : { transition: 'opacity .2s' };
@@ -226,6 +237,13 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
       stats.push({ label: 'Serbest nakit verimi', value: fmtPct(valuation.fcfYield), sub: `12A SNA ${fmtBig(t.fcf)}` });
     }
     if (kind === 'bank' && b0.loanToDeposit != null) stats.push({ label: 'Kredi / mevduat', value: fmtPct(b0.loanToDeposit) });
+  } else if (ref) {
+    // Pay adedi tablodan okunamadıysa (ör. katılım bankası şablonu) İş Yatırım'ın kendi
+    // değerleri gösterilir — "veri yok" yerine kaynağı söylenen bir sayı.
+    if (ref.mcapMnTL != null) stats.push({ label: 'Piyasa değeri', value: fmtBig(ref.mcapMnTL * 1e6, { unit: 'TL' }), sub: 'İş Yatırım tarama' });
+    if (ref.pe != null) stats.push({ label: 'F/K', value: fmtX(ref.pe, 2), sub: 'İş Yatırım tarama' });
+    if (ref.pb != null) stats.push({ label: 'PD/DD', value: fmtX(ref.pb, 2), sub: 'İş Yatırım tarama' });
+    if (b0.roe != null) stats.push({ label: 'Özkaynak kârlılığı', value: fmtPct(b0.roe), sub: '12A net kâr / özkaynak' });
   }
   if (st.foreign?.ratio != null) {
     const w = st.foreign.changeWeek;
@@ -237,10 +255,14 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
 
   const flowSummaryRows = kind === 'bank'
     ? [['netInterestIncome', 'Net faiz geliri', null, 'netInterestYoY'], ['operatingIncome', 'Faaliyet gelirleri', null, null], ['parentNet', 'Net kâr', null, 'parentNetYoY']]
+    : kind === 'finance'
+      ? [['mainOpIncome', 'Esas faaliyet gelirleri', null, 'mainOpIncomeYoY'], ['netOperatingProfit', 'Net faaliyet kârı', null, null], ['parentNet', 'Net kâr (ana ortaklık)', null, 'parentNetYoY']]
+    : kind === 'participation'
+      ? [['interestIncome', 'Kâr payı gelirleri', null, 'interestIncomeYoY'], ['parentNet', 'Net kâr', null, 'parentNetYoY']]
     : kind === 'insurance'
       ? [['techBalance', 'Teknik bölüm dengesi', null, null], ['parentNet', 'Net kâr', null, 'parentNetYoY']]
       : [['revenue', 'Hasılat', null, 'revenueYoY'], ['grossProfit', 'Brüt kâr', 'grossMargin', null], ['ebitda', 'FAVÖK', 'ebitdaMargin', 'ebitdaYoY'], ['operatingProfit', 'Esas faaliyet kârı', 'operatingMargin', null], ['parentNet', 'Net kâr (ana ortaklık)', 'netMargin', 'parentNetYoY'], ['fcf', 'Serbest nakit akımı', null, null]];
-  const ttmGrowth = { revenueYoY: t.revenueGrowth, ebitdaYoY: t.ebitdaGrowth, parentNetYoY: t.parentNetGrowth };
+  const ttmGrowth = { revenueYoY: t.revenueGrowth, ebitdaYoY: t.ebitdaGrowth, parentNetYoY: t.parentNetGrowth, netInterestYoY: t.netInterestGrowth, mainOpIncomeYoY: t.mainOpIncomeGrowth, interestIncomeYoY: t.interestIncomeGrowth };
 
   return (
     <div style={{ padding: `12px ${gutter}px 28px`, maxWidth: 1280, margin: '0 auto' }}>
@@ -253,7 +275,7 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
           style={{ width: 'auto', padding: '8px 16px', margin: 0, fontSize: 13 }}>
           {busy ? 'Yükleniyor…' : 'Getir'}
         </button>
-        <div style={{ display: 'flex', gap: 6, flexWrap: isMobile ? 'nowrap' : 'wrap', overflowX: isMobile ? 'auto' : 'visible', maxWidth: '100%', paddingBottom: isMobile ? 2 : 0 }}>
+        <div className="no-scrollbar" style={{ display: 'flex', gap: 6, flexWrap: isMobile ? 'nowrap' : 'wrap', overflowX: isMobile ? 'auto' : 'visible', minWidth: 0, flex: isMobile ? '1 1 100%' : '0 1 auto', paddingBottom: isMobile ? 2 : 0, WebkitOverflowScrolling: 'touch' }}>
           {QUICK_STOCKS.slice(0, isMobile ? 12 : 10).map(s => (
             <Pill key={s} onPress={() => submit(s)} active={s === shownSymbol}>{s}</Pill>
           ))}
@@ -277,10 +299,9 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
       )}
 
       {/* Bölümler */}
-      <div style={{ overflowX: 'auto', marginBottom: 12, WebkitOverflowScrolling: 'touch' }}>
-        <div style={{ display: 'inline-flex' }}>
-          <Segmented options={SECTIONS} value={section} onChange={setSection} />
-        </div>
+      {/* v31.51: telefonda bölümler alt satıra kayar — yana kayan şeritte son ikisi görünmüyordu */}
+      <div style={{ marginBottom: 12, minWidth: 0 }}>
+        <Segmented options={SECTIONS} value={section} onChange={setSection} />
       </div>
 
       {!shownSymbol && (
@@ -288,7 +309,7 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
       )}
 
       {shownSymbol && (
-        <div style={{ display: 'grid', gap: 12, ...fadeStyle }}>
+        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'minmax(0, 1fr)', ...fadeStyle }}>
           {section !== 'technical' && !st.fin && st.finLoading && (
             <Loading text={`${shownSymbol} mali tabloları çekiliyor (16 çeyrek, İş Yatırım)…`} />
           )}
@@ -297,6 +318,12 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
           )}
           {st.fin?.unavailable && section !== 'technical' && (
             <Card><div style={{ fontSize: 12, color: 'var(--orange)', lineHeight: 1.5 }}>{describeFailure(st.fin.reason)}</div></Card>
+          )}
+          {FISCAL_JUNE_MAY.has(shownSymbol) && view?.latest && section !== 'technical' && (
+            <Card><div style={{ fontSize: 12, color: 'var(--orange)', lineHeight: 1.5 }}>
+              Bu kulübün hesap dönemi haziran–mayıs. İş Yatırım dönem etiketleri takvim çeyreğine oturmadığı için çeyreklik
+              rakamlar ve 12A güvenilir değil — “Tüm kalemler › Kümülatif” görünümünü kullan.
+            </div></Card>
           )}
 
           {section === 'summary' && (
@@ -347,9 +374,10 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
               {view?.latest && (
                 <Note>
                   Kaynak: İş Yatırım mali tablolar · {GROUP_LABEL[st.fin.group] || st.fin.group} · {KIND_LABEL[kind]} şablonu · {view.labels.length} çeyrek, son dönem {quarterName(view.latest)}.
-                  {' '}F/K ve PD/DD bu bilançodan ve güncel fiyattan hesaplanır; İş Yatırım tarama değeri farklıysa tarama henüz son bilançoyu almamıştır.
+                  {valuation
+                    ? ' F/K ve PD/DD bu bilançodan ve güncel fiyattan hesaplanır; İş Yatırım tarama değeri farklıysa tarama henüz son bilançoyu almamıştır. Pay adedi = ödenmiş sermaye (nominal 1 TL).'
+                    : ' Bu şablonda pay adedi okunamadığı için piyasa değeri, F/K ve PD/DD İş Yatırım taramasından.'}
                   {st.fin.missingChunks ? ` ${st.fin.missingChunks * 4} eski çeyrek alınamadı.` : ''}
-                  {' '}Pay adedi = ödenmiş sermaye (nominal 1 TL).
                 </Note>
               )}
               {setWatchlist && <WatchlistPanel watchlist={watchlist} setWatchlist={setWatchlist} livePrice={livePrice} />}
@@ -370,7 +398,7 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
                 <QuarterChart points={chartPoints} title={`${shownSymbol} · TL`} />
               </Card>
               <Card title={kind === 'industrial' ? 'Gelir tablosu ve FAVÖK' : 'Gelir tablosu'}>
-                <DataTable rows={incomeRows(kind)} columns={periodColumns} />
+                <DataTable rows={incomeRows(kind)} columns={periodColumns} firstColWidth={labelW} />
                 <Note>{periodMode === 'ttm' ? 'Her sütun o çeyrek sonunda biten 12 ayın toplamı. ' : ''}{periodMode === 'quarter' ? Q4_NOTE : ''}{TMS29}</Note>
               </Card>
             </>
@@ -378,7 +406,7 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
 
           {section === 'balance' && view?.latest && (
             <Card title="Bilanço ve oranlar" right={<span style={{ fontSize: 11, color: 'var(--t3)' }}>çeyrek sonu değerleri</span>}>
-              <DataTable rows={balanceRows(kind)} columns={view.balance} />
+              <DataTable rows={balanceRows(kind)} columns={view.balance} firstColWidth={labelW} />
               <Note>Oranlardaki 12A, o çeyrek sonunda biten 12 ayın kârı ve FAVÖK'üdür.</Note>
             </Card>
           )}
@@ -389,7 +417,7 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
                 <Segmented size="sm" value={periodMode} onChange={setPeriodMode}
                   options={[{ id: 'quarter', label: 'Çeyreklik' }, { id: 'ttm', label: '12A' }, { id: 'annual', label: 'Yıllık' }]} />
               )}>
-                <DataTable rows={cashRows()} columns={periodColumns} />
+                <DataTable rows={cashRows()} columns={periodColumns} firstColWidth={labelW} />
                 <Note>Serbest nakit akımı İş Yatırım’ın tanımıyla (işletme nakdi + yatırım harcamaları). {TMS29}</Note>
               </Card>
             ) : (
@@ -409,7 +437,7 @@ export default function StockDetailTab({ active, symbol, onSymbolChange, onAnaly
 
           {section === 'all' && view?.latest && (
             <Card title="Tüm mali tablo kalemleri" right={<span style={{ fontSize: 11, color: 'var(--t3)' }}>{GROUP_LABEL[st.fin.group] || st.fin.group}</span>}>
-              <FullStatement statements={view.statements} labels={view.labels} kind={kind} />
+              <FullStatement statements={view.statements} labels={view.labels} kind={kind} firstColWidth={isMobile ? 150 : 220} />
               <Note>{TMS29}</Note>
             </Card>
           )}

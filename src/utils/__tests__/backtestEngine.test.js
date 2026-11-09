@@ -10,7 +10,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { runBacktest, calcBacktestStats, TOTAL_COST_PCT } from '../backtestEngine.js';
+import { runBacktest, calcBacktestStats, TOTAL_COST_PCT, tierBreakdown, buyAndHoldReturn, scoreTier } from '../backtestEngine.js';
+import { simulatePlanReturn } from '../planSimulation.js';
 
 // Build a price series: slow uptrend interrupted by pullbacks so entries fire.
 function mixedSeries(n = 150) {
@@ -45,7 +46,7 @@ describe('runBacktest', () => {
       expect(t).toHaveProperty('pnl');
       expect(t).toHaveProperty('days');
       expect(t).toHaveProperty('result');
-      expect(['stop', 'target', 'timeout', 'open']).toContain(t.result);
+      expect(['stop', 'trail', 'timeout', 'open']).toContain(t.result);   // v31.51: no target exit
       expect(Number.isFinite(t.pnl)).toBe(true);
       expect(t.days).toBeGreaterThanOrEqual(0);
     }
@@ -56,6 +57,44 @@ describe('runBacktest', () => {
     for (const s of ['signal', 'rsi', 'macd', 'ma']) {
       expect(() => runBacktest(prices, s)).not.toThrow();
     }
+  });
+
+  it('v31.51: exits through the live trailing-only plan, minus the round-trip cost', () => {
+    const prices = mixedSeries(220);
+    const trades = runBacktest(prices, 'signal');
+    expect(trades.length).toBeGreaterThan(0);
+    for (const t of trades) {
+      const i = prices.findIndex(b => b.date === t.entryDate);
+      const sim = simulatePlanReturn({ entry: t.entry, stop: undefined, cls: 'buy', timestamp: prices[i].date }, prices.slice(i, i + 30), { maxBars: 30 });
+      expect(sim).not.toBeNull();
+      expect(t.days).toBeLessThanOrEqual(30);
+      expect(t.entry).toBe(prices[i].open);                 // next-bar open, no look-ahead
+    }
+    // trades never overlap: each entry comes after the previous exit
+    for (let k = 1; k < trades.length; k++) expect(trades[k].entryDate > trades[k - 1].exitDate).toBe(true);
+  });
+
+  it('a stop that closes above entry is reported as a trailing exit', () => {
+    const trades = runBacktest(mixedSeries(220), 'signal');
+    for (const t of trades) {
+      if (t.result === 'trail') expect(t.pnl + TOTAL_COST_PCT * 100).toBeGreaterThan(0);
+      if (t.result === 'stop') expect(t.pnl + TOTAL_COST_PCT * 100).toBeLessThanOrEqual(0);
+    }
+  });
+
+  it('tiers, breakdown and buy-and-hold', () => {
+    expect(scoreTier(80)).toBe('sniper');
+    expect(scoreTier(70)).toBe('flagged');
+    expect(scoreTier(56)).toBe('early');
+    const b = tierBreakdown([
+      { tier: 'sniper', pnl: 4, result: 'trail' }, { tier: 'sniper', pnl: -2, result: 'stop' },
+      { tier: 'early', pnl: -1, result: 'stop' }, { tier: 'early', pnl: 9, result: 'open' },
+    ]);
+    expect(b.sniper).toEqual({ n: 2, winRate: 50, avg: 1 });
+    expect(b.early.n).toBe(1);                              // open trade excluded
+    expect(b.flagged.n).toBe(0);
+    const p = [{ open: 10, close: 10 }, { open: 10, close: 12 }, { open: 12, close: 15 }];
+    expect(buyAndHoldReturn(p, 0)).toBeCloseTo(50, 9);
   });
 
   it('applies round-trip cost to filled trades', () => {

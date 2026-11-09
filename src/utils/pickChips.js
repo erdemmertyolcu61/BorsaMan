@@ -28,7 +28,12 @@ export function buildPickChips(p = {}) {
   const cp = p.continuationProbability;
 
   // ── 0-2: alimi engelleyen / riski degistiren ──
-  if (isBuy && p._watchOnly) {
+  if (isBuy && p._watchOnly && p._fillerWatch) {
+    add('watch', 'İzle · tamamlayıcı aday', 'warn', 0, [
+      'Bugün kalite tabanını geçen AL sayısı 3’ten azdı; bu isim listeyi tamamlamak için gösteriliyor.',
+      'Paper hesap bunu açmaz, lot önerisi yok — izleme amaçlı.',
+    ].join('\n'));
+  } else if (isBuy && p._watchOnly) {
     add('watch', 'İzle · alım değil', 'danger', 0, [
       'Piyasa düşüş trendinde: bu isim izlemek için gösteriliyor, yeni pozisyon önerilmez.',
       'Ölçüm: düşüş rejiminde AL pozisyonları tarihsel −%3,4 / %18,8 kazanma.',
