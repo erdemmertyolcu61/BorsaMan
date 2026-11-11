@@ -64,6 +64,13 @@ const r2 = (v) => Math.round(v * 100) / 100;
  *  - Trailing stop bar KAPANDIKTAN sonra guncellenir ve BIR SONRAKI bardan
  *    itibaren gecerlidir. Ayni bar icinde geriye donuk uygulamak ileriye bakmak
  *    olurdu (o seviye bar acilirken henuz yoktu).
+ *  - BOSLUK (v31.53): bar stop'un OTESINDE acildiysa cikis stop seviyesinden degil
+ *    ACILISTAN yazilir — gercek stop emri gece boslugunda seviyeden dolmaz. Eskiden
+ *    her stop seviyeden doluyordu: islem basina ortalama ~0,3 puan iyimserlik
+ *    (olculdu, scripts/feature-edge-report.mjs) ve giris zaten stop'un altinda
+ *    acildiysa HAYALI KAR (stop > giris → "+%2,5"). Bar acilis tasimiyorsa ya da
+ *    acilis yaklasik (`_openApprox`) ise eski konvansiyon gecerli: bilmedigimizi
+ *    uydurmayiz.
  *  - Zirve `high` uzerinden takip edilir: useLivePrices canli fiyati gordugu icin
  *    gun ici tepeyi de gorur — gercek uygulamaya sadik olan bu.
  *  - Pencere sonunda kalan pozisyon son kapanistan cikarilir.
@@ -143,8 +150,12 @@ export function simulatePlanReturn(signal, bars, opts = {}) {
 
     // 1) STOP ONCE — ayni bar belirsizliginde stop kazanir (durust taraf).
     if (stop != null && (isBuy ? adv <= stop : adv >= stop)) {
-      realized += remaining * pctOf(stop);
-      legs.push({ key: 'stop', at: r2(stop), fraction: r2(remaining), pct: r2(pctOf(stop)), day: k });
+      // Bar stop'un otesinde acildiysa dolum acilistan (bosluk); yoksa seviyeden.
+      const open = Number.isFinite(b?.open) && b.open > 0 && b._openApprox !== true ? b.open : null;
+      const gapped = open != null && (isBuy ? open < stop : open > stop);
+      const fillAt = gapped ? open : stop;
+      realized += remaining * pctOf(fillAt);
+      legs.push({ key: 'stop', at: r2(fillAt), fraction: r2(remaining), pct: r2(pctOf(fillAt)), day: k, ...(gapped ? { gap: true } : {}) });
       remaining = 0;
       exitReason = 'stop';
       break;

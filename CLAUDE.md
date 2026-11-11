@@ -15,8 +15,15 @@ gerçek değiştiğinde güncelle; yeni bir "## vX.Y" bölümü ekleme.
 - **Önce ölç, sonra değiştir.** Skora ya da filtreye dokunan her değişiklik gerçek veriyle ölçülür
   (olay çalışması / replay / walk-forward). Aşağıdaki "Ölçülmüş kararlar" tablosundaki eşikleri yeniden
   ölçmeden değiştirme; kullanıcı kararları da o tabloda.
-- **Getiri vaat etme, kişiye özel yatırım tavsiyesi verme.** Ölçülen avantaj rejime bağlı (yalnız
-  YÜKSELİŞ + yüksek skor pozitif); bunu dürüstçe söyle.
+- **Bir kural bulunduğu veride değil, görmediği veride sınanır.** Keşif kümesi 89 hisse; doğrulama
+  kümesi başka 168 hisse + keşiften sonraki dönem (`feature-edge-report.mjs` üçünü ayrı basar). v31.53'te
+  keşifte parlak görünen açılış-boşluğu kapısı doğrulamada tutmadı, sakinlik sıralaması son dönemde
+  tutmadı — ikisi de bu yüzden seçime girmedi. Üç ölçüm tuzağı yaşandı, tekrarlama: rejimi **giriş**
+  gününün kapanışıyla etiketlemek (1 gün ileri bakış), boşlukta stop'u seviyeden doldurmak, tek bir
+  hisse kümesine ve tek bir çıkış kuralına bakmak (bir sıralayıcı bir çıkışla iyi, ötekiyle kötü olabilir).
+- **Getiri vaat etme, kişiye özel yatırım tavsiyesi verme.** Ölçülen avantaj küçük ve döneme bağlı:
+  işlem başına net beklenti 2022'de +%3 iken 2025'te +%0,2, 2026'da hafif eksi; rejim sıralaması
+  (YÜKSELİŞ > YATAY > DÜŞÜŞ) sürüyor ama fark dar. Bunu dürüstçe söyle.
 - Her sürüm (vX.Y) commit + push edilir; commit mesajı neyi neden değiştirdiğini ve ölçümü anlatır.
   `.claude/worktrees/*` asla stage edilmez.
 - Web'e giden değişikliği depoda değil **yayındaki pakette / canlı sitede** doğrula; bir 200 yanıtı
@@ -39,6 +46,8 @@ pytest tests/             # bist_bridge.py
 
 # Araştırma (gerçek üretim modüllerini Node'dan çalıştırır; bar önbelleği .replay-cache/)
 node scripts/replay-signals.mjs          # sinyal motoru geçmiş replay (rejim × kademe)
+node scripts/feature-edge-study.mjs      # aday satırları: her aday + canlı seçim zincirinin kopyası (--rebuild ~5 dk, --fetch N yeni hisse çeker)
+node scripts/feature-edge-report.mjs     # aday seçimi ölçümü: rejim / filtre / sıralama / çıkış / boşluk / portföy — keşif, doğrulama, sonrası ayrı
 node scripts/signal-event-study.mjs      # bir gösterge olayı sonraki getiri hakkında ne diyor
 node scripts/kap-event-study.mjs         # KAP bildirimi × fiyat, 24 ay
 node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk-forward zorunlu
@@ -54,12 +63,12 @@ node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk
 | SPA | React 18 + Vite 5, `src/` (giriş `main.jsx` → `App.jsx`, durum `hooks/useAppState.js`) |
 | Hesap motoru | `engine-rs/` (Rust→WASM: `calcAll` + `genSignal` çekirdeği), köprü `src/engine/engineCore.js`; JS referansı `utils/indicators.js` + `utils/signals.js` (`calcAllJs`/`genSignalJs`) yedek |
 | Veri | `utils/fetchEngine.js` (her seri `sanitizePrices`'tan geçer), `utils/liveSession.js` (canlı fiyatı oturumuna göre birleştirir) |
-| Tarama / öneri | `hooks/useAIAdvisor.js` (623 hisse), kapılar `utils/regimeGate.js`, `utils/pumpGuard.js`, gösterim `utils/displayPicks.js` |
+| Tarama / öneri | `hooks/useAIAdvisor.js` (623 hisse), kapılar `utils/regimeGate.js`, `utils/pumpGuard.js`, gösterim `utils/displayPicks.js`; `utils/candidateRank.js` adaylara sakinlik sırası damgalar (ölçülür, sırayı değiştirmez) |
 | Canlı fiyat | `hooks/useLivePrices.js` (5 sn / 15 sn / 45 sn kademeler) → `fetchQuotesBatch` |
 | Sinyal takibi | `hooks/useSignalTracker.js` (`bist_signal_history`, 500 kayıt, 10 dk kontrol, gün-sonu kapanıştan kesin kayıt) |
 | Tahmin karnesi | `utils/scanScorecard.js` + `hooks/useScanScorecard.js` (`bist_scan_scorecard_v1`, 60 gün): gösterilen AL önerileri, yargılayan seansın kapanışı + 1G/5G; ekran `components/Signals/ScanScorecardPanel.jsx`, AI panelinde tek satır özet |
 | Lot önerisi | `utils/positionSizing.suggestPosition` — AI kartları ve Analiz ekranı aynı fonksiyon; sermaye `bist_trading_capital` (Ayarlar, yoksa 100.000 TL) |
-| Paper | `utils/PaperTradeEngine.js` + `hooks/usePaperTradeML.js` (ML AUTO), `hooks/usePaperTrading.js` (standart) |
+| Paper | `utils/PaperTradeEngine.js` + `hooks/usePaperTradeML.js` (ML AUTO), `hooks/usePaperTrading.js` (standart). ML motorunun çıkışı `utils/trailingStop.js` (yalnız trailing, seans bazlı; durum `bist_paper_ml_trail_v1`) |
 | Yapay zekâ | `utils/claude.js` — tarama sonrası günlük notlar (`useAIAdvisor`). JARVIS sohbeti, İstihbarat ve Gemini kaldırıldı (kullanıcı, v31.50–51) |
 | Hisse detayı | `components/StockDetail/` + `utils/financialStatements.js` (İş MaliTablo, 16 çeyrek, 4 istek × 4 dönem) + `utils/technicalSnapshot.js` — tüm teknik/temel değerler, karar vermez |
 | Backtest | `utils/backtestEngine.js` — çıkış `planSimulation.simulatePlanReturn` (canlı kural, trailing-only, ≤30 bar), giriş ertesi açılış |
@@ -118,9 +127,20 @@ panel ise state'ten beslenir. Dispatch'i asla sessiz `catch` ile yutma.
 - İş Yatırım HisseTekil **açılış vermez** (AOF verir); proxy `source=bars` açılışı Yahoo'dan alır, Yahoo gün
   atlar. Son barın gerçek açılışını İş toplu listesi (TumHisseSenetleri, `open` alanı) taşır.
 - Seans dışında oluşan AL bir sonraki seansın açılışında dolar (`sessionEntry.js`).
+- Bar stop'un ötesinde açıldıysa çıkış seviyeden değil **açılıştan** yazılır (`planSimulation`, paper motoru
+  `STOP_GAP`); açılış yaklaşıksa (`_openApprox`) eski konvansiyon kalır.
+
+**Söylenen strateji ile ölçülen strateji aynı olmalı.** Çıkış kuralı tek: yalnız trailing stop
+(`tradePlan.PLAN_CONST`). Onu üç yer uygular ve üçü aynı sonucu vermek zorunda: `planSimulation` (sinyal
+takibi, karne, backtest, kalibrasyon), `trailingStop.advanceTrail` (paper ML motoru; testi planSimulation ile
+eşitliği kilitler) ve `useLivePrices` (sanal portföy). Paper motoru v31.52'ye kadar başka bir çıkış
+çalıştırıyordu (hedefte tam satış + 3. gün çıkışı) ve fark işlem başına 0,7 puandı — yani ileri test önerilen
+stratejiyi ölçmüyordu. Paper'da stop bir seans boyunca sabittir; seansın zirvesi stop'u ertesi seans çeker.
 
 **Mobil WebView arka planda JS'i dondurur.** Uygulama kapalıyken olan hiçbir şey istemcide görülmez:
 paper çıkışları uzun aradan sonra seviyeden dolar (`exitFill.js`), arka plan takibi GitHub Actions'ta.
+Paper trailing bu yüzden fiyat kaydının taşıdığı **seans açılış/zirve/dibine** bakar: uygulama kapalıyken
+değen stop da oluşan zirve de kaybolmaz (seans içi alımda o günün aralığı girişten önce olabilir, kullanılmaz).
 **Tarama ekran kapanınca kaybolmaz** (`scanKeepAlive.js`): tarama süresince Wake Lock, gizliyken yeni grup
 başlamaz ve gizli süre bütçeden düşer, donma sırasında düşen semboller kısıtlama sayılmadan yeniden denenir,
 sayfa ölürse `bist_scan_in_progress` işaretiyle açılışta yeniden başlar (45 dk, en fazla 2 kez).
@@ -194,19 +214,26 @@ Borsa MCP uzak sunucusu bağlı (`borsa`, borsa.surucu.dev/mcp) — oturumda ara
 
 ## Ölçülmüş kararlar — yeniden ölçmeden değiştirme
 
+v31.53 ölçümü (`feature-edge-report.mjs`): 257 hisse, 2022-09 → 2026-10, canlı AL filtresinden geçen ≈68.600
+aday; sinyal günü rejimi, ertesi açılış girişi, canlı stop (1,8×ATR kırpması), yalnız-trailing, %0,3 maliyet
+sonrası işlem başına net. Nominal TL ve bugün işlem gören hisseler — mutlak getiri değil karşılaştırma.
+
 | Konu | Karar | Dayanak |
 |---|---|---|
-| Rejim kapısı | YÜKSELİŞ serbest; YATAY taban skor **70**, en fazla 4 AL; DÜŞÜŞ taban 58 ama AL'lar `_watchOnly` (görünür, açılmaz) | YATAY'da yalnız 70 iki dönemde de pozitif, walk-forward'da veriden seçmek 70'i geçemedi; DÜŞÜŞ her dönemde negatif |
+| Rejim kapısı | YÜKSELİŞ serbest; YATAY taban skor **70**, en fazla 4 AL; DÜŞÜŞ taban 58 ama AL'lar `_watchOnly` (görünür, açılmaz) | Dürüst etiketle (sinyal günü) YÜKSELİŞ +1,06 / YATAY +0,54 / DÜŞÜŞ +0,14; son iki yılda +0,20 / +0,03 / −0,19 — sıra aynı, fark dar. Eski dayanak ("yalnız YÜKSELİŞ pozitif, DÜŞÜŞ −3,4") rejimi giriş gününün kapanışıyla etiketliyordu (ileri bakış: aynı işlemler +1,55 / +0,38 / −0,53 görünüyor). **YATAY tabanı 70 yeni ölçümde tutmuyor**: YATAY günlerinde skor ≥70 adayların ortalaması −0,28, o günlerin tüm adayları +0,42 (keşif −0,73 / +0,73, doğrulama 0,00 / +0,30); YATAY'da skor 45–65 kademeleri +0,5…+0,7. Kullanıcı kararı olduğu için değiştirilmedi, kullanıcıya sunuldu |
 | Günlük garanti | `ensureBestOfDay`: panelde en az **3** AL adayı (patlamamış, aşırı alımda değil). AL hiç yoksa ilki eski tek garanti pick (aynı etiketler); diğer tamamlayıcılar her rejimde `_watchOnly` (görünür, paper açmaz, lot 0) | kullanıcı: "her gün bir aday" → v31.51 "top 3". Maruziyet değişmez; edge yaratmaz |
-| Çıkış | yalnız trailing stop (+%3 başabaş, +%5 üstü yarısını kilitle); hedefler referans, satış emri değil | kademeli satış getirinin yarısını yok ediyordu (26.855 sinyal, 5 yılın 5'inde) |
-| Boyutlandırma | paper: risk %2 / stop mesafesi, %33 tavan; konviksiyon çarpanı (sniper 1 / flagged 0,75 / early 0,5, YATAY ×0,5) | gösterilen lot önerisiyle aynı kural (`suggestPosition`, çarpan `_positionSizeMult`, izle-only = 0); parametre taramaları portföy getirisiyle puanlanır |
+| Çıkış | yalnız trailing stop (+%3 başabaş, +%5 üstü yarısını kilitle); hedefler referans, satış emri değil. Paper ML motoru da v31.53'ten beri bunu uygular (en fazla 30 seans) | kademeli satış getirinin yarısını yok ediyordu (26.855 sinyal, 5 yılın 5'inde). Paper'ın eski çıkışı (hedefte tam satış + 3. gün +%1 altında kapat) aynı giriş/stopla işlem başına −0,03, trailing +0,70; keşif (+0,05 / +0,83), doğrulama (−0,02 / +0,75) ve 2022–2026'nın her yılında aynı yön. Ölçülmemiş ipucu: hedefsiz + 3. gün tabanı +1,14 (2022–23'te daha iyi, 2025–26'da daha kötü) — walk-forward taraması gerekir. Sert düşüşte (2026 Eyl–Eki) eski çıkış daha az kaybetti (−1,5 / −2,3) |
+| Aday sıralaması | Sıra bugünkü anahtarlarla (yarın-potansiyeli → güven + konviksiyon; paper skora göre). Sakinlik sırası (`candidateRank.js`: düşük oynaklık, düşük ADX, MA50'ye yakın, giriş kalitesi) damgalanır ve ölçülür, **seçime kapalı** (`dataLayerPolicy.calmRankSelection`) | Bugünkü anahtarlar adayları sıralamıyor: gün-içi sıra korelasyonu skor −0,00, yarın-potansiyeli +0,00, güven −0,01; canlı liste ilk-3 tabandan −0,21 (t −1,6). Sakinlik: keşif +0,049 (t 6,3), doğrulama +0,041 (t 5,7), ilk-3 tabandan +0,43 / +0,41; isim değil durum etkisi. Ama trailing çıkışla avantaj 2024 ortasına kadar +1…+2, sonra ≈0, 2026 ilk yarı −0,66 (t −2,8); eski paper çıkışıyla 10 dönemin 9'unda artı. Güvenden "endekse göre güç" terimini çıkarmak iki kümede tutarsız → dokunulmadı |
+| Açılış boşluğu | Kapı yok (stop altında açılan emir zaten iptal, `decidePendingFill`) | ±%2 boşlukta girmeme kuralı keşifte iyi görünüyordu (aşağı boşluk ≤ −%2: −0,53), doğrulamada tersine döndü (+0,95); portföy simülasyonunda kapının etkisi yok |
+| Stop dolumu | Bar stop'un ötesinde açıldıysa açılıştan (`planSimulation`, paper) | Seviyeden dolum işlem başına ~0,3–0,5 puan iyimserdi; giriş stop altında açıldığında hayalî kâr (+3,1 yazıyordu, gerçek −0,3) |
+| Boyutlandırma | paper: risk %2 / stop mesafesi, %33 tavan; konviksiyon çarpanı (sniper 1 / flagged 0,75 / early 0,5, YATAY ×0,5) | gösterilen lot önerisiyle aynı kural (`suggestPosition`, çarpan `_positionSizeMult`, izle-only = 0); parametre taramaları portföy getirisiyle puanlanır. Skor kademesi YÜKSELİŞ'te hafif artı (45–55: +0,88 … ≥70: +1,5), YATAY'da ters — çarpan YÜKSELİŞ için savunulabilir |
 | Öğrenme | kalibrasyon planın çıkışından öğrenir (`planSimulation`), canlı-edge hücresi ≥8 örnekte devreye girer | ham 5 gün getirisi farklı bir stratejiyi ölçüyordu |
-| Veri katmanı | yabancı akış ve KAP katalizörü skora **kapalı**; KAP tedbiri AL'dan çıkarır; geri alım bildirimi +3 | kullanıcı: "göster + ölç, sonra aç" (`dataLayerPolicy.js`); geri alım tek sağlam olumlu KAP olayı (10 seans +%1,16) |
+| Veri katmanı | yabancı akış ve KAP katalizörü skora **kapalı**; KAP tedbiri AL'dan çıkarır; geri alım bildirimi +3; sakinlik sırası aynı politikada (Sinyal sekmesinde üçte birlik kovalar) | kullanıcı: "göster + ölç, sonra aç" (`dataLayerPolicy.js`); geri alım tek sağlam olumlu KAP olayı (10 seans +%1,16) |
 | Anlaşma haberi | "yeni iş / sözleşme" haberi güvene artı vermez (ne bonus ne skor ağırlığı) | 1.132 olay: haber anında fiyatlanmış, sonrasında piyasanın gerisinde |
 | Ölü kurallar | Wyckoff spring/UTAD, hacim klimaksı, TTM çözülmesi, DI yakınlaşma puanları silindi | hiçbiri pozitif değil; satış klimaksı tasarımın tam tersi (10 seans −%3,59) |
 | Supertrend | yukarı dönüş +12 kaldırıldı, yön (+4) duruyor | iki ufukta negatif; kullanıcı kararı |
 | Wyckoff spring | yarın potansiyelinde +15 **duruyor** | zayıf negatif kanıt; kullanıcı ileri veri bekliyor |
-| Tavan kapısı | `pumpGuard.isUnsafeForTomorrow` — RSI>90 / MFI>92 mutlak red; bugünkü pump ≥%7 ise devam olasılığı ≥%38/45/50 (7–8 / 8–9,5 / ≥9,5); %5–7 ise kataliz + 4 teknik teyit şart | testlerle kilitli; sermayeyi en doğrudan koruyan kapı |
+| Tavan kapısı | `pumpGuard.isUnsafeForTomorrow` — RSI>90 / MFI>92 mutlak red; bugünkü pump ≥%7 ise devam olasılığı ≥%38/45/50 (7–8 / 8–9,5 / ≥9,5); %5–7 ise kataliz + 4 teknik teyit şart | testlerle kilitli; sermayeyi en doğrudan koruyan kapı. Ölçüldü: reddettikleri alınsaydı +0,38, geçenler +0,70 (iki kümede de düşük). Asgari kalite kapısının redleri +0,01. "İki gün üst üste yükseliş" ve "aşırı alım" redleri ise geçenlerden kötü değil (+0,86 / +0,71) — zarar vermiyor ama ayırmıyor |
 | Değerleme | F/K, PD/DD yalnız gösterim, skora girmez | ölçülmedi |
 
 ## Tarama hattı (özet)
@@ -220,7 +247,7 @@ gününün kapanışı ayrıca bir kez kaydedilir (`scanSchedule.js`, damga yaln
 
 ## Test ve CI
 
-- Vitest, 73 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
+- Vitest, 75 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
   ölçüde testsiz — mantığı saf bir modüle çıkarıp test etmek tercih edilen yol.
 - `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 61).
 - GitHub Actions `ci.yml`: test-js (lint + coverage), build-web, test-python, ci-gate.

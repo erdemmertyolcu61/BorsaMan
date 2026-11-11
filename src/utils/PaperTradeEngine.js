@@ -3,8 +3,9 @@
 // ════════════════════════════════════════════════════════════════════
 //
 // Purpose: SQLite-backed paper trading that specifically tests ML rule
-// performance by selecting TOP 3 ML-scored stocks per scan, allocating
-// max 33% capital per position, and enforcing strict -3% stop-loss.
+// performance by selecting TOP 3 ML-scored stocks per scan, sizing by risk
+// (2% / stop distance, 33% ceiling) and exiting on the trailing stop only
+// (v31.53 — the same rule planSimulation measures).
 //
 // Integration:
 //   - Listens to `advisor-scan-complete` CustomEvent
@@ -22,7 +23,10 @@ import { resolveExitPrice } from './exitFill.js';
 import { computeLiveEdge } from './liveEdge.js';
 import { isKapRiskGuardEnabled } from './dataLayerPolicy.js';
 import { decidePendingFill } from './sessionEntry.js';
-import { latestSessionDayKey } from './liveSession.js';
+import { latestSessionDayKey, parseSessionDate } from './liveSession.js';
+import { istanbulDayKey } from './signalPerfHistory.js';
+import { advanceTrail, initTrailState } from './trailingStop.js';
+import { MAX_PLAN_BARS } from './planSimulation.js';
 
 const STORAGE_KEY = 'bist_paper_ml_engine_v1';
 const START_CAPITAL = 100_000;
@@ -35,8 +39,15 @@ const MAX_POS_PCT = 0.33;         // sermaye TAVANI (artik birincil olcut degil)
 // pozisyon artik stop mesafesiyle DOGRU sekilde degisir.
 const RISK_PER_TRADE_PCT = 0.02;
 const STOP_LOSS_PCT = -0.03;      // fallback -3% stop (pick's own stop preferred)
-const TIME_EXIT_DAYS = 3;         // rotate stagnant positions after 3 trading days
-const TIME_EXIT_MIN_GAIN_PCT = 1; // keep only if gross P&L >= +1% at day 3
+// v31.53 — CIKIS ARTIK OLCULEN KURAL: yalniz trailing stop (bkz. trailingStop.js).
+// Bu motor v31.52'ye kadar sabit stop + HEDEFTE TAM SATIS + 3. gunden sonra +%1 altinda
+// kapatma uyguluyordu; "Olculmus kararlar" ise v31.30'dan beri yalniz-trailing diyordu.
+// Yani ileri test onerilen stratejiyi olcmuyordu. Ayni giris ve ayni stopla, 257 hisse ×
+// 4 yil, %0,3 maliyet sonrasi islem basina: eski cikis -%0,03, yalniz-trailing +%0,70;
+// kesif kumesinde (+0,05 / +0,83), ona bakilmadan sinanan 168 hissede (-0,02 / +0,75) ve
+// 2022-2026'nin her yilinda ayni yon (scripts/feature-edge-report.mjs --only cikis).
+// Hedef artik satis emri degil, kartta gorunen referans. Sure siniri planSimulation ile ayni.
+const MAX_HOLD_SESSIONS = MAX_PLAN_BARS;
 const MIN_ML_BOOST = 0;           // mlConfidenceBoost > 0 (any ML match)
 const MIN_ENTRY_TL = 3_000;       // minimum position size
 
@@ -54,6 +65,19 @@ function loadPending() {
 
 function savePending(list) {
   try { localStorage.setItem(PENDING_KEY, JSON.stringify(list || [])); } catch {}
+}
+
+// v31.53: trailing durumu (stop / zirve / son gorulen seans), islem kimligine gore.
+// Ayri bir anahtarda cunku Electron modunda acik islemler her seferinde SQLite'tan
+// yeniden okunur; orada stop sutununu guncelleyen bir IPC yok. Iki mod tek yoldan gider.
+const TRAIL_KEY = 'bist_paper_ml_trail_v1';
+
+function loadTrails() {
+  try { const v = JSON.parse(localStorage.getItem(TRAIL_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; }
+}
+
+function saveTrails(map) {
+  try { localStorage.setItem(TRAIL_KEY, JSON.stringify(map || {})); } catch {}
 }
 
 // ── Helpers ──
@@ -582,6 +606,12 @@ export class PaperTradeEngine {
     const msSinceCheck = this._lastPriceCheckAt ? (Date.now() - this._lastPriceCheckAt) : Infinity;
     this._lastPriceCheckAt = Date.now();
 
+    const trails = loadTrails();
+    let trailsDirty = false;
+    // Kapanmis islemlerin durumu birikmesin.
+    const openIds = new Set(s.openTrades.map(t => String(t.id)));
+    for (const k of Object.keys(trails)) if (!openIds.has(k)) { delete trails[k]; trailsDirty = true; }
+
     for (const trade of [...s.openTrades]) {
       const live = priceMap[trade.symbol];
       if (!live?.price) continue;
@@ -590,45 +620,54 @@ export class PaperTradeEngine {
       trade.current_price = live.price;
       changed = true;
 
-      // Check stop — v31.34: SEVIYEDEN dolum (bkz. exitFill.js). Eskiden canli
-      // fiyattan kapaniyordu; mobilde arka plandan donuldugunde bu, kaybi
-      // sistematik olarak abartiyordu (giris 214 / stop 202,5 / fiyat 190 →
-      // -%11,2 kaydediliyordu, strateji -%5,4 diyordu). Bu kapanislar
-      // computeLiveEdge uzerinden canli skorlamayi besledigi icin hata siziyordu.
-      if (live.price <= trade.stop_price) {
-        const fill = resolveExitPrice({ level: trade.stop_price, livePrice: live.price,
-                                        msSinceCheck, kind: 'stop', isBuy: true });
-        if (fill.price != null) {
-          await this.closeTrade(trade.id, fill.price, fill.stale ? 'STOP_STALE' : 'STOP');
-        }
-        continue;
-      }
-
-      // Check target — ayni kural, simetrik: gormedigimiz sicramayi kazanc yazmayiz.
-      if (trade.target_price && live.price >= trade.target_price) {
-        const fill = resolveExitPrice({ level: trade.target_price, livePrice: live.price,
-                                        msSinceCheck, kind: 'target', isBuy: true });
-        if (fill.price != null) {
-          await this.closeTrade(trade.id, fill.price, fill.stale ? 'TARGET_STALE' : 'TARGET');
-        }
-        continue;
-      }
-
-      // D3 time exit: a swing pick that has gone nowhere in 3+ trading days is
-      // dead capital — rotate it out so cash funds the next fresh setup.
-      // Threshold +1% net keeps genuine slow grinders alive.
+      // ── v31.53: YALNIZ TRAILING (trailingStop.js = planSimulation'in kurali) ──
+      // Stop bir seans boyunca sabit; seansin zirvesi stop'u sonraki seanstan itibaren
+      // ceker (+%3 basabas, +%5 ustu zirve karinin yarisi). Hedefte satis ve 3. gun
+      // cikisi YOK. Fiyat kaydi seansin acilis/zirve/dibini tasidigi icin uygulama
+      // kapaliyken degen stop da, olusan zirve de kaybolmaz.
+      const entry = trade.entry_price || trade.entryPrice;
       const openedAt = trade.opened_at || trade.openedAt;
-      const heldDays = openedAt ? (Date.now() - openedAt) / (1000 * 60 * 60 * 24) : 0;
-      if (heldDays >= TIME_EXIT_DAYS) {
-        const entryP = trade.entry_price || trade.entryPrice;
-        const grossPct = entryP ? ((live.price - entryP) / entryP) * 100 : 0;
-        if (grossPct < TIME_EXIT_MIN_GAIN_PCT) {
-          await this.closeTrade(trade.id, live.price, 'TIME_EXIT');
-          continue;
-        }
+      const sessionDate = parseSessionDate(live.sessionDate);
+      const sessionKey = (sessionDate && istanbulDayKey(sessionDate)) || istanbulDayKey(Date.now());
+      const entrySession = openedAt ? istanbulDayKey(openedAt) : '';
+      // Pozisyon bu seansin TAMAMINDA acik miydi? Seans ici alimda o gunun
+      // acilis/zirve/dibi giristen once olusmus olabilir — kullanilmaz.
+      const wholeSession = !!entrySession && (sessionKey > entrySession
+        || (sessionKey === entrySession && (trade.fillBasis || trade.fill_basis) === 'session_open'));
+      const key = String(trade.id);
+      const { state, exit } = advanceTrail(trails[key] || initTrailState(entry, trade.stop_price), {
+        entry, price: live.price, sessionKey, open: live.open, high: live.high, low: live.low,
+        wholeSession, maxSessions: MAX_HOLD_SESSIONS,
+      });
+      trails[key] = state;
+      trailsDirty = true;
+      if (Number.isFinite(state.stop) && state.stop !== trade.stop_price) trade.stop_price = Math.round(state.stop * 100) / 100;
+
+      if (!exit) continue;
+      // Stop girisin ustune cekilmisse bu bir kar koruma cikisidir, zarar stopu degil.
+      const tag = Number.isFinite(state.stop) && state.stop >= entry ? 'TRAIL' : 'STOP';
+      let fillPrice = null;
+      let reason = tag;
+      if (exit.reason === 'timeout') {
+        fillPrice = live.price; reason = 'TIME_LIMIT';
+      } else if (exit.basis === 'gap') {
+        fillPrice = exit.level; reason = `${tag}_GAP`;           // seans stop'un altinda acildi
+      } else if (exit.basis === 'level') {
+        fillPrice = exit.level; reason = `${tag}_STALE`;         // dip stop'a degdi, sonra toparladi
+      } else {
+        // v31.34: SEVIYEDEN dolum (bkz. exitFill.js) — izlemiyorken dusen fiyati iddia etme.
+        const fill = resolveExitPrice({ level: state.stop, livePrice: live.price,
+                                        msSinceCheck, kind: 'stop', isBuy: true });
+        fillPrice = fill.price;
+        if (fill.stale) reason = `${tag}_STALE`;
+      }
+      if (fillPrice != null) {
+        await this.closeTrade(trade.id, fillPrice, reason);
+        delete trails[key];
       }
     }
 
+    if (trailsDirty) saveTrails(trails);
     if (changed) this._emit();
   }
 
@@ -636,6 +675,7 @@ export class PaperTradeEngine {
 
   async reset() {
     savePending([]);
+    saveTrails({});
     if (this._isElectron) {
       await this._api.reset();
     }

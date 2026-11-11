@@ -5,6 +5,7 @@
  * skora girmez; her sinyale kaydedilir ve burada ölçülür, sonra açılır. Ölçüm
  * v31.38'den beri Piyasa Nabzı ekranının altındaydı; o ekran v31.50'de kaldırıldı,
  * karar bu tabloya baktığı için ölçüm Sinyal sekmesine taşındı.
+ * v31.53: sakinlik sırası (candidateRank.js) aynı politikayla üçüncü ölçülen katman.
  */
 import { useMemo, useState } from 'react';
 import { computeDataLayerEdge, FOREIGN_FLOW_BAND_PP } from '../../utils/dataLayerEdge.js';
@@ -48,7 +49,7 @@ export default function DataLayerEdgePanel({ signals = [] }) {
       <div role="button" tabIndex={0} onClick={() => setOpen(o => !o)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); } }}
         style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-        <span className="trade-title" style={{ margin: 0 }}>Veri katmanı ölçümü — yabancı akış ve KAP</span>
+        <span className="trade-title" style={{ margin: 0 }}>Veri katmanı ölçümü — yabancı akış, KAP, sakinlik</span>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: 'var(--t3)' }}>{edge.settled} sonuçlanan AL · {open ? 'gizle' : 'göster'}</span>
       </div>
@@ -70,6 +71,14 @@ export default function DataLayerEdgePanel({ signals = [] }) {
             title="KAP olay türü (örtüşebilir)"
             rows={[['Pay geri alımı', edge.kapEvents.buyback], ['Yeni iş anlaşması', edge.kapEvents.new_business]]}
           />
+          <EdgeTable
+            title="Sakinlik sırası (o günün adayları içinde)"
+            rows={[['Üst üçte bir (sakin)', edge.calm.top], ['Orta', edge.calm.mid], ['Alt üçte bir (hareketli)', edge.calm.bottom]]}
+          />
+          <div style={{ fontSize: 11, color: 'var(--t3)', lineHeight: 1.5, marginTop: 6 }}>
+            Sakinlik sırası: düşük oynaklık, düşük ADX, MA50'ye yakınlık ve giriş kalitesi. Geçmiş veride adayları ayırıyor,
+            ama son dönemde trailing çıkışla avantajı kayboldu; bu yüzden sıralamayı etkilemiyor, {edge.withCalm} kayıtla ölçülüyor.
+          </div>
         </>
       )}
     </div>

@@ -48,6 +48,7 @@ export const TRACKING_KEYS = [
   'bist_paper_trading_v1',    // usePaperTrading  — standard paper portfolio
   'bist_paper_ml_engine_v1',  // PaperTradeEngine — ML paper portfolio (web fallback)
   'bist_paper_ml_pending_v1', // v31.40: bekleyen paper emirleri (sonraki seansin acilisi)
+  'bist_paper_ml_trail_v1',   // v31.53: acik paper islemlerinin trailing durumu (stop/zirve/seans)
   'bist_paper_ml_auto',       // ML auto-trade toggle
   'bist_ml_signals_v2',       // DatabaseManager  — ML signal store (web fallback)
   'bist_forward_journal_v1',  // forwardTestJournal — forward-test accuracy record

@@ -13,6 +13,22 @@ import { KAP_TYPE_LABELS, kapEvidenceNote } from './kapFeed.js';
 
 export const MAX_VISIBLE_CHIPS = 3;
 
+// ── Rozet ipuclarindaki OLCUM CUMLELERI (v31.53) — tek yerde, kaynagiyla ──
+// Eski ipuclari "dusus rejiminde AL -%3,4 / %18,8 kazanma" ve "skor>=75: %62,5 kazanma /
+// +%0,77" diyordu. Ilki 81 sinyallik, rejimi GIRIS gununun kapanisiyla etiketleyen (ileri
+// bakisli) bir olcumdu; ikincisi kucuk bir backtest. Yeni olcum: 257 hisse, 2022-09 →
+// 2026-10, canli AL filtresinden gecen ~68.600 aday, sinyal gunu rejimi, ertesi acilis
+// girisi, canli stop + yalniz-trailing, %0,3 maliyet (scripts/feature-edge-report.mjs
+// --only rejim,skor). Rakam degisirse YALNIZ burada degisir.
+export const REGIME_EVIDENCE = Object.freeze({
+  bear: 'Ölçüm (257 hisse, 4 yıl): düşüş rejiminde açılan AL işlem başına ort. +%0,1, son iki yılda −%0,2 — üç rejimin en zayıfı.',
+  neutral: 'Ölçüm (257 hisse, 4 yıl): yatay rejimde AL işlem başına ort. +%0,5 (yükselişte +%1,1); son iki yılda ≈0.',
+});
+export const SCORE_EVIDENCE = Object.freeze({
+  sniper: 'Ölçüm (257 hisse, 4 yıl): skor ≥75 yükselişte +%1,4 (97 işlem), yatayda −%0,5 (53 işlem). Örnek küçük; skor adayları güvenilir biçimde sıralamıyor.',
+  flagged: 'Ölçüm (257 hisse, 4 yıl): bu kademe yükselişte +%1,0…+%1,5, yatayda ≈0 (65-70: +%0,1; 70-75: −%0,1) — küçük pozisyon ya da teyit.',
+});
+
 const fx = (v, d = 0) => (Number.isFinite(v) ? v.toFixed(d) : '0');
 const signed = (v, d = 0) => `${v >= 0 ? '+' : ''}${fx(v, d)}`;
 
@@ -36,7 +52,7 @@ export function buildPickChips(p = {}) {
   } else if (isBuy && p._watchOnly) {
     add('watch', 'İzle · alım değil', 'danger', 0, [
       'Piyasa düşüş trendinde: bu isim izlemek için gösteriliyor, yeni pozisyon önerilmez.',
-      'Ölçüm: düşüş rejiminde AL pozisyonları tarihsel −%3,4 / %18,8 kazanma.',
+      REGIME_EVIDENCE.bear,
     ].join('\n'));
   }
   if (p.kapRisk) {
@@ -45,7 +61,8 @@ export function buildPickChips(p = {}) {
   }
   if (isBuy && p._counterRegime && !p._watchOnly) {
     add('counter', 'Rejime karşı', 'warn', 2, [
-      'Piyasa düşüş trendinde. Düşüş rejiminde AL önerileri tarihsel −%3,4 (%18,8 kazanma).',
+      'Piyasa yükseliş rejiminde değil.',
+      REGIME_EVIDENCE.neutral,
       'Küçük pozisyon / sıkı stop.',
     ].join('\n'));
   }
@@ -58,8 +75,10 @@ export function buildPickChips(p = {}) {
     ].join('\n'));
   }
   if (isBuy && p.convictionTier === 'sniper') {
-    add('sniper', 'Nokta atışı', 'good', 4,
-      `Sinyal skoru ${fx(p.score)}/100 (≥75). Backtest: %62,5 kazanma / +%0,77 beklenti.`);
+    add('sniper', 'Nokta atışı', 'good', 4, [
+      `Sinyal skoru ${fx(p.score)}/100 (≥75).`,
+      SCORE_EVIDENCE.sniper,
+    ].join('\n'));
   }
   if (pump >= 9) {
     add('pump', cp != null ? `Tavan bölgesi · %${cp} devam` : 'Tavan bölgesi', 'warn', 5,
@@ -99,9 +118,13 @@ export function buildPickChips(p = {}) {
     add('insider-buy', 'İçeriden alım', 'good', 8, `İçeriden alım: skor ${p.insiderScore || 0}, net ${p.insiderNetBuys || 0} alım (30 gün).`);
   }
   if (isBuy && (p.rsLeading || p.rsLagging)) {
+    // v31.53: ton 'good' → 'neutral'. Olcum: endeksten guclu olmak ayni gunun adaylari
+    // arasinda avantaj saglamadi (sira korelasyonu iki hisse kumesinde de hafif eksi).
     add('rs', p.rsLeading ? `Endeksten güçlü ${signed(p.rsOutperf ?? 0)}` : 'Endeksten zayıf',
-      p.rsLeading ? 'good' : 'neutral', p.rsLeading ? 8 : 11,
-      `XU100'e göre ${signed(p.rsOutperf ?? 0)} puan (20g/60g) · güven ${signed(p.rsScore ?? 0)}`);
+      'neutral', p.rsLeading ? 10 : 11, [
+        `XU100'e göre ${signed(p.rsOutperf ?? 0)} puan (20g/60g) · güven ${signed(p.rsScore ?? 0)}`,
+        'Ölçüm: adaylar arasında endeksten güçlü olanlar daha iyi sonuç vermedi — bilgi, tek başına gerekçe değil.',
+      ].join('\n'));
   }
   if (isBuy && p.entryTimingScore != null && p.entryTimingScore >= 55) {
     add('timing-ok', 'Giriş uygun', 'good', 9, (p.entryTimingReasons || []).join(' | '));
@@ -118,8 +141,16 @@ export function buildPickChips(p = {}) {
     ].filter(Boolean).join('\n'));
   }
   if (isBuy && p.convictionTier === 'flagged') {
-    add('flagged', 'Düşük konviksiyon', 'neutral', 9,
-      `Sinyal skoru ${fx(p.score)}/100 (65-74). Yatay piyasada yazı-tura (~%30 kazanma) — küçük pozisyon ya da teyit.`);
+    add('flagged', 'Düşük konviksiyon', 'neutral', 9, [
+      `Sinyal skoru ${fx(p.score)}/100 (65-74).`,
+      SCORE_EVIDENCE.flagged,
+    ].join('\n'));
+  }
+  if (isBuy && Number.isFinite(p._calmRank) && p._calmRank >= 67) {
+    add('calm', 'Sakin kurulum', 'info', 11, [
+      `Bugünün adayları içinde sakinlik sırası ${fx(p._calmRank)}/100: düşük oynaklık, düşük ADX, MA50'ye yakın, kovalamadan giriş.`,
+      'Sıralamayı ve lot önerisini etkilemez — Sinyal sekmesinde ölçülüyor.',
+    ].join('\n'));
   }
   if (p._earlyPick) {
     add('early', 'Erken birikim', 'info', 10, `${p._earlyCount || 0}/10 sinyal: ${(p._earlySignals || []).join(', ')}`);

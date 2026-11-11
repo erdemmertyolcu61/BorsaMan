@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { computeDataLayerEdge, foreignBucket, kapBucket, FOREIGN_FLOW_BAND_PP } from '../dataLayerEdge.js';
+import {
+  computeDataLayerEdge, foreignBucket, kapBucket, calmBucket, FOREIGN_FLOW_BAND_PP, CALM_TOP_MIN, CALM_BOTTOM_MAX,
+} from '../dataLayerEdge.js';
+import { DATA_LAYER_POLICY, isCalmRankSelectionEnabled } from '../dataLayerPolicy.js';
 
 // A settled BUY signal: planReturn makes it settled and is the return learned.
 const sig = (o = {}) => ({ cls: 'buy', planReturn: 1, ...o });
@@ -76,5 +79,37 @@ describe('dataLayerEdge — computeDataLayerEdge', () => {
 
   it('is defensive', () => {
     expect(computeDataLayerEdge(null).settled).toBe(0);
+  });
+});
+
+// v31.53: the calm rank is shown and measured, not used for selection (dataLayerPolicy).
+describe('dataLayerEdge — calm rank thirds', () => {
+  it('buckets the 0-100 rank into thirds and leaves pre-v31.53 signals out', () => {
+    expect(calmBucket({ calmRank: CALM_TOP_MIN })).toBe('top');
+    expect(calmBucket({ calmRank: 50 })).toBe('mid');
+    expect(calmBucket({ calmRank: CALM_BOTTOM_MAX })).toBe('bottom');
+    expect(calmBucket({ calmRank: 0 })).toBe('bottom');
+    expect(calmBucket({})).toBe('unknown');
+    expect(calmBucket({ calmRank: null })).toBe('unknown');
+    expect(calmBucket({ calmRank: '80' })).toBe('unknown');
+  });
+
+  it('reports each third and counts only signals that carry a rank', () => {
+    const edge = computeDataLayerEdge([
+      sig({ planReturn: 3, calmRank: 90 }),
+      sig({ planReturn: 1, calmRank: 70 }),
+      sig({ planReturn: -2, calmRank: 10 }),
+      sig({ planReturn: 5 }),                      // recorded before the rank existed
+    ], { minSample: 2 });
+    expect(edge.calm.top).toEqual({ n: 2, winRate: 100, avgReturn: 2, reliable: true });
+    expect(edge.calm.bottom).toEqual({ n: 1, winRate: 0, avgReturn: -2, reliable: false });
+    expect(edge.calm.mid.n).toBe(0);
+    expect(edge.withCalm).toBe(3);
+    expect(edge.settled).toBe(4);
+  });
+
+  it('the policy keeps it out of selection until the table says otherwise', () => {
+    expect(DATA_LAYER_POLICY.calmRankSelection).toBe(false);
+    expect(isCalmRankSelectionEnabled()).toBe(false);
   });
 });

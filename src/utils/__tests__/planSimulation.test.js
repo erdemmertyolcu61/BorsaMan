@@ -157,6 +157,59 @@ describe('planSimulation — trailing-only is the default policy (v31.30)', () =
   });
 });
 
+describe('planSimulation — a bar that opens beyond the stop fills at the OPEN (v31.53)', () => {
+  // Measured (feature-edge-report): filling every stop at its level overstated the
+  // average trade by ~0.3 points and booked a phantom gain when the entry itself
+  // opened below the stop.
+  const obar = (date, open, high, low, close, extra = {}) => ({ date, open, high, low, close, ...extra });
+
+  it('books the gap, not the stop level', () => {
+    const out = simulatePlanReturn(buySig({ target: 200 }), [
+      obar('2026-08-03', 100, 101, 98, 99),
+      obar('2026-08-04', 92, 93, 90, 91),      // opens at 92, far below the 95 stop
+    ]);
+    expect(out.exitReason).toBe('stop');
+    expect(out.planReturn).toBeCloseTo(-8, 6);
+    expect(out.legs[0]).toMatchObject({ key: 'stop', at: 92, gap: true });
+  });
+
+  it('an intraday touch still fills at the level', () => {
+    const out = simulatePlanReturn(buySig({ target: 200 }), [obar('2026-08-03', 100, 101, 94, 96)]);
+    expect(out.planReturn).toBeCloseTo(-5, 6);
+    expect(out.legs[0].gap).toBeUndefined();
+  });
+
+  it('no phantom gain when the entry opens below the stop', () => {
+    // Evening signal, stop 95; the next session opens at 93 and that open is the entry.
+    // The old convention sold "at the stop" for +2.15%.
+    const out = simulatePlanReturn(buySig({ entryPrice: 93, target: 200 }), [obar('2026-08-03', 93, 94, 90, 91)]);
+    expect(out.exitReason).toBe('stop');
+    expect(out.planReturn).toBeCloseTo(0, 6);
+  });
+
+  it('a gap through the trailing stop also fills at the open', () => {
+    const out = simulatePlanReturn(buySig({ target: 200 }), [
+      obar('2026-08-03', 100, 110, 100, 109),  // peak +10% → stop locks at 105
+      obar('2026-08-04', 102, 103, 101, 102),  // opens under the locked stop
+    ]);
+    expect(out.planReturn).toBeCloseTo(2, 6);
+  });
+
+  it('an approximate open is not trusted — the level convention stays', () => {
+    const out = simulatePlanReturn(buySig({ target: 200 }), [
+      obar('2026-08-03', 100, 101, 98, 99),
+      obar('2026-08-04', 92, 93, 90, 91, { _openApprox: true }),
+    ]);
+    expect(out.planReturn).toBeCloseTo(-5, 6);
+  });
+
+  it('is symmetric for shorts', () => {
+    const sell = { cls: 'sell', entryPrice: 100, stop: 105, target: 50, timestamp: '2026-08-03T09:00:00Z' };
+    const out = simulatePlanReturn(sell, [obar('2026-08-03', 108, 109, 107, 108)]);
+    expect(out.planReturn).toBeCloseTo(-8, 6);
+  });
+});
+
 describe('planSimulation.learningReturn', () => {
   it('prefers the plan return when present', () => {
     expect(learningReturn({ planReturn: 5.2 }, -1.4)).toBe(5.2);

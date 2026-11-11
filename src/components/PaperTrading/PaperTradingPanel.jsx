@@ -7,7 +7,8 @@
  *
  * 2 ENGINE:
  *   A. Standard Paper Trading (usePaperTrading) — confidence-based, risk-sized
- *   B. ML Forward Test (usePaperTradeML) — TOP 3 ML-scored, 33% allocation, -3% stop
+ *   B. ML Forward Test (usePaperTradeML) — en fazla 3 pozisyon, risk %2 / stop mesafesi,
+ *      cikis yalniz trailing stop (v31.53; hedef referans, satis emri degil)
  *
  * 4 panel per engine:
  *   1. Dashboard: kapital, P&L, win rate, max DD
@@ -281,7 +282,7 @@ function MLForwardTestPanel({ paperML }) {
               border: '1px solid rgba(234,179,8,0.3)', letterSpacing: 1,
             }}>SQLITE</span>
             <span style={{ fontSize: 9, color: 'var(--t3)' }}>
-              TOP 3 ML · 33% alloc · -3% stop
+              En fazla 3 pozisyon · risk %2 / stop mesafesi · çıkış yalnız trailing stop
             </span>
           </div>
           <div style={{ fontSize: 9, color: 'var(--t3)', marginTop: 2 }}>
@@ -563,13 +564,14 @@ function MLForwardTestPanel({ paperML }) {
                         <td style={{ padding: '7px 10px' }}>
                           <span style={{
                             fontSize: 8, padding: '1px 6px', borderRadius: 3, fontWeight: 700,
-                            background: String(t.exit_reason||'').startsWith('TARGET') ? 'rgba(34,197,94,0.15)'
+                            // v31.53: TRAIL = stop girisin ustune cekilmisken cikis (kar koruma)
+                            background: /^(TARGET|TRAIL)/.test(String(t.exit_reason||'')) ? 'rgba(34,197,94,0.15)'
                               : String(t.exit_reason||'').startsWith('STOP') ? 'rgba(244,63,94,0.15)'
                               : 'rgba(255,255,255,0.08)',
-                            color: String(t.exit_reason||'').startsWith('TARGET') ? '#22c55e'
+                            color: /^(TARGET|TRAIL)/.test(String(t.exit_reason||'')) ? '#22c55e'
                               : String(t.exit_reason||'').startsWith('STOP') ? '#f43f5e'
                               : 'var(--t3)',
-                            border: `1px solid ${String(t.exit_reason||'').startsWith('TARGET') ? 'rgba(34,197,94,0.3)'
+                            border: `1px solid ${/^(TARGET|TRAIL)/.test(String(t.exit_reason||'')) ? 'rgba(34,197,94,0.3)'
                               : String(t.exit_reason||'').startsWith('STOP') ? 'rgba(244,63,94,0.3)'
                               : 'rgba(255,255,255,0.1)'}`,
                           }}>{t.exit_reason}</span>

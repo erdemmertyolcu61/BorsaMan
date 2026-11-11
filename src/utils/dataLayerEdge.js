@@ -25,6 +25,23 @@ export const KAP_TRACKED_EVENTS = Object.freeze(['buyback', 'new_business']);
 
 const FOREIGN_BUCKETS = ['inflow', 'flat', 'outflow'];
 const KAP_BUCKETS = ['event', 'other', 'none', 'risk'];
+const CALM_BUCKETS = ['top', 'mid', 'bottom'];
+
+/** Sakinlik sirasi (0-100) kova sinirlari: ust / alt ucte bir (v31.53). */
+export const CALM_TOP_MIN = 67;
+export const CALM_BOTTOM_MAX = 33;
+
+/**
+ * Sinyalin o gunun adaylari icindeki sakinlik sirasi (candidateRank.calmRanks).
+ * v31.53 oncesi ya da yedek yoldan gelen sinyalde alan yoktur → 'unknown'.
+ */
+export function calmBucket(signal) {
+  const v = signal?.calmRank;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 'unknown';
+  if (v >= CALM_TOP_MIN) return 'top';
+  if (v <= CALM_BOTTOM_MAX) return 'bottom';
+  return 'mid';
+}
 
 export function foreignBucket(signal) {
   const w = signal?.foreignChangeWeek;
@@ -69,7 +86,8 @@ function finalize(cell, minSample) {
 
 /**
  * @param {object[]} signals useSignalTracker kayitlari
- * @returns {{ settled: number, withForeign: number, withKap: number, minSample: number,
+ * @returns {{ settled: number, withForeign: number, withKap: number, withCalm: number, minSample: number,
+ *   calm: Object<string, {n, winRate, avgReturn, reliable}>,
  *   foreign: Object<string, {n, winRate, avgReturn, reliable}>,
  *   kap: Object<string, {n, winRate, avgReturn, reliable}>,
  *   kapEvents: Object<string, {n, winRate, avgReturn, reliable}> }}
@@ -78,10 +96,12 @@ export function computeDataLayerEdge(signals, { minSample = MIN_SAMPLE } = {}) {
   const foreign = Object.fromEntries(FOREIGN_BUCKETS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
   const kap = Object.fromEntries(KAP_BUCKETS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
   const kapEvents = Object.fromEntries(KAP_TRACKED_EVENTS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
+  const calm = Object.fromEntries(CALM_BUCKETS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
   const add = (cell, ret) => { cell.n++; cell.sum += ret; if (ret > 0) cell.wins++; };
   let settled = 0;
   let withForeign = 0;
   let withKap = 0;
+  let withCalm = 0;
 
   for (const s of Array.isArray(signals) ? signals : []) {
     if (!s || s.cls !== 'buy') continue;
@@ -99,10 +119,13 @@ export function computeDataLayerEdge(signals, { minSample = MIN_SAMPLE } = {}) {
         for (const t of KAP_TRACKED_EVENTS) if (s.kapCategories.includes(t)) add(kapEvents[t], ret);
       }
     }
+    const cb = calmBucket(s);
+    if (cb !== 'unknown') { withCalm++; add(calm[cb], ret); }
   }
 
   return {
-    settled, withForeign, withKap, minSample,
+    settled, withForeign, withKap, withCalm, minSample,
+    calm: Object.fromEntries(CALM_BUCKETS.map((k) => [k, finalize(calm[k], minSample)])),
     foreign: Object.fromEntries(FOREIGN_BUCKETS.map((k) => [k, finalize(foreign[k], minSample)])),
     kap: Object.fromEntries(KAP_BUCKETS.map((k) => [k, finalize(kap[k], minSample)])),
     kapEvents: Object.fromEntries(KAP_TRACKED_EVENTS.map((k) => [k, finalize(kapEvents[k], minSample)])),

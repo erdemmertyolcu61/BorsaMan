@@ -158,6 +158,9 @@ export default function App() {
       kapRisk: pick.kapRisk || null,
       // v31.41: KAP geri alim guven artisi uygulandi mi (0 = hayir) — olcum ayirabilsin.
       kapBuybackBoost: pick._kapBuybackBoost || 0,
+      // v31.53: sakinlik sirasi (o gunun adaylari icinde 0-100). Secimi etkilemez; kayda
+      // yazilir ki "ust uctebirdeki AL'lar ne yapti?" sorusu ileri veride olculsun.
+      calmRank: Number.isFinite(pick._calmRank) ? pick._calmRank : null,
       // v31.40: seans disinda kaydedilen sinyal bir sonraki seansin acilisinda dolar.
       marketOpen: isMarketOpen(),
       sessionDay: pick._sessionDay || null,

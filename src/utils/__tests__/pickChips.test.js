@@ -34,6 +34,32 @@ describe('buildPickChips', () => {
     expect(keys).not.toContain('counter');
   });
 
+  it('v31.53: evidence lines quote the current measurement, not the retired one', () => {
+    const text = buildPickChips({
+      cls: 'buy', convictionTier: 'sniper', score: 80, _watchOnly: true,
+    }).map(c => c.title).join('\n') + buildPickChips({
+      cls: 'buy', convictionTier: 'flagged', score: 68, _counterRegime: true,
+    }).map(c => c.title).join('\n');
+    // The old lines came from an 81-signal study that tagged the regime with the entry
+    // day's close (one day of lookahead) and from a small score backtest.
+    expect(text).not.toMatch(/3,4|18,8|62,5|0,77|yazı-tura/);
+    expect(text).toMatch(/257 hisse/);
+  });
+
+  it('v31.53: the calm rank is shown as information on the top third only', () => {
+    const top = buildPickChips({ cls: 'buy', _calmRank: 80 }).find(c => c.key === 'calm');
+    expect(top).toMatchObject({ tone: 'info' });
+    expect(top.title).toMatch(/etkilemez/);
+    expect(buildPickChips({ cls: 'buy', _calmRank: 50 }).some(c => c.key === 'calm')).toBe(false);
+    expect(buildPickChips({ cls: 'sell', _calmRank: 90 }).some(c => c.key === 'calm')).toBe(false);
+    expect(buildPickChips({ cls: 'buy' }).some(c => c.key === 'calm')).toBe(false);
+  });
+
+  it('v31.53: leading the index is information, not a green light', () => {
+    const rs = buildPickChips({ cls: 'buy', rsLeading: true, rsOutperf: 6, rsScore: 3.6 }).find(c => c.key === 'rs');
+    expect(rs.tone).toBe('neutral');
+  });
+
   it('keeps every chip — the rest go behind "+N"', () => {
     const chips = buildPickChips({
       cls: 'buy', convictionTier: 'sniper', score: 80, _bestOfDay: true, _fundPenalty: 4,

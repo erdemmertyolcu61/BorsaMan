@@ -176,7 +176,12 @@ function replaySymbol(symbol, bars, regimeMap) {
       signal: sig.signal,
       cls: sig.cls,
       strictBuy: sig.cls === 'buy',
-      regime: regimeMap.get(fill.date) || regimeMap.get(bars[t].date) || 'UNKNOWN',
+      // v31.53: rejim SINYAL gununun kapanisiyla etiketlenir. Eskiden `fill.date` kullaniliyordu:
+      // giris o gunun ACILISINDA, rejim ise o gunun KAPANISIYLA hesaplaniyor — yani giriste
+      // bilinmeyen bir kapanis kovayi belirliyordu (1 gun ileri bakis). Etkisi buyuk: ayni
+      // islemler giris-gunu etiketiyle YUKSELIS +1,55 / DUSUS -0,53, sinyal-gunu etiketiyle
+      // +1,06 / +0,14 (257 hisse, canli filtreden gecenler; feature-edge-report --only rejim).
+      regime: regimeMap.get(bars[t].date) || 'UNKNOWN',
       rr: sig.rr ?? null,
       planReturn: planned.planReturn,
       planExit: planned.exitReason,

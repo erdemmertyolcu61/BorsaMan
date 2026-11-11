@@ -52,6 +52,7 @@ import { correlationCapFilter } from '../utils/portfolioOptimizer.js';
 import { netRR, TOTAL_COST_PCT } from '../utils/tradingCosts.js';
 import { computeGovernor, adaptiveStopMult } from '../utils/profitGovernor.js';
 import { loadJournal, journalStats } from '../utils/forwardTestJournal.js';
+import { realizedVol, entryQualityOf, stampCalmRank } from '../utils/candidateRank.js';
 
 /**
  * _istanbulParts — returns { day, h, m } in Europe/Istanbul regardless of host TZ.
@@ -1149,6 +1150,9 @@ export function useAIAdvisor(portfolio) {
                 avgVolume,           // 20-bar ortalama lot hacmi
                 avgVolumeTL,         // TL bazinda gunluk ortalama islem hacmi
                 distFromMA20,        // MA20'den % mesafe (entry quality)
+                // v31.53: sakinlik sirasi girdileri (candidateRank.js) — goster + olc, secime girmez
+                realizedVol20: realizedVol(calcPrices),
+                distFromMA50: ind.lastMA50 > 0 ? ((ind.lastClose - ind.lastMA50) / ind.lastMA50) * 100 : null,
                 _scanTs: Date.now(), // Bu kayit ne zaman tarandi (panel yas gostergesi)
                 _dataSource: data.source || 'unknown', // hangi kaynaktan geldi
                 // v31.40: verinin ait oldugu OTURUM gunu (fiyat kaydinin updateDate'i ya da
@@ -1957,6 +1961,13 @@ export function useAIAdvisor(portfolio) {
           return scoreB - scoreA;
         });
 
+      // ── v31.53 SAKINLIK SIRASI — GOSTER + OLC, SIRAYI DEGISTIRMEZ ───────────
+      // Filtreyi gecen TUM adaylar arasinda goreli sira (0-100) damgalanir; secim ve
+      // siralama yukaridaki anahtarlarla aynen devam eder. Neden secime girmiyor:
+      // candidateRank.js basligi + dataLayerPolicy.calmRankSelection. Damga sinyal
+      // kaydina yazilir (App.jsx) ve Sinyal sekmesinde olculur (dataLayerEdge).
+      buyPicks = stampCalmRank(buyPicks);
+
       // ── v26 FIX 4: SEKTOR KONSANTRASYON SINIRI ─────────────────────────────
       // Onceki gun: 6 picksten 4'u "Diger" sektorden geldi → sistemik risk.
       // Yeni kural: spesifik sektorlerden max 1, "Diger" (catch-all) max 3.
@@ -2268,33 +2279,10 @@ export function useAIAdvisor(portfolio) {
         // Entry quality: hem recentPump hem MA20 mesafesi karisimi.
         // recentPump = son barlardaki agresif yukselis (chasing riski)
         // distFromMA20 = fiyat MA20'den uzakta mi? (extended trend riski)
-        const pump = Math.max(p.todayPumpReal || 0, p.recentPump || 0);
-        const ma20Dist = Math.abs(p.distFromMA20 || 0);
-        let entryQuality = pump <= 1 ? 95 : pump <= 2 ? 85 : pump <= 3 ? 60 : pump <= 4 ? 40 : pump <= 5 ? 25 : pump <= 7 ? 15 : 5;
-        // MA20 cok uzaktaysa giris kalitesi cezalandirilir — SERTLESTIRILDI
-        if (ma20Dist > 10) entryQuality = Math.max(5, entryQuality - 40);
-        else if (ma20Dist > 7) entryQuality = Math.max(10, entryQuality - 30);
-        else if (ma20Dist > 5) entryQuality = Math.max(20, entryQuality - 20);
-        else if (ma20Dist > 3) entryQuality = Math.max(30, entryQuality - 10);
-        else if (ma20Dist < 2) entryQuality = Math.min(98, entryQuality + 8);
-
-        // ── DISTRIBUTION TRAP: Fiyat yukselirken OBV dagilim = BUYUK TUZAK ──
-        // OZSUB/BVSAN tipi hisseler: yukseliyor ama akilli para cikiyor
-        const isDistributionTrap = p.obvTrend === 'distribution'
-          && (p.change || 0) > 0 && (p.rsi || 50) > 55;
-        if (isDistributionTrap) entryQuality = Math.max(5, entryQuality - 35);
-
-        // ── ZAYIF HACIM: yukselis + hacim < 1x = guvensiz sinyal ──
-        if ((p.volRatio || 1) < 0.8 && (p.change || 0) > 1) {
-          entryQuality = Math.max(10, entryQuality - 20);
-        }
-
-        // A2: zengin giris-zamanlamasi scorer'ini (MA20/RSI/BB/sessiz-cekilme) entryQuality'e
-        // harmanla — hesaplaniyor + UI'da gosteriliyordu ama skora HIC girmiyordu.
-        if (p.entryTimingScore != null && !isSell) {
-          const timingQuality = Math.max(0, Math.min(100, 50 + p.entryTimingScore / 2));
-          entryQuality = Math.round(entryQuality * 0.6 + timingQuality * 0.4);
-        }
+        // v31.53: hesap candidateRank.entryQualityOf'a tasindi (ayni kural, test edilmis):
+        // son barlardaki sicrama + MA20 mesafesi + dagitim tuzagi + zayif hacim + giris
+        // zamanlamasi harmani. Sakinlik sirasi da ayni tanimi kullanir.
+        const entryQuality = entryQualityOf(p, isSell);
 
         // ── LIKIDITE SKORU (0-100) — pozisyon buyukluguyle olceklendiribiliriz ──
         // 2M TL: minimum (gecer-gecmez), 10M+ TL: BIST50 sinif, 50M+ TL: cok likit
@@ -3221,6 +3209,7 @@ export function useAIAdvisor(portfolio) {
               _thematicBoost: p._thematicBoost, _thematicReasons: p._thematicReasons,
               _liveEdge: p._liveEdge,
               _sessionDay: p._sessionDay, // v31.40: verinin oturum gunu
+              _calmRank: p._calmRank,     // v31.53: sakinlik sirasi (olcum; secime girmez)
               // v31.47: kayitli kartlarin lot onerisi canli kartla ayni carpani kullansin
               // (rejim × governor × konviksiyon); yoksa YATAY'daki yarim pozisyon kaybolur.
               _positionSizeMult: p._positionSizeMult, _regime: p._regime,
