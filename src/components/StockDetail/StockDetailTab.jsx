@@ -120,7 +120,7 @@ function describeFailure(reason) {
 
 export default function StockDetailTab({ active, symbol, onSymbolChange, onAnalyze, watchlist, setWatchlist, livePrice }) {
   const isMobile = useIsMobile();
-  const [input, setInput] = useState(symbol || 'THYAO');
+  const [input, setInput] = useState(symbol || '');
   const [section, setSection] = useState('summary');
   const [periodMode, setPeriodMode] = useState('quarter');   // quarter | ttm | annual
   const [chartMetric, setChartMetric] = useState(null);

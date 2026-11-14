@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
-import { fetchData, fetchFundamentals, fetchBigParaBatchPrices, istanbulDayKey } from '../../utils/fetchEngine.js';
+import { fetchData, fetchSingle, fetchFundamentals, fetchBigParaBatchPrices, istanbulDayKey } from '../../utils/fetchEngine.js';
+import { forecastFromScanBars, DAYTRADE_RULE, NEXT_SESSION_EVIDENCE } from '../../utils/nextSession.js';
 import { getUnifiedAnalysis } from '../../utils/signals.js';
 import { getUnifiedDecision } from '../../utils/unifiedDecision.js';
 import { analyzeComprehensiveFinancials } from '../../utils/fundamentalEngine.js';
@@ -45,6 +46,22 @@ function ReasonsGroup({ label, items, color, bg }) {
 }
 
 export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGSig, log, setBadge, onOpenDetail }) {
+  // v31.54: ERTESI SEANS tahmini (nextSession.js — tarama ile ayni model). Yalniz kapanmis
+  // barlardan; endeks olculeri icin XU100 ayrica (onbellekten) gelir, analizi bekletmez.
+  const [nsFc, setNsFc] = useState(null);
+  useEffect(() => {
+    const prices = gData?.prices;
+    if (!Array.isArray(prices) || prices.length < 61) { setNsFc(null); return undefined; }
+    let alive = true;
+    setNsFc(forecastFromScanBars(prices, null, istanbulDayKey));
+    fetchSingle('XU100', '1y', '1d', true)
+      .then((bench) => {
+        if (!alive || !Array.isArray(bench?.prices) || !bench.prices.length) return;
+        setNsFc(forecastFromScanBars(prices, bench.prices, istanbulDayKey));
+      })
+      .catch(() => { /* endeks gelmezse model ortalamasiyla hesaplanan tahmin kalir */ });
+    return () => { alive = false; };
+  }, [gData]);
   const [symbol, setSymbol] = useState('THYAO');
   // Strict cleanup: engine resets on every symbol change, no OB/FVG bleed across assets.
   const smcEngine = useSMCEngine(symbol);
@@ -584,6 +601,34 @@ Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
                 );
               })()}
             </div>
+
+            {/* v31.54 ERTESI SEANS — olculmus iki olasilik. Yon tahmini zayif (en iyi secimde
+                bile %52), hareket tahmini guclu; ikisi de taban oraniyla birlikte gosterilir. */}
+            {nsFc && nsFc.artifact && (
+              <div className="trade-box fi" style={{ marginTop: 14 }}>
+                <div className="trade-title">Ertesi seans</div>
+                <div style={{ fontSize: 11, color: 'var(--t3)', lineHeight: 1.5 }}>
+                  Son 60 seansta bölünme ya da fiyat düzeltmesi görünümlü bir sıçrama var; bu hissede ertesi seans tahmini güvenilir değil, gösterilmiyor.
+                </div>
+              </div>
+            )}
+            {nsFc && !nsFc.artifact && (
+              <div className="trade-box fi" style={{ marginTop: 14 }}>
+                <div className="trade-title">Ertesi seans{nsFc.basisDay ? ` (${nsFc.basisDay.slice(8, 10)}.${nsFc.basisDay.slice(5, 7)} kapanışına göre)` : ''}</div>
+                <div className="tr-row">
+                  <span className="tr-l" title={`Sonraki seansta zirvenin açılışın en az %${DAYTRADE_RULE.movePct} üstüne çıkma olasılığı`}>Hareket olasılığı</span>
+                  <span className="tr-v">%{Math.round(nsFc.pMove * 100)} <span style={{ color: 'var(--t3)', fontWeight: 400 }}>(taban %{NEXT_SESSION_EVIDENCE.baseMovePct})</span></span>
+                </div>
+                <div className="tr-row">
+                  <span className="tr-l" title="Sonraki seansı önceki kapanışın üstünde kapatma olasılığı">Yeşil kapanış olasılığı</span>
+                  <span className="tr-v">%{Math.round(nsFc.pGreen * 100)} <span style={{ color: 'var(--t3)', fontWeight: 400 }}>(taban %{NEXT_SESSION_EVIDENCE.baseGreenPct})</span></span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 6, lineHeight: 1.5 }}>
+                  237 bin hisse-günden ölçüldü. Hareket tahmini güçlü, yön tahmini zayıftır: en iyi seçimde bile yeşil kapanış %{NEXT_SESSION_EVIDENCE.bestGreenPct}'yi geçmedi.
+                  {nsFc.limitUpClose ? ' Son seans tavanda kapandı — açılış tavandan gelirse emir dolmayabilir.' : ''}
+                </div>
+              </div>
+            )}
 
             {/* v31.44 TEMEL ANALİZ — F/K, PD/DD, özkaynak ve gerçek (yıllığa
                 çevrilmiş) kârlılık. Bilanço gelmese bile değerleme gösterilir;

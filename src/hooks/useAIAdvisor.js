@@ -20,6 +20,7 @@ import { isUnsafeForTomorrow, calcContinuationProbability } from '../utils/pumpG
 import { mergeLiveQuote } from '../utils/liveSession.js';
 import { buildScanUniverse } from '../utils/scanUniverse.js';
 import { istanbulDayKey } from '../utils/signalPerfHistory.js';
+import { forecastFromScanBars, rankMovers } from '../utils/nextSession.js';
 
 // v31.40: AL'a engel iki durum: KAP islem tedbiri ve verisi piyasanin oturumundan
 // GERIDE kalan hisse (bugun islem gormemis / durdurulmus). Gecmis oturumun sinyali
@@ -862,10 +863,14 @@ export function useAIAdvisor(portfolio) {
       // v31.9: XU100 kapanis serisi — hem rejim hem relatif-guc (RS) icin. 1y pencere
       // ki 60-gunluk RS ufku ve hisse tarafindaki MA200 ayni tazelikte olsun.
       let bistCloses = [];
+      // v31.54: ertesi seans tahmini (nextSession.js) endeks olculerini ayni dayanak gunune hizalar.
+      let bistBarsNs = [];
+      const nsIdxCache = new Map();
       try {
         const bistData = await fetchSingle('XU100', '1y', '1d', true).catch(() => null);
         const closes = (bistData?.prices || []).map(b => b.close);
         bistCloses = closes;
+        bistBarsNs = Array.isArray(bistData?.prices) ? bistData.prices : [];
         const cls = classifyBistRegime(closes);
         marketRegime = cls.regime;
         bistChangePct = cls.changePct;
@@ -1153,6 +1158,9 @@ export function useAIAdvisor(portfolio) {
                 // v31.53: sakinlik sirasi girdileri (candidateRank.js) — goster + olc, secime girmez
                 realizedVol20: realizedVol(calcPrices),
                 distFromMA50: ind.lastMA50 > 0 ? ((ind.lastClose - ind.lastMA50) / ind.lastMA50) * 100 : null,
+                // v31.54: ertesi seans tahmini — yalniz KAPANMIS barlardan (olusan bar atilir).
+                // Skora ve AL siralamasina girmez; gun ici hareket listesini besler.
+                _ns: forecastFromScanBars(data.prices, bistBarsNs, istanbulDayKey, nsIdxCache),
                 _scanTs: Date.now(), // Bu kayit ne zaman tarandi (panel yas gostergesi)
                 _dataSource: data.source || 'unknown', // hangi kaynaktan geldi
                 // v31.40: verinin ait oldugu OTURUM gunu (fiyat kaydinin updateDate'i ya da
@@ -3133,6 +3141,20 @@ export function useAIAdvisor(portfolio) {
       }
 
       setScanResults(results);
+      // v31.54: GUN ICI HAREKET LISTESI — ertesi seansta acilistan >= %3 yukselme olasiligi en
+      // yuksek likit hisseler (nextSession.rankMovers). AL listesinden BAGIMSIZ: yon degil
+      // hareket tahmini, paper motoru acmaz. Islem tedbirli / verisi geride hisse girmez.
+      let dayMovers = [];
+      try {
+        dayMovers = rankMovers(results.filter(r => r && !isBuyBlocked(r))).map((r, i) => ({
+          symbol: r.symbol, sector: r.sector || '', price: r.price, change: r.change, rank: i + 1,
+          pMove: r._ns.pMove, pGreen: r._ns.pGreen, atrPct: r._ns.atrPct,
+          limitUpClose: r._ns.limitUpClose, basisDay: r._ns.basisDay,
+        }));
+      } catch (moverErr) {
+        console.error('[AI Advisor] hareket listesi kurulamadi:', moverErr);
+        pushLog({ type: 'err', msg: 'Hareket listesi hatasi: ' + (moverErr.message || moverErr) });
+      }
       setTopPicks(picks);
       setMarketSentiment(sentimentObj);
       setSectorHeatmap(sectorMetrics);
@@ -3214,6 +3236,7 @@ export function useAIAdvisor(portfolio) {
               // (rejim × governor × konviksiyon); yoksa YATAY'daki yarim pozisyon kaybolur.
               _positionSizeMult: p._positionSizeMult, _regime: p._regime,
             })),
+            movers: dayMovers,   // v31.54: gun ici hareket listesi (yeniden yuklemede de gorunsun)
             // ── COMPACT VERDICT MAP — ALL scanned symbols ──
             // Tekil Analiz icin kullanilir: herhangi bir hisse ne karar aldi?
             // Sadece minimal alanlar — quota patlamasin.
@@ -3415,6 +3438,7 @@ export function useAIAdvisor(portfolio) {
             sectorRotation: sectorRotation || null,
             riskAlerts: riskAlerts || [],
             newsIndex: newsIndex || null,
+            movers: Array.isArray(dayMovers) ? dayMovers : [],
             timestamp: Date.now(),
             scanMode: isAfterHours ? 'afterHours' : 'intraday',
           },

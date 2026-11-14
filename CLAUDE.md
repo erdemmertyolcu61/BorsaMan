@@ -23,7 +23,9 @@ gerçek değiştiğinde güncelle; yeni bir "## vX.Y" bölümü ekleme.
   hisse kümesine ve tek bir çıkış kuralına bakmak (bir sıralayıcı bir çıkışla iyi, ötekiyle kötü olabilir).
 - **Getiri vaat etme, kişiye özel yatırım tavsiyesi verme.** Ölçülen avantaj küçük ve döneme bağlı:
   işlem başına net beklenti 2022'de +%3 iken 2025'te +%0,2, 2026'da hafif eksi; rejim sıralaması
-  (YÜKSELİŞ > YATAY > DÜŞÜŞ) sürüyor ama fark dar. Bunu dürüstçe söyle.
+  (YÜKSELİŞ > YATAY > DÜŞÜŞ) sürüyor ama fark dar. Bunu dürüstçe söyle. "Her gün önerilerin çoğu yeşil
+  kapatsın" isteği seçimle karşılanamıyor (taban %47, en iyi seçim %52 — aşağıda "Yeşil kapanış"); kullanıcı
+  bunu yeniden isterse rakamı göster, eşik gevşetme.
 - Her sürüm (vX.Y) commit + push edilir; commit mesajı neyi neden değiştirdiğini ve ölçümü anlatır.
   `.claude/worktrees/*` asla stage edilmez.
 - Web'e giden değişikliği depoda değil **yayındaki pakette / canlı sitede** doğrula; bir 200 yanıtı
@@ -48,6 +50,8 @@ pytest tests/             # bist_bridge.py
 node scripts/replay-signals.mjs          # sinyal motoru geçmiş replay (rejim × kademe)
 node scripts/feature-edge-study.mjs      # aday satırları: her aday + canlı seçim zincirinin kopyası (--rebuild ~5 dk, --fetch N yeni hisse çeker)
 node scripts/feature-edge-report.mjs     # aday seçimi ölçümü: rejim / filtre / sıralama / çıkış / boşluk / portföy — keşif, doğrulama, sonrası ayrı
+node scripts/next-session-study.mjs      # ertesi seans satırları: evrenin tamamı × her gün (yeşil kapanış, gece/gün-içi, zirve)
+node scripts/next-session-report.mjs     # ertesi seans ölçümü, ileri-yürüyüş; --fetch-hourly saatlik yol, --write-model modeli üretir
 node scripts/signal-event-study.mjs      # bir gösterge olayı sonraki getiri hakkında ne diyor
 node scripts/kap-event-study.mjs         # KAP bildirimi × fiyat, 24 ay
 node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk-forward zorunlu
@@ -67,6 +71,7 @@ node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk
 | Canlı fiyat | `hooks/useLivePrices.js` (5 sn / 15 sn / 45 sn kademeler) → `fetchQuotesBatch` |
 | Sinyal takibi | `hooks/useSignalTracker.js` (`bist_signal_history`, 500 kayıt, 10 dk kontrol, gün-sonu kapanıştan kesin kayıt) |
 | Tahmin karnesi | `utils/scanScorecard.js` + `hooks/useScanScorecard.js` (`bist_scan_scorecard_v1`, 60 gün): gösterilen AL önerileri, yargılayan seansın kapanışı + 1G/5G; ekran `components/Signals/ScanScorecardPanel.jsx`, AI panelinde tek satır özet |
+| Ertesi seans | `utils/nextSession.js` (özellikler + iki doğrusal lojistik model: hareket = zirve ≥ açılış+%3, yeşil = kapanış > önceki kapanış; katsayılar üretilmiş `nextSessionModel.js`). Tarama her satıra `_ns` damgalar (yalnız kapanmış barlar), `rankMovers` gün içi hareket listesini kurar (`detail.movers`; likit, işlem tedbirsiz, son 60 barda >%25 sıçrama = bozuk seri girmez — ölçümdeki `artB` ile aynı bayrak); ileri ölçüm `utils/moversScorecard.js` + `hooks/useMoversScorecard.js` (`bist_movers_scorecard_v1`); ekran `components/Signals/DayMoversPanel.jsx`, AI panelinde tek satır, Tekil Analiz'de iki olasılık. Skora, AL sırasına ve paper'a girmez |
 | Lot önerisi | `utils/positionSizing.suggestPosition` — AI kartları ve Analiz ekranı aynı fonksiyon; sermaye `bist_trading_capital` (Ayarlar, yoksa 100.000 TL) |
 | Paper | `utils/PaperTradeEngine.js` + `hooks/usePaperTradeML.js` (ML AUTO), `hooks/usePaperTrading.js` (standart). ML motorunun çıkışı `utils/trailingStop.js` (yalnız trailing, seans bazlı; durum `bist_paper_ml_trail_v1`) |
 | Yapay zekâ | `utils/claude.js` — tarama sonrası günlük notlar (`useAIAdvisor`). JARVIS sohbeti, İstihbarat ve Gemini kaldırıldı (kullanıcı, v31.50–51) |
@@ -81,8 +86,10 @@ node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk
 Mobil: Analiz · Hisse · Sinyal · Paper (intraday mobilde mount edilmez; ayarlar Profil › Ayarlar'da, masaüstünde
 Ayarlar penceresinde aracı kurum dahil). İstihbarat, Gerçek Portföy, Piyasa Nabzı ve "Tahmin isabeti" paneli
 kullanıcı kararıyla kaldırıldı; tahmin defteri arka planda çalışır (governor + adaptif stop okur). Sinyal sekmesi
-tahmin karnesiyle açılır, veri katmanı ölçümü (yabancı/KAP) orada. İzleme listesi Hisse detayında, sanal
-pozisyonlar Paper'da.
+gün içi hareket listesi ve tahmin karnesiyle açılır, veri katmanı ölçümü (yabancı/KAP) orada. İzleme listesi
+Hisse detayında, sanal pozisyonlar Paper'da. **Hisse detayı kendiliğinden hisse yüklemez** (kullanıcı, v31.54):
+sekme boş açılır, analiz edilen hisse oraya taşınmaz; yalnız kullanıcının o sekmede seçtiği ya da "Hisse detayı ›"
+ile açtığı hisse yüklenir.
 Sanal portföy UI'sı yok ama durumu arka planda çalışır (risk uyarıları, trailing stop, otomatik stop/hedef).
 
 **Tekil Analiz ekranı sade tutulur** (kullanıcı isteği): bir satır ancak başka bir satırın söylemediği bir
@@ -127,6 +134,10 @@ panel ise state'ten beslenir. Dispatch'i asla sessiz `catch` ile yutma.
 - İş Yatırım HisseTekil **açılış vermez** (AOF verir); proxy `source=bars` açılışı Yahoo'dan alır, Yahoo gün
   atlar. Son barın gerçek açılışını İş toplu listesi (TumHisseSenetleri, `open` alanı) taşır.
 - Seans dışında oluşan AL bir sonraki seansın açılışında dolar (`sessionEntry.js`).
+- **Açılış = önceki kapanış barların %20–30'unda gerçektir**, veri hatası değil: İş toplu listesinde 13.11.2026'da
+  likit hisselerin %29'u önceki kapanıştan açıldı, Yahoo açılışları aynı gün %98 aynı. Yahoo günlük zirve/dip
+  de İş HisseTekil ile barların %99,5'inde aynı (8.528 bar). Getirinin tamamı gecede: ortalama gece boşluğu
+  +%0,2, açılış→kapanış eksi — "ertesi açılışta giriş" ilk gecenin getirisini almaz.
 - Bar stop'un ötesinde açıldıysa çıkış seviyeden değil **açılıştan** yazılır (`planSimulation`, paper motoru
   `STOP_GAP`); açılış yaklaşıksa (`_openApprox`) eski konvansiyon kalır.
 
@@ -224,6 +235,8 @@ sonrası işlem başına net. Nominal TL ve bugün işlem gören hisseler — mu
 | Günlük garanti | `ensureBestOfDay`: panelde en az **3** AL adayı (patlamamış, aşırı alımda değil). AL hiç yoksa ilki eski tek garanti pick (aynı etiketler); diğer tamamlayıcılar her rejimde `_watchOnly` (görünür, paper açmaz, lot 0) | kullanıcı: "her gün bir aday" → v31.51 "top 3". Maruziyet değişmez; edge yaratmaz |
 | Çıkış | yalnız trailing stop (+%3 başabaş, +%5 üstü yarısını kilitle); hedefler referans, satış emri değil. Paper ML motoru da v31.53'ten beri bunu uygular (en fazla 30 seans) | kademeli satış getirinin yarısını yok ediyordu (26.855 sinyal, 5 yılın 5'inde). Paper'ın eski çıkışı (hedefte tam satış + 3. gün +%1 altında kapat) aynı giriş/stopla işlem başına −0,03, trailing +0,70; keşif (+0,05 / +0,83), doğrulama (−0,02 / +0,75) ve 2022–2026'nın her yılında aynı yön. Ölçülmemiş ipucu: hedefsiz + 3. gün tabanı +1,14 (2022–23'te daha iyi, 2025–26'da daha kötü) — walk-forward taraması gerekir. Sert düşüşte (2026 Eyl–Eki) eski çıkış daha az kaybetti (−1,5 / −2,3) |
 | Aday sıralaması | Sıra bugünkü anahtarlarla (yarın-potansiyeli → güven + konviksiyon; paper skora göre). Sakinlik sırası (`candidateRank.js`: düşük oynaklık, düşük ADX, MA50'ye yakın, giriş kalitesi) damgalanır ve ölçülür, **seçime kapalı** (`dataLayerPolicy.calmRankSelection`) | Bugünkü anahtarlar adayları sıralamıyor: gün-içi sıra korelasyonu skor −0,00, yarın-potansiyeli +0,00, güven −0,01; canlı liste ilk-3 tabandan −0,21 (t −1,6). Sakinlik: keşif +0,049 (t 6,3), doğrulama +0,041 (t 5,7), ilk-3 tabandan +0,43 / +0,41; isim değil durum etkisi. Ama trailing çıkışla avantaj 2024 ortasına kadar +1…+2, sonra ≈0, 2026 ilk yarı −0,66 (t −2,8); eski paper çıkışıyla 10 dönemin 9'unda artı. Güvenden "endekse göre güç" terimini çıkarmak iki kümede tutarsız → dokunulmadı |
+| Yeşil kapanış | Yeşil kapanış olasılığı gösterilir (Tekil Analiz, hareket listesi), **seçime ve sıraya girmez**; "her gün çoğunluk yeşil" bir hedef olarak kabul edilmez | `next-session-report.mjs`, 257 hisse, 237 bin hisse-gün: likit evrende yeşil kapatan %47–49, hisselerin çoğunun yeşil kapattığı gün %46. Model (ileri-yürüyüş, görmediği hisse + yıl) ilk-5'te %50–52'ye, çoğunluk-yeşil günü %52–55'e çıkarıyor (taban %41–47) — fazlası yok; doğrusal olmayan model daha iyi değil. Yön yerine yapı: açılışta alıp kapanışta satmak maliyet sonrası evrende −0,39 (t −8,3), yeşil modelinin ilk-5'inde −0,30 |
+| Gün içi hareket | Liste gösterilir ve ileri ölçülür (`DayMoversPanel`, `moversScorecard`); AL listesinden bağımsız, paper açmaz. Alıntılanan kural: ilk **3** hisse, açılışta alış, **+%4 limit kâr-al**, dolmazsa kapanışta satış; dar stop önerilmez | Hareket öngörülebilir: ilk-5'in %62–68'i açılışın ≥%3 üstünü görüyor (taban %27; ort. zirve +%4,7, ort. dip −%4,2). Yön değil: aynı hisselerde aç-kapa −0,09 (ilk 3) / −0,37 (ilk 5). Kâr-al +%4: günlük barla ilk 3 +0,44 (t 4,3; 4 dönemin 4'ünde artı), ilk 5 +0,19 (t 2,3), ilk 10 ≈0. **Saatlik yolla** (2023-12 → 2026-11, 221 hisse) ilk 3 +0,62 (t 5,5), kârlı işlem %64, artı gün %61, 6 yarıyılın 6'sında artı; öğlende çıkış aynı getiri, daha az düşüş (+0,61, t 6,4). Stop %3: −0,19; %5: +0,41. En kötü %5 işlem −%8, en kötü gün −%12. Yalın ATR sıralaması aynı sonucu vermiyor (ilk 5 ≈0); liste yarı yarıya tavan kapatanlardan oluşur — tavan hariç ilk 3 +0,17 (t 1,3). Açılış %0,3 maliyetle ve dolum varsayımıyla ölçüldü; tavan serisinde gerçek kayma daha büyük olabilir → ileri ölçüm 30 işlemi görmeden kural olarak sunma |
 | Açılış boşluğu | Kapı yok (stop altında açılan emir zaten iptal, `decidePendingFill`) | ±%2 boşlukta girmeme kuralı keşifte iyi görünüyordu (aşağı boşluk ≤ −%2: −0,53), doğrulamada tersine döndü (+0,95); portföy simülasyonunda kapının etkisi yok |
 | Stop dolumu | Bar stop'un ötesinde açıldıysa açılıştan (`planSimulation`, paper) | Seviyeden dolum işlem başına ~0,3–0,5 puan iyimserdi; giriş stop altında açıldığında hayalî kâr (+3,1 yazıyordu, gerçek −0,3) |
 | Boyutlandırma | paper: risk %2 / stop mesafesi, %33 tavan; konviksiyon çarpanı (sniper 1 / flagged 0,75 / early 0,5, YATAY ×0,5) | gösterilen lot önerisiyle aynı kural (`suggestPosition`, çarpan `_positionSizeMult`, izle-only = 0); parametre taramaları portföy getirisiyle puanlanır. Skor kademesi YÜKSELİŞ'te hafif artı (45–55: +0,88 … ≥70: +1,5), YATAY'da ters — çarpan YÜKSELİŞ için savunulabilir |
@@ -247,7 +260,7 @@ gününün kapanışı ayrıca bir kez kaydedilir (`scanSchedule.js`, damga yaln
 
 ## Test ve CI
 
-- Vitest, 75 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
+- Vitest, 77 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
   ölçüde testsiz — mantığı saf bir modüle çıkarıp test etmek tercih edilen yol.
 - `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 61).
 - GitHub Actions `ci.yml`: test-js (lint + coverage), build-web, test-python, ci-gate.

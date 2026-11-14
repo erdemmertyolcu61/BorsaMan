@@ -9,6 +9,7 @@ import { usePaperTrading } from './hooks/usePaperTrading.js';
 import { usePaperTradeML } from './hooks/usePaperTradeML.js';
 import { useForwardTestJournal } from './hooks/useForwardTestJournal.js';
 import { useScanScorecard } from './hooks/useScanScorecard.js';
+import { useMoversScorecard } from './hooks/useMoversScorecard.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { runFreshRegimeReset } from './utils/resetStorage.js';
 import PremiumHeader from './components/Layout/PremiumHeader.jsx';
@@ -22,6 +23,7 @@ import MobileNav from './components/MobileNav/MobileNav.jsx';
 import MobilePicksStrip from './components/MobileNav/MobilePicksStrip.jsx';
 import ScanScorecardPanel from './components/Signals/ScanScorecardPanel.jsx';
 import DataLayerEdgePanel from './components/Signals/DataLayerEdgePanel.jsx';
+import DayMoversPanel from './components/Signals/DayMoversPanel.jsx';
 import StockDetailTab from './components/StockDetail/StockDetailTab.jsx';
 import { VirtualPositionsPanel } from './components/Portfolio/PortfolioExtras.jsx';
 import UpdateBanner from './components/Common/UpdateBanner.jsx';
@@ -50,6 +52,7 @@ export default function App() {
   }, [forwardJournal]);
   // v31.47: tahmin karnesi — gosterilen AL onerileri, yargilayan seansin kapanisiyla.
   const scorecard = useScanScorecard(signalTracker.signals);
+  const moversCard = useMoversScorecard();   // v31.54: gun ici hareket listesinin ileri olcumu
   const isMobile = useIsMobile();
   const { activeTab, setActiveTab } = state;
   // A rotation / resize (or an old link to a removed tab) can leave the app on a
@@ -59,7 +62,8 @@ export default function App() {
     if (!allowed.includes(activeTab)) setActiveTab('analyze');
   }, [isMobile, activeTab, setActiveTab]);
   // v31.50: Hisse detayi, Analiz'de ya da bir AI kartinda acilan hisseyle acilir.
-  const [detailSymbol, setDetailSymbol] = useState('THYAO');
+  // v31.54: Hisse sekmesi kendiliginden bir hisse yuklemez — kullanici secer.
+  const [detailSymbol, setDetailSymbol] = useState(null);
   useEffect(() => {
     const onResult = (e) => { if (e.detail?.symbol) setDetailSymbol(e.detail.symbol); };
     window.addEventListener('analyze-result', onResult);
@@ -326,7 +330,7 @@ export default function App() {
 
   const handleAIAnalyze = (symbol) => {
     state.setActiveTab('analyze');
-    if (symbol) setDetailSymbol(symbol);
+    // v31.54: analiz edilen hisse Hisse sekmesine tasinmaz — o sekmede hisseyi kullanici secer.
     window.dispatchEvent(new CustomEvent('ai-analyze', { detail: { symbol } }));
   };
   const openStockDetail = (symbol) => {
@@ -398,6 +402,7 @@ export default function App() {
       )}
 
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>
+        <DayMoversPanel card={moversCard} onAnalyze={handleAIAnalyze} />
         <ScanScorecardPanel scorecard={scorecard} onAnalyze={handleAIAnalyze} />
         <DataLayerEdgePanel signals={signalTracker.signals} />
         <SignalsTab

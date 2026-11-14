@@ -10,6 +10,7 @@ import { deriveDisplayPicks } from '../../utils/displayPicks.js';
 import { buildPickChips, splitChips } from '../../utils/pickChips.js';
 import { suggestPosition, sizeMultOf, getTradingCapital } from '../../utils/positionSizing.js';
 import { fmtPct } from '../Signals/ScanScorecardPanel.jsx';
+import { useDayMovers } from '../Signals/DayMoversPanel.jsx';
 
 // v31.47: tek rozet stili — 11 px, kucuk harf, emoji/gradyan/parlama yok.
 const CHIP_TONES = {
@@ -317,6 +318,8 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
 // card strip, exactly like the design in the reference screenshot.
 // Persists to / restores from localStorage so it survives page navigation.
 export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, onAnalyze, scorecard = null, onOpenScorecard }) {
+  // v31.54: gun ici hareket listesi — ayrintisi ve olcumu Sinyal sekmesinde.
+  const dayMovers = useDayMovers();
   const {
     topPicks = [],
     scanResults = [],
@@ -753,6 +756,26 @@ export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, 
                 <span style={{ whiteSpace: 'nowrap', color: 'var(--t3)' }}>BIST100 {fmtPct(scSummary.benchPct)}</span>
               )}
               <span style={{ marginLeft: 'auto', color: 'var(--blue)', whiteSpace: 'nowrap' }}>Karne ›</span>
+            </button>
+          )}
+          {dayMovers.length > 0 && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onOpenScorecard && onOpenScorecard(); }}
+              title="Sonraki seansta açılışın en az %3 üstünü görme olasılığı en yüksek hisseler. Yön tahmini değildir; kural ve ölçüm Sinyal sekmesinde."
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '7px 12px', background: 'var(--bg2)', border: 'none',
+                borderBottom: '1px solid var(--border)', cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 12, color: 'var(--t2)', textAlign: 'left',
+                overflow: 'hidden',
+              }}
+            >
+              <span style={{ fontWeight: 600, color: 'var(--t1)', whiteSpace: 'nowrap' }}>Gün içi hareket</span>
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+                {dayMovers.slice(0, 3).map(m => `${m.symbol} %${Math.round((m.pMove || 0) * 100)}`).join(' · ')}
+              </span>
+              <span style={{ marginLeft: 'auto', color: 'var(--blue)', whiteSpace: 'nowrap' }}>Liste ›</span>
             </button>
           )}
           {/* v29.3: REJIM + EDGE BANNER — "trend yok = islem yok" urun merkezinde.
