@@ -65,7 +65,6 @@ const pickSort = (a, b) => {
  */
 export function deriveDisplayPicks(topPicks = [], scanResults = [], regimeRestrict = false,
                                    regime = null) {
-  const scan = Array.isArray(scanResults) ? scanResults : [];
   if (topPicks.length > 0) {
     // v31.6: NO "yarina umut" padding. The panel shows the system's GENUINE
     // recommendations only — whatever the backend gate approved, plus the

@@ -12,5 +12,3 @@
 
 export const PLAN_CONST = { BREAKEVEN_PCT: 3, TRAIL_ACTIVE_PCT: 5, LOCK_FRACTION: 0.5 };
 
-/** v31.30: cikis politikasi olcume dayali olarak trailing-only. */
-export const EXIT_POLICY = 'trailing';

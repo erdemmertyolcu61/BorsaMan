@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { logError, safeAsync, safeSync } from '../errorLogger.js';
+import { logError } from '../errorLogger.js';
 
 describe('logError', () => {
   let warnSpy, errorSpy, dispatchSpy;
@@ -59,20 +59,3 @@ describe('logError', () => {
   });
 });
 
-describe('safeAsync / safeSync', () => {
-  it('safeAsync returns fallback on throw', async () => {
-    const r = await safeAsync('fetch', 'saf-' + Math.random(), async () => {
-      throw new Error('x');
-    }, { fallback: 'FB', severity: 'debug' });
-    expect(r).toBe('FB');
-  });
-  it('safeAsync returns fn result on success', async () => {
-    const r = await safeAsync('fetch', 'ok-' + Math.random(), async () => 42);
-    expect(r).toBe(42);
-  });
-  it('safeSync catches and returns fallback', () => {
-    const r = safeSync('parse', 'syn-' + Math.random(), () => { throw new Error('y'); },
-      { fallback: 'SYN', severity: 'debug' });
-    expect(r).toBe('SYN');
-  });
-});

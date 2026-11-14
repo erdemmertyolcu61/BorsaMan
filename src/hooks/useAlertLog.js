@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react';
 /**
  * useAlertLog - Manages alert log for display
  */
-export function useAlertLog(advisor) {
+export function useAlertLog() {
   const [alerts, setAlerts] = useState([]);
 
   const addAlert = useCallback((alert) => {

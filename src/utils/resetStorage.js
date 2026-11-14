@@ -73,12 +73,12 @@ export const TRACKING_KEYS = [
  * Deliberately PRESERVED — these are settings and real data, not tracking:
  *   bist_real_portfolio   real holdings (personal data, never auto-wiped)
  *   bist_watchlist        user's own watchlist
- *   bist_broker_config    broker settings
+ *   bist_broker_config    eski araci kurum ayari (v31.55 te kaldirildi, okunmuyor)
  *   bist_proxy_url, bist_evds_api_key, bist_tcmb_override
  *   bist_trading_capital  (v31.47) lot onerisinin sermayesi — bir ayar
  *   bist_tcmb_rate_cache_v1 (v31.47) TCMB politika faizi onbellegi
  *   bist_econ_calendar_v1 (v31.48) makroekonomik takvim onbellegi
- *   bist_notification_settings, bist_telemetry_enabled
+ *   bist_notification_settings (bist_telemetry_enabled: v31.55 te kaldirildi, okunmuyor)
  *   bist_fetch_l2_cache_v1, bist_isyatirim_cache_v3, bist_daily_intel_cache,
  *   bist_foreign_flow_cache/_breaker  — price/news caches, not learned state
  */
@@ -136,7 +136,7 @@ export async function resetTrackingData(opts = {}) {
       await paperDb.reset();
       sqliteCleared = true;
     }
-  } catch (e) {
+  } catch {
     failed.push('sqlite:paper');
   }
 

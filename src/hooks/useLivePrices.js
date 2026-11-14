@@ -291,6 +291,8 @@ export function useLivePrices(portfolio, updatePortfolio, watchlist, alertLog) {
       if (s && !initial[s]) initial[s] = { price: w?.price || 0, timestamp: Date.now(), change: 0 };
     });
     setLivePrices(prev => ({ ...initial, ...prev }));
+    // Bilerek yalniz SAYIYA bagli: yeni sembol eklenince tohumla; mevcut fiyatlar (prev) korunur.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolio?.positions?.length, watchlist?.length]);
 
   // ── Three independent polling timers (one per tier) ──────────

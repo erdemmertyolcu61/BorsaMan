@@ -11,7 +11,6 @@
 // All functions are pure (no React, no DOM). Safe for Node.js or browser.
 // ════════════════════════════════════════════════════════════════════
 
-import { initMLDatabase } from './DatabaseManager.js';
 
 // ── CONSTANTS ──────────────────────────────────────────────────────
 
@@ -173,7 +172,6 @@ function _calcRoi(entryPrice, prices, entryIdx, offset) {
 }
 
 function _determineOutcome(sig, prices, entryIdx, t1Roi, t3Roi) {
-  const entry = sig.entry_price || sig.entryPrice;
   const stop  = sig.stop_price || sig.stopPrice;
   const target = sig.target_price || sig.targetPrice;
   const direction = sig.direction || 'BUY';
@@ -589,14 +587,8 @@ function _evalRule(rows, conditions) {
   const variance = rois.reduce((s, v) => s + (v - mean) ** 2, 0) / rois.length;
   const sharpe = variance > 0 ? mean / Math.sqrt(variance) : 0;
 
-  // Max drawdown (sequential)
-  let peak = 0, dd = 0, maxDD = 0;
-  for (const r of rois) {
-    peak = Math.max(peak, peak + r);
-    dd = peak - (peak + r - Math.max(peak, peak + r)); // simplified running dd
-    // Actually track cumulative equity
-  }
-  // Simple max drawdown from equity curve
+  // Max drawdown: kumulatif getiri egrisinin zirveden en derin dususu
+  let maxDD = 0;
   let equity = 0, peakEq = 0;
   for (const r of rois) {
     equity += r;

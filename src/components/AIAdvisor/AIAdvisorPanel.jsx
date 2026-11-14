@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import SectorHeatmap from '../Heatmap/SectorHeatmap.jsx';
-import { isMarketOpen, isMarketClosedForDay } from '../../hooks/useAIAdvisor.js';
-import { getMetrics, isTelemetryEnabled, getAllDataFreshness, setFetchTimestamp } from '../../utils/telemetry.js';
-import { getSourceHealth, recordSourceSuccess, recordSourceFailure, fetchBigParaBatchPrices, fetchBigParaQuote } from '../../utils/fetchEngine.js';
+import { isMarketOpen } from '../../hooks/useAIAdvisor.js';
+import { getSourceHealth, fetchBigParaBatchPrices, fetchBigParaQuote } from '../../utils/fetchEngine.js';
 import { getForeignFlowStatus } from '../../utils/foreignFlowEngine.js';
 import { NEWS_CATEGORY_LABELS } from '../../utils/marketNewsEngine.js';
 import { NEWS_UNSCORED_CATEGORIES } from '../../utils/newsConfidence.js';
@@ -26,44 +24,6 @@ function chipStyle(tone) {
     fontSize: 11, fontWeight: 500, color: t.fg, background: t.bg,
     borderRadius: 6, padding: '2px 7px', whiteSpace: 'nowrap', lineHeight: 1.5,
   };
-}
-
-function DataFreshnessBadge() {
-  const [freshness, setFreshness] = useState(null);
-
-  useEffect(() => {
-    if (!isTelemetryEnabled()) return;
-
-    const update = () => {
-      const m = getMetrics();
-      setFreshness(m.lastFetch);
-    };
-
-    update();
-    const interval = setInterval(update, 30000); // Update every 30s
-    return () => clearInterval(interval);
-  }, []);
-
-  if (!freshness) return null;
-
-  const age = Date.now() - freshness.ts;
-  const ageMin = Math.floor(age / 60000);
-  const isFresh = ageMin < 5;
-  const isStale = ageMin > 15;
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderLeft: '1px solid var(--border)', paddingLeft: 10 }}>
-      <span style={{ fontSize: 10, color: 'var(--t3)' }}>Veri:</span>
-      <span style={{
-        fontSize: 10,
-        fontWeight: 600,
-        color: isFresh ? 'var(--green)' : isStale ? 'var(--red)' : 'var(--yellow)'
-      }}>
-        {ageMin < 1 ? '<1d' : `${ageMin}d`}
-      </span>
-      <span style={{ fontSize: 9, color: 'var(--t3)' }}>{freshness.source}</span>
-    </div>
-  );
 }
 
 function SourceHealthBadge() {
@@ -101,39 +61,6 @@ function SourceHealthBadge() {
   );
 }
 
-function StaleWarningBadge() {
-  const [freshness, setFreshness] = useState({});
-
-  useEffect(() => {
-    const update = () => {
-      try {
-        setFreshness(getAllDataFreshness());
-      } catch { }
-    };
-
-    update();
-    const interval = setInterval(update, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const staleSources = Object.entries(freshness).filter(([_, f]) => f.stale);
-
-  if (staleSources.length === 0) return null;
-
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 4,
-      borderLeft: '1px solid var(--red)', paddingLeft: 10,
-      background: 'rgba(255,0,0,0.1)', borderRadius: 4, padding: '2px 8px'
-    }}>
-      <span style={{ fontSize: 10, color: 'var(--red)' }}>⚠️ Eski Veri</span>
-      <span style={{ fontSize: 9, color: 'var(--t3)' }}>
-        {staleSources.map(([s, _]) => s).join(', ')}
-      </span>
-    </div>
-  );
-}
-
 // v31.40: TARAMA KAPSAMI — "tum hisseleri taradik mi, veriler dogru gunun mu?"
 // Sayilar son taramadan (useAIAdvisor.coverage). Eskiden yalniz log'daydi.
 function CoveragePill({ coverage }) {
@@ -162,7 +89,7 @@ function CoveragePill({ coverage }) {
   );
 }
 
-export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio, onAnalyze }) {
+export default function AIAdvisorPanel({ advisor = {}, onAnalyze }) {
   const {
     globalMarket = [],
     topPicks = [],
@@ -216,10 +143,8 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
           </span>
         )}
         {!scanning && lastUpdate && <span style={{ color: 'var(--t3)' }}>{new Date(lastUpdate).toLocaleTimeString('tr-TR')}</span>}
-        <DataFreshnessBadge />
         <SourceHealthBadge />
         {!scanning && <CoveragePill coverage={coverage} />}
-        <StaleWarningBadge />
       </div>
 
       {/* Global Market Ticker */}
@@ -317,7 +242,7 @@ export default function AIAdvisorPanel({ advisor = {}, addToPortfolio, portfolio
 // Shows the top-scored picks from the last scan as a horizontal scrollable
 // card strip, exactly like the design in the reference screenshot.
 // Persists to / restores from localStorage so it survives page navigation.
-export function AIAdvisorDetailPanel({ advisor = {}, addToPortfolio, portfolio, onAnalyze, scorecard = null, onOpenScorecard }) {
+export function AIAdvisorDetailPanel({ advisor = {}, onAnalyze, scorecard = null, onOpenScorecard }) {
   // v31.54: gun ici hareket listesi — ayrintisi ve olcumu Sinyal sekmesinde.
   const dayMovers = useDayMovers();
   const {

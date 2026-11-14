@@ -56,7 +56,10 @@ const OPTS = [
 ];
 
 const step = Math.max(1, Number(process.argv[2]) || 5);
-const files = readdirSync(join(ROOT, '.replay-cache')).filter((f) => f.endsWith('.json'));
+// Yalniz fiyat serileri (<SEMBOL>_<aralik>.json). Ayni klasorde arastirma betiklerinin satir
+// dosyalari da durur (feature-rows-*.json, next-session-rows.json — dizi degil, yuzlerce MB):
+// onlari seri sanmak betigi cokertiyordu (v31.53'ten beri parity kosulamiyordu).
+const files = readdirSync(join(ROOT, '.replay-cache')).filter((f) => /^[A-Z0-9]+_[0-9a-z]+\.json$/.test(f));
 let windows = 0;
 let mismatches = 0;
 const samples = [];
@@ -64,7 +67,9 @@ const t = { calcJs: 0, calcW: 0, sigJs: 0, sigW: 0 };
 const isNum = (x) => typeof x === 'number';
 
 for (const f of files) {
-  const bars = JSON.parse(readFileSync(join(ROOT, '.replay-cache', f), 'utf8'))
+  const raw = JSON.parse(readFileSync(join(ROOT, '.replay-cache', f), 'utf8'));
+  if (!Array.isArray(raw)) continue;
+  const bars = raw
     .filter((b) => b && isNum(b.open) && isNum(b.high) && isNum(b.low) && isNum(b.close) && isNum(b.volume));
   for (let end = Math.min(252, bars.length); end <= bars.length; end += step) {
     const w = bars.slice(Math.max(0, end - 252), end);

@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildClaudeRequest, readClaudeResponse, CLAUDE_MODEL, CLAUDE_BETA,
-  THINKING_HEADROOM, WEB_SEARCH_TOOL_TYPE, webSearchTool,
+  THINKING_HEADROOM,
 } from '../claude.js';
 
 describe('buildClaudeRequest', () => {
@@ -56,10 +56,9 @@ describe('buildClaudeRequest', () => {
     expect(buildClaudeRequest({ messages: history }).payload.messages).toBe(history);
   });
 
-  it('uses the current web search tool version', () => {
-    expect(WEB_SEARCH_TOOL_TYPE).toBe('web_search_20260209');
-    const { payload } = buildClaudeRequest({ prompt: 'x', tools: [webSearchTool(3)] });
-    expect(payload.tools).toEqual([{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }]);
+  it('sends tools only when the caller passes some', () => {
+    const tool = { type: 'x_tool', name: 'x' };
+    expect(buildClaudeRequest({ prompt: 'x', tools: [tool] }).payload.tools).toEqual([tool]);
     expect(buildClaudeRequest({ prompt: 'x' }).payload).not.toHaveProperty('tools');
   });
 });

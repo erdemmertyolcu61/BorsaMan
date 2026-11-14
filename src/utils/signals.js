@@ -1,5 +1,4 @@
 import { calcATR, calcFibonacci, calcPivots, calcOBV, calcOBVTrend, calcAll } from './indicators.js';
-import { analyzeDetailedFinancials, getFundamentalGrade } from './fundamentalEngine.js';
 import { runWallStreetAnalysis } from './wallStreet.js';
 import { detectMarketRegime, getAdaptiveThresholds, getRegimeIndicatorWeights, detectHiddenDivergence, MarketRegime } from './adaptiveThresholds.js';
 import { applyCalibrationToScore } from './signalCalibration.js';
@@ -362,82 +361,6 @@ export function detectHolyGrail(ind) {
   
   if (isUpMA && isRSIPos && isMACDPos && isOBVAcc) return true;
   return false;
-}
-
-/**
- * MASTER CONFLUENCE — Institutional Level Filtering
- * Requires extreme alignment: Technical + Smart Money + Fundamentals + Macro + Holy Grail
- */
-export function getEliteConfluence(sym, data, rawFundamentals, marketContext = null) {
-  // 1. Core Technical Analysis
-  const analysis = getUnifiedAnalysis(sym, data);
-  if (!analysis || (!analysis.bestBuy && !analysis.bestSell)) return null;
-
-  const { ind, sig, bestBuy, bestSell } = analysis;
-  const target = bestBuy || bestSell;
-  
-  // 2. Fundamental Filter (Master Rule: No junk stocks for high conviction)
-  const fund = analyzeDetailedFinancials(rawFundamentals);
-  const fundScore = fund ? fund.score : 0;
-  if (fundScore < 6.0 && target.direction === 'buy') return null; 
-
-  // 3. Smart Money Multiplier
-  const hasSmartMoney = ind.obvTrend === 'accumulation' || (ind.cmf && ind.cmf > 0.08) || (ind.mfi && ind.mfi < 35);
-  
-  // 4. Holy Grail check
-  const isHolyGrail = detectHolyGrail(ind);
-  
-  // 5. Candlestick weight
-  const hasBullishCandle = ind.candlePatterns.some(p => p.type === 'bullish');
-  
-  // 6. Data Consistency Guardrail
-  if (data.dataConfidence === 'low') {
-    target.confidence -= 12; 
-  }
-
-  // 7. GLOBAL MARKET GUARDRAIL (BIST100 Trend)
-  let macroRisk = false;
-  if (marketContext && target.direction === 'buy') {
-    const marketInd = calcAll(marketContext.prices);
-    const marketMa = marketInd.lastMA20;
-    const marketP = marketInd.lastClose;
-    if (marketP < marketMa) {
-      target.confidence -= 20; // Harsher penalty for Elite Mode
-      macroRisk = true;
-    }
-  }
-
-  // Conviction Calculation
-  let masterConfidence = target.confidence;
-  if (hasSmartMoney) masterConfidence += 5;
-  if (isHolyGrail) masterConfidence += 5;
-  if (hasBullishCandle && target.direction === 'buy') masterConfidence += 5;
-  if (fundScore >= 8) masterConfidence += 5;
-  
-  masterConfidence = Math.min(98, masterConfidence);
-  
-  // High Conviction Threshold (Emin++ Upgrade: %90+)
-  if (masterConfidence >= 90) {
-    return {
-      symbol: sym,
-      type: target.direction,
-      confidence: masterConfidence,
-      price: ind.lastClose,
-      fundScore,
-      fundGrade: getFundamentalGrade(fundScore).label,
-      reasons: target.events.map(e => e.desc),
-      target: target.target || (ind.lastClose * 1.05),
-      stop: target.stop || (ind.lastClose * 0.95),
-      isEmin: true,
-      isHolyGrail,
-      macroRisk,
-      dataRisk: data.dataConfidence === 'low',
-      candleNotes: ind.candlePatterns.map(p => p.name).join(', '),
-      isSpeculative: ind.volRatio < 0.5
-    };
-  }
-
-  return null;
 }
 
 export function detectSetups(prices, ind) {
@@ -1256,7 +1179,7 @@ export function genSignalJs(ind, prices, { kapSentiment, htfContext, sectorStren
         });
       }
     }
-  } catch (err) { /* calibration is best-effort — never block signal */ }
+  } catch { /* calibration is best-effort — never block signal */ }
 
   // Signal classification using normalized 0-100 score
   // GUCLU AL: >=75 AND volume AND smart money AND 4+ indicator types
@@ -1291,7 +1214,6 @@ export function genSignalJs(ind, prices, { kapSentiment, htfContext, sectorStren
   ];
   const smartBuyCount = smartBuySignals.filter(Boolean).length;
   const hasSmartMoneyBuy = smartBuyCount >= 1;
-  const hasStrongSmartMoney = smartBuyCount >= 2;
   const hasSmartMoneySell = ind.obvTrend === 'distribution' || (ind.cmf != null && ind.cmf < -0.05) || (ind.mfi != null && ind.mfi > 75);
 
   // v24: bullishTypes esigi: GUCLU AL=5, AL=4, ZAYIF AL=3
@@ -1368,12 +1290,11 @@ export function genSignalJs(ind, prices, { kapSentiment, htfContext, sectorStren
 
   // ========== ENTRY / STOP / TARGETS (ADVANCED) ==========
   // Find all support/resistance levels
-  let sup = null, sup2 = null, res = null, res2 = null;
+  let sup = null, res = null, res2 = null;
   const srLevels = ind.sr && Array.isArray(ind.sr) ? ind.sr : [];
   const supports = srLevels.filter(s => s.type === 'support' && s.price < p).sort((a, b) => b.price - a.price);
   const resistances = srLevels.filter(s => s.type === 'resistance' && s.price > p).sort((a, b) => a.price - b.price);
   if (supports.length > 0) sup = supports[0];
-  if (supports.length > 1) sup2 = supports[1];
   if (resistances.length > 0) res = resistances[0];
   if (resistances.length > 1) res2 = resistances[1];
 
@@ -1687,7 +1608,7 @@ function finalizeSignal(baseSig, ind, prices) {
     for (const r of meta.edge.reasons) {
       baseSig.reasons.push({ t: 'WS: ' + r, c: 'neutral' });
     }
-  } catch (err) {
+  } catch {
     baseSig.regime = { regime: 'UNKNOWN', label: '-' };
     baseSig.setupGrade = 'C';
     baseSig.edge = 50;

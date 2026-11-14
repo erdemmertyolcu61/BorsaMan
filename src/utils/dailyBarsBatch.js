@@ -44,5 +44,3 @@ export async function fetchDailyBarsMap(symbols, { concurrency = 3, range = '1y'
   return out;
 }
 
-/** Test seam. */
-export function _resetDailyBarsFails() { _sessionFails.clear(); }

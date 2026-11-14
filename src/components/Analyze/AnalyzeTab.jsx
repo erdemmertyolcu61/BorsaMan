@@ -12,7 +12,6 @@ import { runMonteCarloAsync } from '../../utils/monteCarlo.js';
 import Chart from '../Chart/Chart.jsx';
 import BacktestPanel from '../Backtest/BacktestPanel.jsx';
 import MacroPanel from './MacroPanel.jsx';
-import { useSMCEngine } from '../../hooks/useSMCEngine.js';
 
 function ReasonsGroup({ label, items, color, bg }) {
   const [open, setOpen] = useState(false);
@@ -64,7 +63,6 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
   }, [gData]);
   const [symbol, setSymbol] = useState('THYAO');
   // Strict cleanup: engine resets on every symbol change, no OB/FVG bleed across assets.
-  const smcEngine = useSMCEngine(symbol);
   const [range, setRange] = useState('5y');
   const [interval, setInterval_] = useState('1d');
   const [loading, setLoading] = useState(false);
@@ -120,7 +118,7 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
           sig.foreignFlowScore = score;
           sig.foreignFlowLabel = label;
         }
-      } catch (err) {}
+      } catch {}
 
       // ── ML Confluence: STRICTLY INHERIT from AI Advisor first ──
       // Single Analysis must produce IDENTICAL signal to bulk Advisor scan.
@@ -326,14 +324,6 @@ export default function AnalyzeTab({ gData, setGData, gInd, setGInd, gSig, setGS
     window.addEventListener('ai-analyze', handler);
     return () => window.removeEventListener('ai-analyze', handler);
   }, [doAnalyze]);
-
-  const loadDemo = () => {
-    const s = symbol.trim().toUpperCase() || 'THYAO';
-    setBadge({ text: 'Demo', cls: 'demo' });
-    log(s + ' demo veri uretiliyor...', 'info');
-    // Fallback removed — demo data path deleted; kept as a no-op stub.
-    setLoading(false);
-  };
 
   return (
     <div className="main">

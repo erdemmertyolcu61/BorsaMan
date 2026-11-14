@@ -68,14 +68,3 @@ export function logError(scope, message, err, opts = {}) {
   if (firstOccurrence) _surface({ severity, scope, message: full, symbol: opts.symbol });
 }
 
-/** Wrap an async fn so any throw is logged + re-thrown as null. */
-export async function safeAsync(scope, message, fn, opts = {}) {
-  try { return await fn(); }
-  catch (err) { logError(scope, message, err, opts); return opts.fallback ?? null; }
-}
-
-/** Wrap a sync fn. */
-export function safeSync(scope, message, fn, opts = {}) {
-  try { return fn(); }
-  catch (err) { logError(scope, message, err, opts); return opts.fallback ?? null; }
-}

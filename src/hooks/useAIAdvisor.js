@@ -80,15 +80,6 @@ export function isMarketOpen() {
   return t >= 595 && t < 1090;                   // 09:55 – 18:10
 }
 
-/**
- * isMarketClosedForDay — true after 18:10 TRT on a weekday (session ended).
- */
-export function isMarketClosedForDay() {
-  const { day, h, m } = _istanbulParts();
-  if (day === 0 || day === 6) return true;
-  return h * 60 + m >= 1090;                     // >= 18:10
-}
-
 const isCapacitor = typeof window !== 'undefined' && window.Capacitor && window.Capacitor.isNativePlatform();
 
 // PWA detection: running on Vercel (not Electron, not Capacitor, not localhost)
@@ -586,97 +577,6 @@ function calcTomorrowPotential(result) {
   return Math.max(0, Math.min(100, Math.round(tpScore)));
 }
 
-// ── Sell Potential Score: rank stocks by next-day downside opportunity ──
-// Mirrors calcTomorrowPotential but for bearish/short setups.
-// High score = strong sell candidate (overbought + distribution + bearish tech).
-function calcSellPotential(result) {
-  if (!result) return 0;
-  let spScore = 0;
-
-  // ── PUMP EXHAUSTION: recent surge without fundamentals = sell setup ──
-  const recentPump = result.recentPump || 0;
-  if (recentPump > 7) spScore += 22;
-  else if (recentPump > 5) spScore += 14;
-  else if (recentPump > 3) spScore += 6;
-
-  // ── ATR gate: need enough daily range to profit on short side ──
-  const atrPct = result.atrPct || 0;
-  if (atrPct < 1.5) spScore -= 20;
-  else if (atrPct < 2.5) spScore -= 5;
-  else if (atrPct >= 3) spScore += 8;
-  else if (atrPct >= 5) spScore += 14;
-
-  // ── OVERBOUGHT indicators ──
-  if (result.rsi != null) {
-    if (result.rsi > 82) spScore += 24;
-    else if (result.rsi > 77) spScore += 18;
-    else if (result.rsi > 72) spScore += 12;
-    else if (result.rsi > 65) spScore += 6;
-    else if (result.rsi < 50) spScore -= 18;
-  }
-  if (result.bollPct != null) {
-    if (result.bollPct > 90) spScore += 20;
-    else if (result.bollPct > 80) spScore += 12;
-    else if (result.bollPct > 70) spScore += 5;
-    else if (result.bollPct < 40) spScore -= 14;
-  }
-  if (result.mfi != null) {
-    if (result.mfi > 80) spScore += 14;
-    else if (result.mfi > 72) spScore += 8;
-    else if (result.mfi < 40) spScore -= 10;
-  }
-  if (result.williamsR != null && result.williamsR > -15) spScore += 8; // overbought
-
-  // ── DISTRIBUTION signals ──
-  if (result.obvTrend === 'distribution') spScore += 16;
-  else if (result.obvTrend === 'accumulation') spScore -= 16;
-  if (result.cmf != null) {
-    if (result.cmf < -0.12) spScore += 12;
-    else if (result.cmf < -0.05) spScore += 6;
-    else if (result.cmf > 0.1) spScore -= 10;
-  }
-  if (result.volRatio != null) {
-    if (result.volRatio > 2.5) spScore += 6;  // high volume on down day
-    else if (result.volRatio < 0.5) spScore -= 6;
-  }
-
-  // ── BEARISH technicals ──
-  if (result.supertrend?.flip === 'bearish') spScore += 16;
-  if (result.supertrend?.trend === 'DOWN') spScore += 10;
-  if (result.ichimoku?.cloudPosition === 'below') spScore += 10;
-  if (result.ichimoku?.tkCross === 'bearish') spScore += 10;
-  if (result.ichimoku?.kumoBreakout === 'bearish') spScore += 12;
-
-  // ── NEGATIVE NEWS / CATALYST ──
-  if (result.newsScore != null) {
-    if (result.newsCategories?.includes('risk')) spScore += 20;
-    if (result.newsCategories?.includes('downgrade')) spScore += 12;
-    if (result.newsScore < -3) spScore += 14;
-    else if (result.newsScore < -1) spScore += 6;
-    else if (result.newsScore > 3) spScore -= 14;
-  }
-
-  // ── R/R quality ──
-  if (result.rr >= 3) spScore += 12;
-  else if (result.rr >= 2.5) spScore += 8;
-  else if (result.rr >= 2) spScore += 4;
-  else if (result.rr < 1.2) spScore -= 12;
-
-  // ── BEARISH KONFLUENS BONUSU (multi-source agreement) ──
-  let bearishConfluence = 0;
-  if (result.obvTrend === 'distribution') bearishConfluence++;
-  if ((result.cmf || 0) < -0.05) bearishConfluence++;
-  if (result.supertrend?.trend === 'DOWN') bearishConfluence++;
-  if ((result.rsi || 50) > 70) bearishConfluence++;
-  if (result.newsScore != null && result.newsScore < -2) bearishConfluence++;
-  if (bearishConfluence >= 4) spScore += 12;
-  else if (bearishConfluence >= 3) spScore += 6;
-
-  // NOT: result.score'u burada eklemiyoruz (dairesel bagimlilik onlenir).
-
-  return Math.max(0, Math.min(100, Math.round(spScore)));
-}
-
 /**
  * useAIAdvisor - manages AI scanning, top picks, sector rotation, risk alerts.
  * Dispatches window 'advisor-scan-complete' on each full scan.
@@ -688,7 +588,6 @@ export function useAIAdvisor(portfolio) {
   const [marketSentiment, setMarketSentiment] = useState(null);
   const [globalMarket, setGlobalMarket] = useState([]);
   const [advisorLog, setAdvisorLog] = useState([]);
-  const [sectorHeatmap, setSectorHeatmap] = useState({});
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState({ done: 0, total: 0, phase: '' });
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -1211,7 +1110,7 @@ export function useAIAdvisor(portfolio) {
               out._topGainer = computeTopGainerPotential(out, calcPrices);
               return out;
             }
-          } catch (e) {
+          } catch {
             // swallow individual fetch errors
           }
           failedSyms.add(sym);   // veri gelmedi → yeniden-deneme listesine
@@ -1552,12 +1451,13 @@ export function useAIAdvisor(portfolio) {
       // ══════════════════════════════════════════════════════════════════════
       // ── LIKIDITE KAPISI — IKI KADEMELI ──
       // Yuksek likidite (>= 2M TL/gun): standart filtreler uygulanir
-      // Dusuk likidite (500K - 2M TL/gun): SADECE patlama oncesi birikim
+      // Dusuk likidite (100K - 2M TL/gun): SADECE patlama oncesi birikim
       //   sinyalleri varsa onerilir → "ERKEN" rozetiyle isaretlenir
-      // Cok dusuk likidite (< 500K TL/gun): tamamen elenir (slipaj cok yuksek)
+      // Cok dusuk likidite (< 100K TL/gun): tamamen elenir (emir dolmaz).
+      // Not: taban bir ara 500K idi; 4ec5104'te mikro-cap'ler erken birikim kapisindan
+      // girebilsin diye 100K'ya indi (kullanici evreni daraltmak istemedi). Olculmedi.
       // ══════════════════════════════════════════════════════════════════════
       const MIN_DAILY_VOLUME_TL = 2_000_000;       // tam likit esigi
-      const EARLY_ENTRY_MIN_VOLUME_TL = 500_000;   // erken alim icin minimum hacim
       const MICRO_CAP_MIN_VOLUME_TL = 100_000;     // mutlak taban — emrin dolabilmesi icin
 
       // ── PRE-PUMP / ERKEN BIRIKIM TESPITI ──
@@ -3157,7 +3057,6 @@ export function useAIAdvisor(portfolio) {
       }
       setTopPicks(picks);
       setMarketSentiment(sentimentObj);
-      setSectorHeatmap(sectorMetrics);
       setLastUpdate(new Date());
 
       // Sektör güç haritasını bir sonraki tarama için kaydet.
@@ -3643,7 +3542,6 @@ export function useAIAdvisor(portfolio) {
     marketSentiment,
     globalMarket,
     advisorLog,
-    sectorHeatmap,
     scanning,
     scanProgress,
     lastUpdate,

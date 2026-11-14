@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, memo } from 'react';
-import { BIST30, getStockList, SECTORS } from '../../utils/constants.js';
+import { getStockList, SECTORS } from '../../utils/constants.js';
 import { fetchSingle } from '../../utils/fetchEngine.js';
 import { calcAll } from '../../utils/indicators.js';
 import { genSignal, calcPosition } from '../../utils/signals.js';
@@ -33,7 +33,6 @@ const SESSION_TIPS = {
 // ── Professional strategy notes per play type + signals ─────────────────────
 function buildStrategyNote(r, phase) {
   const notes = [];
-  const playMeta = PLAY_TYPE_META[r.playType] || PLAY_TYPE_META.none;
 
   // Play-type specific note
   if (r.playType === 'momentum') {
@@ -178,6 +177,7 @@ function scoreIntradayOpportunity(r, marketInfo, session) {
 
 // ── Main component ─────────────────────────────────────────────────────────
 export default function TradesTab({ addToPortfolio, portfolio, signalTracker, advisorData, onScanComplete }) {
+  const recordSignal = signalTracker?.recordSignal;   // kararli useCallback — tum nesneye bagimlilik gerekmez
   const [results, setResults] = useState([]);
   const [rejected, setRejected] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -260,7 +260,6 @@ export default function TradesTab({ addToPortfolio, portfolio, signalTracker, ad
 
     // ── Phase 2: Daily scan of all stocks ─────────────────────────────────
     const stocks = getStockList(listType);
-    const total = stocks.length;
     const all = [];
     const CHUNK = 12;
 
@@ -436,9 +435,9 @@ export default function TradesTab({ addToPortfolio, portfolio, signalTracker, ad
       setRejected(nearMiss);
 
       // Record to signal tracker
-      if (signalTracker?.recordSignal) {
+      if (recordSignal) {
         for (const r of enriched) {
-          signalTracker.recordSignal({
+          recordSignal({
             symbol: r.symbol, cls: r.cls || 'buy', signal: r.signal,
             score: r.intScore, conf: r.confidence, price: r.price,
             entry: r.price, stop: r.stopFinal, target: r.targetFinal, rr: r.rrFinal,
@@ -461,7 +460,7 @@ export default function TradesTab({ addToPortfolio, portfolio, signalTracker, ad
     };
     window.dispatchEvent(new CustomEvent('trades-scan-complete', { detail: scanData }));
     if (onScanComplete) onScanComplete(scanData);
-  }, [listType, phase, advisorData, useAdvisorCache, onScanComplete]);
+  }, [listType, phase, advisorData, onScanComplete, recordSignal]);
 
   useEffect(() => { generateRef.current = generate; }, [generate]);
 

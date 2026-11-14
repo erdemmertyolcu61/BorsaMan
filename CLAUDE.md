@@ -39,7 +39,7 @@ npm run build             # prebuild: scripts/ensure-ml-rules.mjs — CI/Vercel'
 npm test                  # Vitest (tek dosya: npx vitest run src/utils/__tests__/x.test.js)
 npm run lint              # eslint src --max-warnings 90 — gerçek kapı
 npm run build:engine      # engine-rs → wasm32 → src/engine/bistEngineWasm.js (gömülü, commit'lenir)
-npm run parity:engine     # JS motoru vs Rust motoru, 130 gerçek seri × 5 yıl, bit düzeyinde
+npm run parity:engine     # JS motoru vs Rust motoru, .replay-cache'teki tüm seriler (298) × 252 bar pencere, bit düzeyinde
 npm run deploy:proxy      # proxy/ projesini yayınla + canlı doğrula (kökten çalıştır)
 npm run check:proxy       # yayındaki proxy'yi doğrula; argümanla başka origin: -- https://bist-terminal-project.vercel.app
                           # çıkış 2 = sunucuya hiç ulaşılamadı (ağ, ör. bu makinede *.vercel.app sıfırlanıyor) — eski proxy demek değil
@@ -84,7 +84,8 @@ node scripts/sweep-exit-params.mjs       # çıkış parametresi taraması, walk
 
 **Sekmeler** — masaüstü: Tekil analiz (varsayılan), Hisse detayı, Günlük intraday, Sinyal takibi, Paper trading.
 Mobil: Analiz · Hisse · Sinyal · Paper (intraday mobilde mount edilmez; ayarlar Profil › Ayarlar'da, masaüstünde
-Ayarlar penceresinde aracı kurum dahil). İstihbarat, Gerçek Portföy, Piyasa Nabzı ve "Tahmin isabeti" paneli
+Ayarlar penceresinde: işlem sermayesi, Claude / EVDS anahtarı, arka plan bildirimi, proxy). "Aracı kurum
+bağlantısı" v31.55'te kaldırıldı — seçimi okuyan ya da webhook'a istek atan kod hiç yoktu. İstihbarat, Gerçek Portföy, Piyasa Nabzı ve "Tahmin isabeti" paneli
 kullanıcı kararıyla kaldırıldı; tahmin defteri arka planda çalışır (governor + adaptif stop okur). Sinyal sekmesi
 gün içi hareket listesi ve tahmin karnesiyle açılır, veri katmanı ölçümü (yabancı/KAP) orada. İzleme listesi
 Hisse detayında, sanal pozisyonlar Paper'da. **Hisse detayı kendiliğinden hisse yüklemez** (kullanıcı, v31.54):
@@ -186,22 +187,19 @@ istemci eski dağıtımı "boş" değil `proxy_outdated` olarak raporlar. `.verc
 ## Yapay zekâ entegrasyonu (`utils/claude.js`)
 
 - **Maliyet yalnız kullanıcı Ayarlar'a Claude anahtarı girerse oluşur.** Anahtar yoksa hiçbir istek gitmez,
-  tarama notlandırması atlanır. (JARVIS sohbeti v31.51'de kaldırıldı; `claude.js`'teki sohbet/uzman
-  fonksiyonları tüketicisiz kaldı.)
+  tarama notlandırması atlanır. `claude.js`'te yalnız bu rota kaldı (`askDailyPicks`); tüketicisiz sohbet,
+  uzman analizi, KAP özeti, piyasa istihbaratı ve strateji üretici v31.55'te silindi.
   Anahtar varsa her taramadan sonra otomatik bir notlandırma isteği gider (`useAIAdvisor`, 25 sn kesme —
   kesilen istek yine faturalanır).
 - Model **`claude-opus-5-5`** (`CLAUDE_MODEL`), tüm rotalarda. İstek `/api/claude` proxy'si üzerinden gider;
   kullanıcının kendi anahtarı `x-api-key` başlığında, proxy `anthropic-beta`'yı yukarı iletir.
 - Opus 5.5'te **örnekleme parametresi yok** (`temperature`/`top_p`/`top_k` → 400) ve **düşünme hep açık**:
-  tek kontrol `output_config.effort` (API varsayılanı `medium`), her rota açıkça verir — sohbet / KAP
-  `low`, uzman analizi / günlük notlar `medium`. (`askMarketIntel` ve `generateStrategyCode` tüketicisiz.)
+  tek kontrol `output_config.effort` (API varsayılanı `medium`); günlük notlar `medium` verir.
 - Düşünme `max_tokens`'a sayılır; çağıran yanıt bütçesini verir, `THINKING_HEADROOM` üstüne eklenir.
 - Yanıt blok **türüne** göre okunur (düşünme blokları önce gelebilir). `stop_reason: "refusal"` açık bir
   hata mesajına çevrilir; sunucu tarafı yedek (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) açık.
-- Web arama aracı `web_search_20260209`.
 - Süre: Vercel fonksiyonu `maxDuration: 60`, istemci 65 sn bekler. Akış (streaming) yok.
-- Prompt'lar Türkçe ve ASCII-güvenli JS dizeleri; `buildExpertPrompt` 7 katman (makro → sektör → temel →
-  teknik → zaman → risk → pozisyon).
+- Prompt'lar Türkçe ve ASCII-güvenli JS dizeleri (`buildDailyPicksPrompt`).
 
 ## Veri kaynakları (ölçülmüş durum)
 
@@ -254,15 +252,19 @@ sonrası işlem başına net. Nominal TL ve bugün işlem gören hisseler — mu
 Evren = sabit liste ∪ İş tarama listesi, bugün fiyatı olmayanlar çıkar (623). Tarama 30 paralel (mobil/PWA 15),
 adaptif yavaşlama (`adaptiveThrottle.js`), başarısızlar sınırlı tekrar geçişiyle (200 sembol / 90 sn) yeniden
 denenir; ana döngü veri akarken 20 dk'ya kadar, akmazken 8 dk'da kesilir ve kapsama ekrana yazılır. Likidite:
-günlük ≥2M TL; 500K–2M yalnız erken birikim (4+ sinyal) varsa. Otomatik tarama 09:55 ve 18:15; her işlem
+günlük ≥2M TL; 100K–2M yalnız erken birikim (4+ sinyal) varsa, 100K altı hiç (kod 4ec5104'ten beri böyle; belge
+500K diyordu, ölçülmedi). Otomatik tarama 09:55 ve 18:15; her işlem
 gününün kapanışı ayrıca bir kez kaydedilir (`scanSchedule.js`, damga yalnız başarılı dispatch'te). Sonuçlar
 `bist_last_ai_picks`'e yazılır, faz süreleri her taramada loglanır.
 
 ## Test ve CI
 
-- Vitest, 77 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
+- Vitest, 73 test dosyası; saf yardımcılar test edilir, orkestrasyon (`useAIAdvisor`, büyük paneller) büyük
   ölçüde testsiz — mantığı saf bir modüle çıkarıp test etmek tercih edilen yol.
-- `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (şu an 61).
+- `npm run lint` 0 hata zorunlu, uyarı tavanı 90 (v31.55'ten beri **0** — yeni uyarı ölü kod ya da bayat
+  kapanış demektir: v31.55'te `recordAdvisorPick` rejim yedeğini ilk açılıştaki değerle yazıyordu).
+- Ölü kod: `main.jsx`'ten erişilemeyen `src/` dosyası tutulmaz; yalnız `scripts/` ya da Electron'un kullandığı
+  modüller (`walkForward.js`, `trackingAlerts.js`, `DatabaseManager.js`) bilerek durur.
 - GitHub Actions `ci.yml`: test-js (lint + coverage), build-web, test-python, ci-gate.
 - Arayüz değişikliği önizlemede doğrulanır (`.claude/launch.json` → `dev`). Önizleme tarayıcısında dış istekler
   CORS'a takılır ve `innerWidth` 0 okunup masaüstü dalı mobil sanılabilir; canlı veri için yayındaki siteyi kullan.

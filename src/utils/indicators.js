@@ -730,7 +730,7 @@ export function calcSupertrend(prices, period = 10, multiplier = 3) {
   for (let i = 1; i < n; i++) {
     trs.push(Math.max(prices[i].high - prices[i].low, Math.abs(prices[i].high - prices[i - 1].close), Math.abs(prices[i].low - prices[i - 1].close)));
   }
-  let prevUpper = 0, prevLower = 0, prevST = 0, prevDir = 1;
+  let prevUpper = 0, prevLower = 0, prevST = 0;
   for (let i = period; i < n; i++) {
     let atrSum = 0;
     for (let j = i - period; j < i; j++) atrSum += trs[j] || 0;
@@ -752,7 +752,6 @@ export function calcSupertrend(prices, period = 10, multiplier = 3) {
     prevUpper = upperBand;
     prevLower = lowerBand;
     prevST = supertrend[i];
-    prevDir = dir;
   }
   const lastDir = direction[n - 1];
   const lastValue = supertrend[n - 1];

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import NotificationSettings from '../Notifications/NotificationSettings.jsx';
 import ProxySettings from '../Common/ProxySettings.jsx';
-import BrokerSettings from '../Portfolio/BrokerSettings.jsx';
 import MobileProfilePage from '../MobileProfile/MobileProfilePage.jsx';
 import { isMarketOpen } from '../../hooks/useAIAdvisor.js';
 
@@ -39,7 +38,7 @@ function formatClock(d) {
   return { date, time };
 }
 
-export default function PremiumHeader({ badge, notifications, alertLog, advisor, livePrice, portfolio, scanHistory, onAnalyze, brokerConfig, setBrokerConfig }) {
+export default function PremiumHeader({ badge, notifications, portfolio }) {
   const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMobileProfile, setShowMobileProfile] = useState(false);
@@ -191,11 +190,9 @@ export default function PremiumHeader({ badge, notifications, alertLog, advisor,
                 ✕
               </button>
             </div>
-            {/* v31.50: araci kurum ayarlari masaustunde Gercek Portfoy sekmesinin
-                altindaydi; sekme kaldirildi. BrokerSettings ProxySettings'i de icerir. */}
-            {setBrokerConfig
-              ? <BrokerSettings brokerConfig={brokerConfig} setBrokerConfig={setBrokerConfig} />
-              : <ProxySettings />}
+            {/* v31.55: "araci kurum baglantisi" bolumu kaldirildi — secimi okuyan, webhook'a
+                istek atan hicbir kod yoktu (ayar hicbir seyi degistirmiyordu). */}
+            <ProxySettings />
           </div>
         </div>
       )}
@@ -204,8 +201,6 @@ export default function PremiumHeader({ badge, notifications, alertLog, advisor,
         <MobileProfilePage
           notifications={notifications}
           portfolio={portfolio}
-          brokerConfig={brokerConfig}
-          setBrokerConfig={setBrokerConfig}
           onClose={() => setShowMobileProfile(false)}
         />
       )}

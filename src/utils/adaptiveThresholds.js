@@ -1,4 +1,3 @@
-import { calcATR } from './indicators.js';
 
 export const MarketRegime = {
   TRENDING_UP: 'TRENDING_UP',
@@ -37,8 +36,6 @@ export function detectMarketRegime(prices, ind) {
     ? recentReturns.reduce((a, b) => a + Math.abs(b), 0) / recentReturns.length 
     : 0;
 
-  const trendStrength = Math.abs(plusDI - minusDI);
-
   if (adx > 30 && plusDI > minusDI) {
     return { regime: MarketRegime.TRENDING_UP, strength: adx, atrPercent, volatility };
   } else if (adx > 30 && minusDI > plusDI) {
@@ -67,7 +64,7 @@ export function getAdaptiveThresholds(ind, regime) {
     momentumThreshold: 2
   };
 
-  const { regime: r, atrPercent, volatility } = regime || { regime: MarketRegime.NORMAL, atrPercent: 2, volatility: 0.02 };
+  const { regime: r, atrPercent } = regime || { regime: MarketRegime.NORMAL, atrPercent: 2, volatility: 0.02 };
 
   const volatilityMultiplier = Math.max(0.5, Math.min(2, atrPercent / 3));
 

@@ -20,7 +20,6 @@ const NEUTRAL_EXPECTANCY = 0;   // %
 let _activeModel = null;
 
 export function setSignalCalibration(model) { _activeModel = model || null; }
-export function getSignalCalibration() { return _activeModel; }
 export function clearSignalCalibration() { _activeModel = null; }
 
 function safeNum(x, fb = 0) {

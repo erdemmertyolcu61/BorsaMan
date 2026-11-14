@@ -232,6 +232,3 @@ export function runMonteCarloAsync(prices, days = 20, simulations = 500, opts = 
   });
 }
 
-export function terminateMonteCarloWorker() {
-  if (_worker) { _worker.terminate(); _worker = null; _pending.clear(); }
-}

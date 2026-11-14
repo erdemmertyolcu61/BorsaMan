@@ -254,9 +254,8 @@ function MLForwardTestPanel({ paperML }) {
   }
 
   const {
-    cash, startCapital, totalEquity, totalEquityPct, totalPnl, totalPnlPct,
-    winRate, wins, losses, totalTrades, avgWinPct, avgLossPct,
-    expectancy, profitFactor, maxDrawdown, openTrades, closedTrades, mlBuckets,
+    cash, totalEquity, totalEquityPct, totalPnl, totalPnlPct,
+    winRate, wins, losses, expectancy, profitFactor, maxDrawdown, openTrades, closedTrades, mlBuckets,
     liveEdge, pendingOrders = [],
   } = snapshot;
 
@@ -722,7 +721,7 @@ function StandardPaperPanel({ paperTrading, tab, setTab, sortHistory, setSortHis
   const {
     capital, startCapital, startDate,
     positions, closedTrades, autoTrade, equityCurve, config,
-    openPosition, closePosition, toggleAutoTrade, updateConfig, reset,
+    closePosition, toggleAutoTrade, updateConfig, reset,
     performance: perf,
   } = paperTrading;
 

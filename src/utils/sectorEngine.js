@@ -16,26 +16,6 @@ export function getSectorStocks() {
   return map;
 }
 
-// Calculate relative strength of a stock/sector vs benchmark
-// Returns RS score (0-100 scale, 50 = neutral)
-export function calcRelativeStrength(prices, benchPrices, lookback = 20) {
-  if (!prices || !benchPrices || prices.length < lookback || benchPrices.length < lookback) return 50;
-
-  const pLen = prices.length;
-  const bLen = benchPrices.length;
-
-  const stockReturn = (prices[pLen - 1].close - prices[pLen - lookback].close) / prices[pLen - lookback].close;
-  const benchReturn = (benchPrices[bLen - 1].close - benchPrices[bLen - lookback].close) / benchPrices[bLen - lookback].close;
-
-  // RS ratio
-  const rsRatio = benchReturn !== 0 ? stockReturn / Math.abs(benchReturn) : stockReturn > 0 ? 1.5 : 0.5;
-
-  // Normalize to 0-100 scale
-  // rsRatio > 1 means outperforming, < 1 means underperforming
-  const rs = Math.min(100, Math.max(0, 50 + (rsRatio - 1) * 50));
-  return Math.round(rs);
-}
-
 // Calculate sector aggregate metrics from individual stock scan results
 export function calcSectorMetrics(scanResults) {
   const sectorMap = getSectorStocks();
@@ -51,7 +31,6 @@ export function calcSectorMetrics(scanResults) {
     const avgRSI = matches.reduce((s, r) => s + (r.rsi || 50), 0) / matches.length;
     const accumCount = matches.filter(r => r.obvTrend === 'accumulation').length;
     const avgChange = matches.reduce((s, r) => s + (r.change || 0), 0) / matches.length;
-    const totalVolume = matches.reduce((s, r) => s + (r.volume || 0), 0);
     const avgMFI = matches.reduce((s, r) => s + (r.mfi || 50), 0) / matches.length;
     const avgADX = matches.reduce((s, r) => s + (r.adx || 15), 0) / matches.length;
 
@@ -107,32 +86,6 @@ export function rankSectors(sectorMetrics) {
 // Get sector for a symbol
 export function getSector(symbol) {
   return SECTORS[symbol] || 'Diger';
-}
-
-// Calculate sector RS vs index for a specific stock
-// sectorData = array of {symbol, prices} for all stocks in sector
-// indexPrices = BIST100 prices
-export function calcSectorRS(sectorData, indexPrices, lookback = 20) {
-  if (!sectorData || sectorData.length === 0 || !indexPrices) return 50;
-
-  // Average sector return
-  let totalReturn = 0, count = 0;
-  for (const stock of sectorData) {
-    if (!stock.prices || stock.prices.length < lookback) continue;
-    const len = stock.prices.length;
-    const ret = (stock.prices[len - 1].close - stock.prices[len - lookback].close) / stock.prices[len - lookback].close;
-    totalReturn += ret;
-    count++;
-  }
-  if (count === 0) return 50;
-
-  const avgSectorReturn = totalReturn / count;
-  const bLen = indexPrices.length;
-  if (bLen < lookback) return 50;
-  const benchReturn = (indexPrices[bLen - 1].close - indexPrices[bLen - lookback].close) / indexPrices[bLen - lookback].close;
-
-  const rsRatio = benchReturn !== 0 ? avgSectorReturn / Math.abs(benchReturn) : avgSectorReturn > 0 ? 1.5 : 0.5;
-  return Math.min(100, Math.max(0, Math.round(50 + (rsRatio - 1) * 50)));
 }
 
 // ── SECTOR TILT NORMALIZATION (v31.20) — pure, testable ───────────────────

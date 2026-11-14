@@ -9,7 +9,6 @@
  *  - Claude Opus 5.5 (claude-opus-5-5) on every route — see CLAUDE_MODEL below
  */
 
-import { logError } from './errorLogger.js';
 import { buildMacroPromptLine } from './macroContextEngine.js';
 import { PROXY_BASE_URL } from './fetchEngine.js';
 import { KAP_EVENT_EVIDENCE } from './kapFeed.js';
@@ -42,11 +41,6 @@ export const CLAUDE_BETA = 'server-side-fallback-2026-07-01';
 // Client wait must outlast the proxy's own limit (vercel.json maxDuration 60 s),
 // otherwise the browser gives up on a request the function is still serving.
 const CLAUDE_TIMEOUT_MS = 65_000;
-
-export const WEB_SEARCH_TOOL_TYPE = 'web_search_20260209';
-export function webSearchTool(maxUses = 2) {
-  return { type: WEB_SEARCH_TOOL_TYPE, name: 'web_search', max_uses: maxUses };
-}
 
 export function setApiKey(key) {
   if (typeof key === 'string' && key.trim()) {
@@ -81,21 +75,6 @@ export function detectMarketRegime(market = {}) {
   return { regime, bias, xu100Chg, avgRSI, breadth };
 }
 
-// ── Portfolio risk context ─────────────────────────────────────────────────
-export function buildPortfolioContext(portfolio = {}) {
-  const positions = portfolio?.positions || [];
-  const open = positions.filter(p => p.status === 'open');
-  const totalValue = open.reduce((s, p) => s + (p.entryPrice || 0) * (p.quantity || 0), 0);
-  const cash = portfolio?.cash || 0;
-  const bySector = {};
-  for (const p of open) {
-    const sec = p.sector || 'Diger';
-    bySector[sec] = (bySector[sec] || 0) + ((p.entryPrice || 0) * (p.quantity || 0));
-  }
-  const concentration = Object.entries(bySector).sort((a, b) => b[1] - a[1]).slice(0, 3);
-  return { openCount: open.length, totalValue, cash, concentration, symbols: open.map(p => p.symbol) };
-}
-
 // ── Expert Prompt (7-layer analysis) ───────────────────────────────────────
 // Render the rich global / commodity macro block for the expert prompt.
 // `macro` is the getMacroContext() object (usdtry/vix/tcmb/sp500/brent/gold/…).
@@ -127,94 +106,6 @@ function _renderMacroBlock(macro, fmt) {
     lines.push(`   Makro rejim: ${String(macro.regime).toUpperCase()}${rs}`);
   }
   return lines.length ? lines.join('\n') : '   (veri yok)';
-}
-
-export function buildExpertPrompt(symbol, analysis = {}, market = {}, portfolio = null) {
-  const {
-    price, change, signal, cls, score, conf,
-    rsi, macd, macdSignal, bb, atr, vwap, mfi, obv,
-    ma20, ma50, ma200,
-    entry, stop, target, rr,
-    targetT2, targetT3, targetLong: longTerm,
-    setup = [], wyckoff, sector, holdText,
-    mcProfitProb, mcMedian,
-    fundamentals = {},
-    foreignRatio, foreignChangeDay, foreignChangeWeek, foreignChangeMonth,
-    foreignFlowScore, foreignFlowLabel,
-    thematic = null, news = null,
-  } = analysis;
-
-  const {
-    xu100 = null, usdtry = null, marketSentiment = null, macro = null,
-  } = market;
-
-  const fmt = (v, d = 2) => (v == null || !Number.isFinite(v)) ? '-' : Number(v).toFixed(d);
-  const setupList = Array.isArray(setup) ? setup.slice(0, 6).join(', ') : (setup || '-');
-  const regime = detectMarketRegime(market);
-
-  // Portfolio context (optional)
-  let portfolioBlock = '';
-  if (portfolio) {
-    const pc = buildPortfolioContext(portfolio);
-    const alreadyHolds = pc.symbols.includes(symbol);
-    const concentration = pc.concentration.map(([s, v]) => `${s}:${((v / (pc.totalValue || 1)) * 100).toFixed(0)}%`).join(' ');
-    portfolioBlock = `\nPORTFOY: ${pc.openCount} acik poz, deger=${fmt(pc.totalValue)} TL, nakit=${fmt(pc.cash)} TL. Sektor konsant: ${concentration || '-'}. ${alreadyHolds ? `DIKKAT: ${symbol} zaten portfoyde.` : ''}`;
-  }
-
-  // Contrarian flags auto-detected — injected to force the model to address them
-  const flags = [];
-  if (score >= 7 && ma200 && price && price < ma200) flags.push('skor yuksek AMA fiyat MA200 altinda (trend ters)');
-  if (rsi >= 70) flags.push(`RSI=${fmt(rsi, 0)} asiri alim`);
-  if (rsi <= 30) flags.push(`RSI=${fmt(rsi, 0)} asiri satim`);
-  if (regime.regime === 'BEAR_TREND' && cls === 'buy') flags.push('makro bear trend ama AL sinyali');
-  if (regime.regime === 'OVERBOUGHT' && cls === 'buy') flags.push('piyasa asiri alim, AL riskli');
-  if (mcProfitProb != null && mcProfitProb < 45 && cls === 'buy') flags.push(`Monte Carlo P(kar)=%${fmt(mcProfitProb, 0)} dusuk`);
-  const flagsText = flags.length ? flags.map(f => `- ${f}`).join('\n') : '- tespit yok';
-
-  // Per-stock thematic tailwind (oil/gold/copper/FX → this symbol) + current news.
-  const thematicLine = thematic && Array.isArray(thematic.reasons) && thematic.reasons.length
-    ? `MAKRO TEMA (${symbol}): ${thematic.reasons.join(', ')} → net ${thematic.delta >= 0 ? '+' : ''}${thematic.delta} puan (emtia/kur ruzgari bu hisseye)`
-    : (macro ? `MAKRO TEMA (${symbol}): su an aktif tematik ruzgar (petrol/emtia/kur) yok` : '');
-  const newsLine = news && news.count
-    ? `GUNCEL HABER (${symbol}) [${(news.categories || []).slice(0, 3).join(',') || '-'}] skor=${news.score >= 0 ? '+' : ''}${news.score} (${news.count} haber)${news.topItem?.title ? `: "${String(news.topItem.title).slice(0, 80)}"` : ''}`
-    : '';
-
-  return `Sen 25 yillik deneyimli, BIST + kuresel piyasa stratejistisin (portfoy yoneticisi altyapili). ${symbol} icin profesyonel, tarafsiz, olculu bir degerlendirme yap. Bir tekil hisseyi ASLA tek basina okuma: petrol/emtia fiyatlari, dunya borsalari (S&P500/VIX), kur+faiz (USDTRY/TCMB), jeopolitik ve guncel haberler bu hisseyi nasil etkiler — hepsini hisse-ozelinde tart. Elinde guncel makro veri var; eksik/kritik noktalarda web aramayla en son gelismeleri (haber, emtia, jeopolitik) DOGRULA.
-
-=== PIYASA REJIMI ===
-Rejim: ${regime.regime}  Bias: ${regime.bias}  XU100 Deg: ${fmt(regime.xu100Chg, 2)}%  Breadth: ${fmt(regime.breadth, 2)}  Ort.RSI: ${fmt(regime.avgRSI, 0)}
-Kural: BEAR_TREND'te AL sinyallerine agir supheyle yaklas. OVERBOUGHT'ta karli satis onerileri one cikar. OVERSOLD'da contrarian long firsatlari degerlendir.
-
-=== 7-KATMANLI ANALIZ HIYERARSISI (siradan agirlikli) ===
-1) MAKRO / KURESEL (x1.0): BIST XU100=${fmt(xu100)}  USDTRY=${fmt(usdtry, 4)}  Sentiment=${marketSentiment?.sentiment || '-'}
-${_renderMacroBlock(macro, fmt)}
-${thematicLine ? '   ' + thematicLine : ''}
-2) SEKTOREL (x0.9): ${sector || '-'}
-3) TEMEL (x0.8): F/K=${fmt(fundamentals.pe)} PD/DD=${fmt(fundamentals.pb)} ROE=${fmt(fundamentals.roe)}% KarTrend=${fundamentals.profitTrend || '-'} BrutMarj=${fmt(fundamentals.grossMargin)}% OpMarj=${fmt(fundamentals.opMargin)}%
-4) TEKNIK (x1.0): Fiyat=${fmt(price)} Deg=%${fmt(change)} MA20=${fmt(ma20)} MA50=${fmt(ma50)} MA200=${fmt(ma200)} RSI=${fmt(rsi, 1)} MACD=${fmt(macd, 3)}/${fmt(macdSignal, 3)} BB=${bb ? `${fmt(bb.lower)}-${fmt(bb.upper)}` : '-'} ATR=${fmt(atr)} VWAP=${fmt(vwap)}
-5) ZAMAN (x0.9): Sinyal=${signal || '-'} (${cls || '-'})  Skor=${fmt(score, 1)}/10  Conf=${fmt(conf, 0)}%  Wyckoff=${wyckoff || '-'}
-6) RISK (x1.2): Stop=${fmt(stop)}  ATR-multiple=${atr && stop && price ? fmt(Math.abs(price - stop) / atr, 1) : '-'}
-7) POZISYON (x1.0): Giris=${fmt(entry)}  T1=${fmt(target)}  T2=${fmt(targetT2)}  T3=${fmt(targetT3)}  Uzun=${fmt(longTerm)}  R/R=1:${fmt(rr, 2)}  Vade=${holdText || '-'}
-
-AKILLI PARA: MFI=${fmt(mfi, 0)} OBV=${obv?.trend || '-'}
-YABANCI: Takas=%${fmt(foreignRatio)} Gunluk=${foreignChangeDay > 0 ? '+' : ''}${fmt(foreignChangeDay)} Haftalik=${foreignChangeWeek > 0 ? '+' : ''}${fmt(foreignChangeWeek)} Aylik=${foreignChangeMonth > 0 ? '+' : ''}${fmt(foreignChangeMonth)} Akis=${foreignFlowLabel || '-'}(${foreignFlowScore > 0 ? '+' : ''}${fmt(foreignFlowScore, 0)})
-${newsLine ? newsLine + '\n' : ''}SETUPLAR: ${setupList || '-'}
-MONTE CARLO: P(kar)=%${fmt(mcProfitProb, 0)}  Medyan=${fmt(mcMedian)}${portfolioBlock}
-
-=== OTOMATIK TESPIT EDILEN UYARILAR ===
-${flagsText}
-
-=== CONTRARIAN PROTOKOL ===
-Her uyariyi cevabinda ACIKCA ele al. Uyari varsa confidence'i >=20 puan dusur. Hicbir uyari YOKSA ve rejim sinyalle uyumluysa confidence artirilabilir.
-
-=== CEVAP FORMATI (Turkce, sade, max 220 kelime) ===
-[ONERI] AL/TUT/SAT + vade (gun/hafta/ay) + guven (DUSUK/ORTA/YUKSEK).
-[CONFIDENCE] 1-10 arasi kendi degerlendirmen. Gerekce 1 cumle.
-[OZET] En kritik 3 madde (makro/sektor/teknik hangisi belirleyici).
-[MAKRO_ETKI] Petrol/emtia + dunya piyasalari + kur/faiz + guncel haber bu hisseyi BUGUN nasil etkiliyor? 1-2 cumle, somut (orn: "Brent 5g +%6 → TUPRS rafineri marji lehine" veya "VIX yuksek + S&P dususte → riskli, kucuk poz"). Tematik ruzgar/haber yoksa "notr" yaz.
-[RISK] En buyuk 2 risk — somut, sayisal (makro/jeopolitik riski de dahil et).
-[AKSIYON] Giris-stop-T1-T2-T3 fiyatlari + kademeli alim plani (orn: %40 sinyalde, %40 pullback'te, %20 breakout'ta).
-[ALTERNATIF] Sinyal yanlisa kirilim seviyesi nedir, ne izlemeli?${portfolio ? '\n[PORTFOY_ETKI] Bu pozisyon mevcut portfoy ile nasil etkilesir? (konsantrasyon/korelasyon).' : ''}`;
 }
 
 // ── Daily Picks Prompt (A/B/C grades) ──────────────────────────────────────
@@ -465,71 +356,6 @@ async function callClaude(opts) {
   }
 }
 
-// ── KAP Disclosure sentiment analysis ──────────────────────────────────────
-export async function analyzeKAPList(symbol, disclosures = []) {
-  if (!Array.isArray(disclosures) || !disclosures.length) return [];
-
-  const bullets = disclosures.slice(0, 10).map((d, i) => {
-    const title = (d.title || '').slice(0, 180);
-    const summary = (d.summary || '').slice(0, 280);
-    return `${i + 1}. [id=${d.id || i}] ${title}\n   ${summary}`;
-  }).join('\n');
-
-  const prompt = `${symbol} hissesinin son KAP bildirimlerini degerlendir.
-Her bildirim icin: sentiment (Pozitif/Negatif/Notr), score (1-10: yatirimci icin etki siddeti), reason (tek cumle).
-Yalnizca JSON array dondur, baska metin yazma.
-
-BILDIRIMLER:
-${bullets}
-
-Format: [{"id":"...","sentiment":"Pozitif","score":7,"reason":"..."}]`;
-
-  const result = await callClaude({
-    prompt,
-    systemPrompt: 'Sen BIST KAP analisti uzmanisin. Sadece gecerli JSON dondur.',
-    effort: 'low',          // short classification — no deep reasoning needed
-    maxTokens: 1200,
-    useCache: false, // short JSON output — caching overhead not worth it
-  });
-
-  if (result.error) return { error: result.error };
-  try {
-    const m = result.text.match(/\[[\s\S]*\]/);
-    if (!m) return { error: 'AI JSON dondurmedi.' };
-    return JSON.parse(m[0]);
-  } catch (e) {
-    return { error: 'JSON parse: ' + e.message };
-  }
-}
-
-// ── Expert analysis with web search ────────────────────────────────────────
-export async function askExpert(symbol, analysis, market, opts = {}) {
-  const useWebSearch = opts.webSearch !== false;
-  const tools = useWebSearch ? [webSearchTool(2)] : undefined;
-
-  return callClaude({
-    prompt: buildExpertPrompt(symbol, analysis, market, opts.portfolio || null),
-    systemPrompt: 'Sen Wall Street tarzi BIST stratejistisin. Turkce cevap ver. Gerekirse haberlere web_search ile bak. Emin olmadigin yerde "emin degilim" de, uydurma.',
-    tools,
-    effort: 'medium',       // the deep single-stock analysis — quality over latency
-    maxTokens: 1600,
-  });
-}
-
-// Multi-turn chat with conversation history (used by JARVIS for contextual dialogue)
-// `opts.webSearch`: give the model the web_search tool. JARVIS tags a question
-// "[WEB ARAMA AKTIF]" when it needs fresh news; before v31.46 the tag was sent
-// but the tool never was, so the model was told to search with nothing to search with.
-export async function chatClaudeHistory(messages, systemPrompt, opts = {}) {
-  return callClaude({
-    messages,
-    systemPrompt,
-    effort: opts.effort || 'low',   // conversational — keep the reply quick on a phone
-    maxTokens: opts.maxTokens || 1400,
-    tools: opts.tools || (opts.webSearch ? [webSearchTool(2)] : undefined),
-  });
-}
-
 // ── Daily Picks (WS8) — structured, evidence-fed grading ────────────────────
 // Output is schema-constrained JSON (output_config.format) so grades can be
 // parsed into pick.claudeGrade and tracked in the forward journal. Runs on the
@@ -616,169 +442,3 @@ export async function askDailyPicks(picks, market, opts = {}) {
   return { ...result, structured: false };
 }
 
-// ── Daily Market Intelligence (News & Events) ──────────────────────────────
-export async function askMarketIntel(newsList = []) {
-  const newsText = newsList.map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
-
-  const prompt = `Sen BIST (Borsa Istanbul) istihbarat sefisin.
-Sana asagida bugunun bazi RSS haberlerini verdim. Ancak bu yeterli degil.
-Senden IKI GOREVIN var:
-1. "web_search" aracini kullanarak bugunun (son 24 saat) "Borsa Istanbul araci kurum raporlari", "BIST 100 uzman yorumlari", "Hisse model portfoy guncellemeleri" gibi aramalar yap. Finans uzmanlarinin, analistlerin ve kurumlarin hangi hisselere AL verdigini veya hedef fiyat yukselttigini bul.
-2. Bu topladigin verileri ve asagidaki RSS haberlerini birlestirip bana detayli bir JSON raporu dondur.
-
-=== BUGUNUN RSS HABERLERI ===
-${newsText || 'Haber yok.'}
-
-=== CIKTI FORMATI ===
-SADECE gecerli bir JSON dondur, baska metin yazma.
-JSON formati su sekilde olmali:
-{
-  "newsMarkdown": "Günün en önemli 3 finans/ekonomi haberi ve etkileri. Sadece haberler. 1-2 paragraf.",
-  "expertMarkdown": "Web aramasindan buldugun ARACI KURUM / UZMAN yorumlari. Hangi uzman hangi hisse icin ne demis? Liste halinde.",
-  "impacts": [
-    {
-      "symbol": "ASELS",
-      "impact": 15, // Pozitif haber/yorum icin +10 ile +20 arasi, negatif icin -10 ile -20 arasi
-      "reason": "Ziraat Yatirim hedef fiyatini yukseltti ve model portfoyune ekledi."
-    }
-  ]
-}
-
-- impacts dizisine en cok etkilenen max 6 hisseyi ekle.
-- Sadece JSON dondur.`;
-
-  const result = await callClaude({
-    prompt,
-    systemPrompt: 'Sen BIST piyasa istihbarati analistisin. Istenilen formati (JSON) kesinlikle bozma.',
-    effort: 'medium',
-    maxTokens: 1500,
-    tools: [webSearchTool(3)],
-    useCache: false
-  });
-
-  if (result.error) return { error: result.error };
-  try {
-    // v31.46: the old pattern /\\{...\\}/ required a literal backslash before each
-    // brace, so it never matched and any prose around the JSON broke the parse.
-    const m = result.text.match(/\{[\s\S]*\}/);
-    if (!m) return JSON.parse(result.text); // Try direct parse
-    return JSON.parse(m[0]);
-  } catch (e) {
-    console.error("Market Intel JSON Parse Error:", e, result.text);
-    return null;
-  }
-}
-
-// ── Strategy code generation (natural-language → JS filter) ───────────────
-function buildStrategyPrompt(userInput) {
-  return `Kullanicinin istedigi hisse secim stratejisini JavaScript arrow function olarak yaz.
-
-ZORUNLU FORMAT:
-(ind, sig, data) => {
-  let s = 0;
-  // skorlama kurallari
-  if (...) s += N;
-  return s >= ESIK;
-}
-
-KULLANILABILIR DEGISKENLER:
-- ind.lastClose (son fiyat), ind.changePct (% degisim)
-- ind.lastRSI (0-100), ind.lastMA20/50/100/200 (hareketli ortalamalar)
-- ind.mfi (0-100, Money Flow), ind.obvTrend ("accumulation"/"distribution"/"neutral")
-- ind.volRatio (hacim orani, 1.0 = ortalama), ind.cmf (-1 to 1, Chaikin)
-- ind.adx (0-100, trend gucu), ind.wyckoffPhase ("accumulation"/"markup"/"distribution"/"markdown")
-- ind.ttmSqueeze?.squeezeOn (boolean), ind.ttmSqueeze?.momentum (sayi)
-- ind.candlePatterns (array of {name, type: "bullish"/"bearish"})
-- ind.stochRSI?.k[son], ind.stochRSI?.d[son]
-- sig.signal ("GUCLU AL"/"AL"/"TUT"/"SAT"/"GUCLU SAT")
-- sig.cls ("buy"/"hold"/"sell"), sig.score (-10 to 10)
-- sig.rr (risk/reward), sig.intradayRR
-- data.prices (array of {date,open,high,low,close,volume})
-
-NULL GUVENLIK: Her degiskeni kullanmadan once null check yap.
-SADECE JS kodu don, aciklama YAZMA. Kod \`\`\`javascript blogu icinde olsun.
-
-Kullanici istegi: "${userInput}"`;
-}
-
-function localStrategyParser(userInput) {
-  const t = userInput.toLowerCase()
-    .replace(/[ıİ]/g, 'i').replace(/[şŞ]/g, 's').replace(/[öÖ]/g, 'o')
-    .replace(/[üÜ]/g, 'u').replace(/[çÇ]/g, 'c').replace(/[ğĞ]/g, 'g');
-  let code = `(ind, sig, data) => {\n  let s = 0;\n`;
-  const explanations = [];
-  if (t.includes('momentum') || t.includes('yukselis') || t.includes('guclu')) {
-    code += `  if (ind.lastRSI && ind.lastRSI > 50 && ind.lastRSI < 70) s += 2;\n`;
-    code += `  if (ind.lastMA20 && ind.lastClose > ind.lastMA20) s += 2;\n`;
-    code += `  if (ind.volRatio && ind.volRatio > 1.3) s += 2;\n`;
-    code += `  if (sig.cls === "buy") s += 2;\n`;
-    explanations.push('Momentum: RSI 50-70, MA-20 uzerinde, hacim yuksek');
-  } else if (t.includes('dip') || t.includes('ucuz') || t.includes('donus')) {
-    code += `  if (ind.lastRSI && ind.lastRSI < 35) s += 3;\n`;
-    code += `  if (ind.mfi != null && ind.mfi < 25) s += 2;\n`;
-    code += `  if (ind.obvTrend === "accumulation") s += 2;\n`;
-    code += `  if (ind.changePct > 0) s += 1;\n`;
-    explanations.push('Dipten donus: RSI asiri satim, MFI kurumsal alim, OBV birikim');
-  } else if (t.includes('kurumsal') || t.includes('akilli') || t.includes('balina')) {
-    code += `  if (ind.obvTrend === "accumulation") s += 3;\n`;
-    code += `  if (ind.mfi != null && ind.mfi < 30) s += 2;\n`;
-    code += `  if (ind.cmf != null && ind.cmf > 0.1) s += 2;\n`;
-    code += `  if (ind.volRatio && ind.volRatio > 1.5) s += 1;\n`;
-    explanations.push('Kurumsal birikim: OBV accumulation, MFI dusuk, CMF pozitif');
-  } else if (t.includes('trend') || t.includes('takip')) {
-    code += `  if (ind.lastMA20 && ind.lastMA50 && ind.lastClose > ind.lastMA20 && ind.lastMA20 > ind.lastMA50) s += 3;\n`;
-    code += `  if (ind.adx && ind.adx > 25) s += 2;\n`;
-    code += `  if (sig.cls === "buy") s += 2;\n`;
-    code += `  if (ind.volRatio && ind.volRatio > 1) s += 1;\n`;
-    explanations.push('Trend takip: MA sirali, ADX guclu, sinyal alis');
-  } else if (t.includes('dusuk risk') || t.includes('guvenli') || t.includes('saglam')) {
-    code += `  if (sig.rr && sig.rr > 1.5) s += 2;\n`;
-    code += `  if (ind.adx && ind.adx > 20) s += 1;\n`;
-    code += `  if (ind.lastRSI && ind.lastRSI > 40 && ind.lastRSI < 60) s += 2;\n`;
-    code += `  if (ind.obvTrend === "accumulation") s += 2;\n`;
-    code += `  if (ind.volRatio && ind.volRatio > 0.8) s += 1;\n`;
-    explanations.push('Dusuk risk: Yuksek R/R, RSI notr bolge, OBV birikim');
-  } else {
-    code += `  if (sig.cls === "buy" && sig.score >= 3) s += 3;\n`;
-    code += `  if (ind.lastRSI && ind.lastRSI > 40 && ind.lastRSI < 65) s += 1;\n`;
-    code += `  if (ind.volRatio && ind.volRatio > 1) s += 1;\n`;
-    code += `  if (ind.obvTrend === "accumulation") s += 2;\n`;
-    code += `  if (ind.lastMA20 && ind.lastClose > ind.lastMA20) s += 1;\n`;
-    explanations.push('Dengeli strateji: Sinyal, RSI, hacim, OBV ve MA kontrol');
-  }
-  code += `  return s >= 5;\n}`;
-  return { code, source: 'local', explanations };
-}
-
-export async function generateStrategyCode(userInput) {
-  const prompt = buildStrategyPrompt(userInput);
-  const result = await callClaude({
-    prompt,
-    systemPrompt: 'Sen BIST strateji kodlayicisin. Sadece JS arrow function dondur.',
-    effort: 'low',
-    maxTokens: 800,
-  });
-  if (result && result.text && !result.error) {
-    const raw = result.text;
-    const m = raw.match(/```(?:javascript|js)?\s*([\s\S]*?)```/);
-    const code = m ? m[1].trim() : raw.replace(/```/g, '').trim();
-    if (code.includes('=>') && code.includes('return')) {
-      try {
-        new Function('return ' + code);
-        return { code, source: 'ai', explanations: ['AI tarafindan olusturulan skorlama bazli strateji.'] };
-      } catch (e) { logError('ai', 'AI strategy code failed syntax check — falling back to local parser', e, { severity: 'warn' }); }
-    }
-  }
-  return localStrategyParser(userInput);
-}
-
-// Generic chat (used by JARVIS)
-export async function chatClaude(userMsg, systemPrompt, opts = {}) {
-  return callClaude({
-    prompt: userMsg,
-    systemPrompt,
-    effort: opts.effort || 'low',
-    maxTokens: opts.maxTokens || 1200,
-    tools: opts.tools || (opts.webSearch ? [webSearchTool(2)] : undefined),
-  });
-}

@@ -21,7 +21,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchBigParaBatchPrices } from '../utils/fetchEngine.js';
-import { isMarketOpen } from './useAIAdvisor.js';
 
 // ── Konfigurasyon (Phase 9'da backtest sonuclari ile auto-tune edilecek) ──
 const STORAGE_KEY     = 'bist_paper_trading_v1';

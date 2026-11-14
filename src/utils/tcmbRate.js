@@ -91,5 +91,3 @@ export async function fetchTcmbPolicyRate() {
   }
 }
 
-/** Test seam. */
-export function _resetTcmbRateCache() { _memory = null; }

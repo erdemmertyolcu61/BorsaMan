@@ -367,7 +367,7 @@ function _initBetterSqlite(dbPath) {
   return _wrapApi(_db);
 }
 
-function _runMigrations(db, from, to) {
+function _runMigrations(db, from) {
   // Incremental ALTER TABLE migrations
   if (from < 2) {
     try { db.exec('ALTER TABLE trade_signals ADD COLUMN technical_state TEXT'); } catch {}

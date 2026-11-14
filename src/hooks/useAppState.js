@@ -1,20 +1,6 @@
 import { useState, useCallback } from 'react';
 
 const PORTFOLIO_KEY = 'bist_portfolio';
-const BROKER_KEY = 'bist_broker_config';
-
-function loadBrokerConfig() {
-  try {
-    const saved = localStorage.getItem(BROKER_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch {}
-  return { type: 'simulated', config: {} };
-}
-
-function saveBrokerConfig(cfg) {
-  try { localStorage.setItem(BROKER_KEY, JSON.stringify(cfg)); } catch {}
-}
-
 function loadPortfolio() {
   const fallback = { positions: [], cash: 10000, history: [] };
   try {
@@ -47,7 +33,6 @@ export function useAppState() {
 
   // Portfolio — persisted to localStorage
   const [portfolio, setPortfolio] = useState(loadPortfolio);
-  const [brokerConfig, setBrokerConfig] = useState(loadBrokerConfig);
 
   const updatePortfolio = useCallback((updater) => {
     setPortfolio(prev => {
@@ -87,6 +72,5 @@ export function useAppState() {
     gData, setGData, gInd, setGInd, gSig, setGSig,
     scanResults, setScanResults,
     portfolio, updatePortfolio, addToPortfolio,
-    brokerConfig, setBrokerConfig: (cfg) => { saveBrokerConfig(cfg); setBrokerConfig(cfg); },
   };
 }

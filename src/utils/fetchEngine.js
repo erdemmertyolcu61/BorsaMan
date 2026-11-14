@@ -227,59 +227,7 @@ export function getSourceHealth() {
   return result;
 }
 
-export function resetSourceHealth(source) {
-  if (source && _sourceHealth[source]) {
-    _sourceHealth[source] = { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'online' };
-  } else if (!source) {
-    // Reset all
-    for (const key of Object.keys(_sourceHealth)) {
-      _sourceHealth[key] = { success: 0, fail: 0, latencySum: 0, lastSuccess: null, status: 'online' };
-    }
-  }
-}
-
-// ═══ DYNAMIC SOURCE PRIORITIZATION ═══
-// Auto-reorder sources by reliability + speed
-export function getSourcePriority() {
-  const sources = Object.entries(_sourceHealth)
-    .filter(([_, data]) => data.status !== 'offline')
-    .map(([source, data]) => {
-      const total = data.success + data.fail;
-      const successRate = total > 0 ? data.success / total : 0.5;
-      const avgLatency = data.success > 0 ? data.latencySum / data.success : 5000;
-      // Priority score: higher is better (70% reliability, 30% speed)
-      const priority = successRate * 70 + Math.max(0, (10000 - avgLatency) / 10000) * 30;
-      return { source, priority, successRate, avgLatency, status: data.status };
-    })
-    .sort((a, b) => b.priority - a.priority);
-  return sources;
-}
-
 // Track which source provided data last (for analytics) — uses original trackSource at line ~219
-
-// ═══ ELECTRON-FIRST UNIVERSAL FETCH HELPER ═══
-// Tek satirlik veri cekme: once Electron IPC, sonra getDataViaProxies fallback.
-// Tum data source fonksiyonlarinin (BigPara/Yahoo/IsYatirim/KAP/News) ortak girisi.
-// Returns text body (string) on success, null on total failure.
-export async function smartFetch(targetUrl, ms = 9000) {
-  // Electron fast path
-  if (typeof window !== 'undefined' && window.electronAPI?.remoteFetch) {
-    try {
-      const ipc = window.electronAPI.remoteFetch(targetUrl, { method: 'GET' });
-      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('ipc-timeout')), ms));
-      const res = await Promise.race([ipc, timeout]);
-      if (res?.success && res?.text && res.text.length >= 20) {
-        const t = res.text;
-        // HTML guard
-        if (!t.startsWith('<') && !t.includes('<!DOCTYPE') && !t.includes('<html')) {
-          return t;
-        }
-      }
-    } catch { /* fall through */ }
-  }
-  // Browser/web fallback: proxy zinciri
-  return await getDataViaProxies(targetUrl, ms);
-}
 
 // ═══ BATCH BIGPARA PRICE FETCH (Scanner Optimization) ═══
 let _batchPriceCache = { ts: 0, data: {} };
@@ -410,7 +358,7 @@ export async function fetchBigParaBatchPrices(maxAgeMs) {
       recordSourceSuccess('bigpara', Date.now() - t0);
     }
     return prices;
-  } catch (e) {
+  } catch {
     recordSourceFailure('bigpara');
     return {};
   }

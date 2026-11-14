@@ -169,12 +169,6 @@ export const KAP_TYPE_LABELS = Object.freeze({
   other: 'Bildirim',
 });
 
-/** Olculecek "olay" tipleri (dataLayerEdge bunlari kovalar). */
-export const KAP_EVENT_TYPES = Object.freeze([
-  'buyback', 'insider_trade', 'new_business', 'tender', 'dividend', 'bonus_issue',
-  'capital_increase', 'earnings', 'rating', 'm_and_a', 'transfer', 'index_change',
-]);
-
 // v31.40: 24 AYLIK OLAY CALISMASI (scripts/kap-event-study.mjs — 2024-09 → 2026-08, likit
 // hisseler, giris = bildirimden SONRAKI ilk seansin AOF'u, maliyet %0,3, kiyas = ayni gun
 // ayni kuralla tum likit hisseler). SKORA GIRMEZ (dataLayerPolicy) — tek istisna pay geri

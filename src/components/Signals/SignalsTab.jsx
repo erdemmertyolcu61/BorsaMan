@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { maxDrawdownPct, consistencyRatio, perfCheckpoint } from '../../utils/signalPerfHistory.js';
+import { perfCheckpoint } from '../../utils/signalPerfHistory.js';
 import { useIsMobile } from '../../hooks/useIsMobile.js';
 import { resetTrackingData } from '../../utils/resetStorage.js';
 
@@ -177,9 +177,6 @@ export default function SignalsTab({ tracker, onAnalyze }) {
   const {
     signals,
     stats,
-    recordSignal,
-    updateSignal,
-    removeSignal,
     clearHistory,
     filterSignals,
     exportCSV,

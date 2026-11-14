@@ -74,7 +74,7 @@ function getCache() {
         return _foreignCache;
       }
     }
-  } catch (e) {}
+  } catch {}
   return null;
 }
 
@@ -82,7 +82,7 @@ function setCache(data) {
   _foreignCache = data;
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
-  } catch (e) {}
+  } catch {}
 }
 
 function parseNum(str) {
@@ -275,7 +275,7 @@ async function fetchBigParaForeignRatios() {
         }
       }
       if (Object.keys(ratios).length >= 10) return ratios;
-    } catch (e) {
+    } catch {
       // try next endpoint
     }
   }

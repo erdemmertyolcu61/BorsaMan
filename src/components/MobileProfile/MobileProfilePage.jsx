@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { buildLabel } from '../../utils/buildInfo.js';
 import ProxySettings from '../Common/ProxySettings.jsx';
-import BrokerSettings from '../Portfolio/BrokerSettings.jsx';
 
 function ChevronRight() {
   return (
@@ -64,7 +63,7 @@ function SectionNotifications({ notifications }) {
   );
 }
 
-export default function MobileProfilePage({ notifications, portfolio, onClose, brokerConfig, setBrokerConfig }) {
+export default function MobileProfilePage({ notifications, portfolio, onClose }) {
   const [activeSection, setActiveSection] = useState(null);
 
   const positions = portfolio?.positions || [];
@@ -122,12 +121,8 @@ export default function MobileProfilePage({ notifications, portfolio, onClose, b
             <div style={{ width: 36 }} />
           </div>
           <div className="mobile-profile-content" style={{ padding: '0 12px' }}>
-            {/* v31.38 (kullanici karari): bu ayarlar mobilde Portfoy sekmesinin
-                altindaydi. BrokerSettings, ProxySettings'i (Claude/Gemini/EVDS
-                anahtarlari, arka plan bildirimi, proxy) de icerir — hepsi tek yerde. */}
-            {setBrokerConfig
-              ? <BrokerSettings brokerConfig={brokerConfig} setBrokerConfig={setBrokerConfig} />
-              : <ProxySettings />}
+            {/* Ayarlar tek yerde: Claude / EVDS anahtarlari, arka plan bildirimi, proxy. */}
+            <ProxySettings />
           </div>
         </div>
       </div>

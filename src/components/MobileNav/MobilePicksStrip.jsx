@@ -8,7 +8,7 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
   const {
     scanning, scanProgress = {}, manualScan,
     topPicks = [], scanResults = [],
-    marketSentiment, lastUpdate,
+    marketSentiment,
   } = advisor;
 
   const buys = marketSentiment?.buys || 0;

@@ -37,7 +37,7 @@ const MOBILE_TABS = ['analyze', 'stock', 'signals', 'paper'];
 export default function App() {
   const state = useAppState();
   const advisor = useAIAdvisor(state.portfolio);
-  const alertLog = useAlertLog(advisor);
+  const alertLog = useAlertLog();
   const signalTracker = useSignalTracker();
   const notifications = useNotifications();
   const paperTrading = usePaperTrading();
@@ -77,17 +77,8 @@ export default function App() {
       return [];
     }
   });
-  const [scanHistory, setScanHistory] = useState([]);
-  const scanningRef = useRef(false);
   const livePrice = useLivePrices(state.portfolio, state.updatePortfolio, watchlist, alertLog);
 
-  // Update drawer results immediately when a scan completes
-  useEffect(() => {
-    if (!advisor.scanning && scanningRef.current && advisor.topPicks?.length > 0) {
-      setScanHistory(advisor.topPicks);
-    }
-    scanningRef.current = advisor.scanning;
-  }, [advisor.scanning, advisor.topPicks]);
 
 
   // Register notification handler globally for signal tracker
@@ -172,7 +163,9 @@ export default function App() {
     if (opts.notify && (pick.score >= 7.5 || pick.confidence >= 75)) {
       notifications.notifyAdvisorPick(pick);
     }
-  }, [signalTracker, notifications]);
+    // v31.55: rejim yedegi bagimliliklarda yoktu — `_regime` tasimayan secim, uygulamanin
+    // ACILISTAKI rejimiyle (cogunlukla bos) kaydediliyordu.
+  }, [signalTracker, notifications, advisor.marketSentiment?.regime]);
 
   // (1) Live scan: bind to the event payload (the non-empty finalPicks list that
   //     fills the panel) rather than advisor.topPicks state, which can be empty.
@@ -343,14 +336,7 @@ export default function App() {
       <PremiumHeader
         badge={state.badge}
         notifications={notifications}
-        alertLog={alertLog}
-        advisor={advisor}
-        livePrice={livePrice}
         portfolio={state.portfolio}
-        scanHistory={scanHistory}
-        onAnalyze={handleAIAnalyze}
-        brokerConfig={state.brokerConfig}
-        setBrokerConfig={state.setBrokerConfig}
       />
 
       <div className="desktop-only-panel">
