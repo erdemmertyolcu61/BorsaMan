@@ -27,6 +27,7 @@ import DayMoversPanel from './components/Signals/DayMoversPanel.jsx';
 import StockDetailTab from './components/StockDetail/StockDetailTab.jsx';
 import { VirtualPositionsPanel } from './components/Portfolio/PortfolioExtras.jsx';
 import UpdateBanner from './components/Common/UpdateBanner.jsx';
+import ConnectionBanner from './components/Common/ConnectionBanner.jsx';
 
 // v31.50 (kullanici karari): Istihbarat, Gercek Portfoy ve Piyasa Nabzi kaldirildi;
 // yerlerine Hisse detayi geldi. Intraday yalniz masaustunde (v31.38): mobilde mount
@@ -415,6 +416,7 @@ export default function App() {
       />
       <MobileNav activeTab={state.activeTab} onTabChange={state.setActiveTab} />
       <UpdateBanner isMobile={isMobile} />
+      <ConnectionBanner isMobile={isMobile} />
     </>
   );
 }

@@ -3,7 +3,10 @@
  * ve service worker'ı olmayan ortamda kapının hiç kapanmaması (test/jsdom, eski tarayıcı).
  */
 import { describe, it, expect, vi } from 'vitest';
-import { isNewerBuild, waitForUpdateCheck, isUpdatePending, setUpdatePending, announceUpdate, UPDATE_EVENT } from '../appUpdate.js';
+import {
+  isNewerBuild, waitForUpdateCheck, isUpdatePending, setUpdatePending, announceUpdate, UPDATE_EVENT,
+  classifyReach, reportServerReach, getServerReach, requestServerRecheck, REACH_EVENT, RECHECK_EVENT,
+} from '../appUpdate.js';
 
 describe('appUpdate', () => {
   it('farklı commit = yeni paket; yerel geliştirme hiç eski sayılmaz', () => {
@@ -36,5 +39,37 @@ describe('appUpdate', () => {
     announceUpdate('stuck', { sha: 'x' });
     window.removeEventListener(UPDATE_EVENT, on);
     expect(seen).toEqual(['scan', 'stuck']);
+  });
+});
+
+describe('sunucuya erisim (v31.55)', () => {
+  it('HTTP yaniti (hata kodu dahil) erisim sayilir; yalniz ag hatasi erisimsizliktir', () => {
+    expect(classifyReach({ networkError: false, online: true })).toBe('ok');
+    expect(classifyReach({ networkError: false, online: false })).toBe('ok');
+    expect(classifyReach({ networkError: true, online: true })).toBe('blocked');
+    expect(classifyReach({ networkError: true, online: undefined })).toBe('blocked');
+    expect(classifyReach({ networkError: true, online: false })).toBe('offline');
+  });
+
+  it('durum yalniz degisince olay yayar', () => {
+    const seen = [];
+    const on = (e) => seen.push(`${e.detail.prev}>${e.detail.state}`);
+    window.addEventListener(REACH_EVENT, on);
+    delete window.__bistServerReach;
+    expect(getServerReach()).toBe('unknown');
+    reportServerReach('blocked');
+    reportServerReach('blocked');
+    reportServerReach('ok');
+    window.removeEventListener(REACH_EVENT, on);
+    expect(seen).toEqual(['unknown>blocked', 'blocked>ok']);
+    expect(getServerReach()).toBe('ok');
+  });
+
+  it('tekrar dene istegi yoklama olayini yayar', () => {
+    const fn = vi.fn();
+    window.addEventListener(RECHECK_EVENT, fn);
+    requestServerRecheck();
+    window.removeEventListener(RECHECK_EVENT, fn);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });

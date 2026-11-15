@@ -1,5 +1,5 @@
 // BIST AI Trading Terminal — Service Worker (PWA)
-import { precacheAndRoute } from 'workbox-precaching';
+import { precacheAndRoute, matchPrecache } from 'workbox-precaching';
 
 // Workbox otomatik olarak tüm build asset'lerini buraya inject eder
 precacheAndRoute(self.__WB_MANIFEST);
@@ -55,7 +55,10 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           return response;
         })
-        .catch(() => caches.match('/index.html'))
+        // v31.55: the precached shell is stored under a revisioned key, so a plain
+        // caches.match('/index.html') never found it and an offline / blocked navigation
+        // to any URL other than '/' (e.g. a notification link) ended on an error page.
+        .catch(() => matchPrecache('/index.html').then((r) => r || caches.match('/index.html', { ignoreSearch: true })))
     );
     return;
   }

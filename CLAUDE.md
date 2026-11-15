@@ -42,7 +42,7 @@ npm run build:engine      # engine-rs → wasm32 → src/engine/bistEngineWasm.j
 npm run parity:engine     # JS motoru vs Rust motoru, .replay-cache'teki tüm seriler (298) × 252 bar pencere, bit düzeyinde
 npm run deploy:proxy      # proxy/ projesini yayınla + canlı doğrula (kökten çalıştır)
 npm run check:proxy       # yayındaki proxy'yi doğrula; argümanla başka origin: -- https://bist-terminal-project.vercel.app
-                          # çıkış 2 = sunucuya hiç ulaşılamadı (ağ, ör. bu makinede *.vercel.app sıfırlanıyor) — eski proxy demek değil
+                          # çıkış 2 = sunucuya hiç ulaşılamadı (ağ: bu evin hattı *.vercel.app'i engelliyor, aşağıda) — eski proxy demek değil
 npm run electron:dev      # Electron + Vite
 pytest tests/             # bist_bridge.py
 
@@ -171,6 +171,15 @@ yerel önizleme). Otomatik taramalar açılıştaki güncelleme kontrolünü bek
 çalışan paketle karşılaştırılır, worker takılırsa şerit önbelleği temizleyip yükler. Telefondaki paket
 Profil'deki "Sürüm 31.x · <commit>" satırından okunur (`buildInfo.js`). Yerel deneme: `.claude/launch.json`
 → `preview-dist` (vite preview :4173), iki build arasında `reg.update()`.
+
+**Evdeki Wi‑Fi `*.vercel.app`'i engelliyor** (ölçüldü 15.11.2026): hat Turkcell Superonline, "Güvenli İnternet"
+**Standart Aile Profili** açık. TLS adından (SNI) kesiyor — DNS doğru, aynı Vercel IP'si başka adla (vercel.com)
+açılıyor, düz HTTP `guvenliinternet.turkcell.com.tr/sol/?…&CAT=GI3`'e yönleniyor. Uygulama, proxy (`/api`), `sw.js`
+ve `/version.json` aynı adda: o ağda **güncelleme inmez, veri gelmez**, ama önbellekteki kabuk açılır. Bu yüzden
+`/version.json` yoklaması erişimi de sınıflar (`appUpdate.classifyReach`: HTTP yanıtı = erişim, ağ hatası + çevrimiçi
+= engel) ve `ConnectionBanner` söyler; ağ değişince / "Tekrar dene"de yoklama yenilenir, yalnız son yoklama yazar.
+Çözüm kullanıcıda: hattın profilini kapatmak ya da mobil veri. Geliştirme makinesi de aynı hatta — canlı site
+buradan açılmaz, bu yayının bozuk olduğu anlamına gelmez (yayın durumu: `gh api repos/<repo>/commits/<sha>/status`).
 
 **Gizlilik.** Gerçek portföy özelliği v31.50'de kaldırıldı; eski veri cihazda (`bist_real_portfolio`,
 gitignore'lu `src/data/realPortfolio.local.json`) kalabilir, uygulama okumaz. Kök `.vercelignore` onu ve

@@ -5,7 +5,7 @@ import './styles/globals.css';
 import { runFreshRegimeResetSync } from './utils/resetStorage.js';
 import { initEngine, engineStats } from './engine/engineCore.js';
 import { BUILD } from './utils/buildInfo.js';
-import { markUpdateCheckDone, setUpdatePending, announceUpdate, isNewerBuild } from './utils/appUpdate.js';
+import { markUpdateCheckDone, setUpdatePending, announceUpdate, isNewerBuild, classifyReach, reportServerReach, RECHECK_EVENT } from './utils/appUpdate.js';
 
 // v31.24: run the tracking reset BEFORE the first render. It used to live in an
 // App effect, which runs AFTER render — so one malformed tracking record crashed
@@ -75,10 +75,25 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   });
 
   let beaconTimer = null;
+  let swReg = null;
+  let probeSeq = 0;
   const checkBeacon = async () => {
     if (!import.meta.env.PROD) return;
+    // Only the latest probe may report: a slow earlier one (queued behind a scan's
+    // requests to the same host) must not overwrite a newer answer.
+    const id = ++probeSeq;
+    // v31.55: the probe also tells whether the app's own server is reachable. A network
+    // error used to be swallowed here, so a network that blocks *.vercel.app (Turkcell
+    // "Güvenli İnternet" family profile) looked like a working app with no data and no update.
+    let r;
     try {
-      const r = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' });
+      r = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' });
+    } catch {
+      if (id === probeSeq) reportServerReach(classifyReach({ networkError: true, online: navigator.onLine }));
+      return;
+    }
+    if (id === probeSeq) reportServerReach('ok');
+    try {
       if (!r.ok) return;
       const remote = await r.json();
       if (!isNewerBuild(remote, BUILD)) return;
@@ -86,11 +101,22 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       // nothing has happened 25 s later, the worker is stuck — offer a hard refresh.
       clearTimeout(beaconTimer);
       beaconTimer = setTimeout(() => { if (!reloadScheduled) announceUpdate('stuck', remote); }, 25000);
-    } catch { /* çevrimdışı */ }
+    } catch { /* bozuk version.json — erişim yine de var */ }
   };
+  // Re-probe at once when the network changes (Wi-Fi → mobile data), when the browser
+  // comes back online, or when the banner's "Tekrar dene" asks; a reachable server
+  // then also gets the pending update in.
+  const recheck = () => {
+    checkBeacon();
+    if (swReg) swReg.update().catch(() => {});
+  };
+  window.addEventListener('online', recheck);
+  window.addEventListener(RECHECK_EVENT, recheck);
+  try { navigator.connection?.addEventListener?.('change', recheck); } catch { /* yok */ }
 
   navigator.serviceWorker.register('/sw.js').then(async (reg) => {
     console.log('SW registered:', reg.scope);
+    swReg = reg;
     // Startup: an explicit fresh check; auto-scans wait for it (max ~10 s).
     try { await reg.update(); } catch { /* çevrimdışı */ }
     reg.addEventListener('updatefound', () => { followNewWorker(reg); });

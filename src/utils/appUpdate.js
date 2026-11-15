@@ -79,3 +79,43 @@ export async function hardRefresh() {
   } catch { /* yok */ }
   window.location.reload();
 }
+
+// ── Sunucuya erişim (v31.55) ──────────────────────────────────────────────
+// Kullanıcı: "PWA güncellenmedi, internet açıkken bile erişim sağlayamıyor — Wi-Fi'deyken".
+// Ölçülen sebep: hattın Turkcell Superonline "Güvenli İnternet" aile profili TÜM *.vercel.app
+// adlarını TLS adından (SNI) kesiyor; düz HTTP guvenliinternet.turkcell.com.tr'ye yönleniyor.
+// Uygulama, proxy (/api) ve sürüm kontrolü aynı adda → güncelleme inmiyor, veri gelmiyor,
+// ama önbellekteki kabuk açıldığı için sebep görünmüyordu (yoklama hatası `catch {}` ile yutuluyordu).
+// Şimdi /version.json yoklamasının sonucu sınıflanır ve şeritle söylenir.
+
+export const REACH_EVENT = 'bist-server-reach';
+export const RECHECK_EVENT = 'bist-server-recheck';
+
+/**
+ * Yoklama sonucu → durum. Sunucudan HERHANGİ bir HTTP yanıtı gelmesi (404/500 dahil) erişim
+ * sayılır; yalnız ağ hatası (fetch reddi) erişimsizliktir.
+ * @returns {'ok'|'offline'|'blocked'} blocked = cihaz çevrimiçi ama sunucuya ulaşılamıyor
+ */
+export function classifyReach({ networkError, online }) {
+  if (!networkError) return 'ok';
+  return online === false ? 'offline' : 'blocked';
+}
+
+export function getServerReach() {
+  return (typeof window !== 'undefined' && window.__bistServerReach) || 'unknown';
+}
+
+/** Durumu kaydet; yalnız değişince olay yayar. */
+export function reportServerReach(state) {
+  if (typeof window === 'undefined') return;
+  const prev = window.__bistServerReach;
+  window.__bistServerReach = state;
+  if (prev === state) return;
+  try { window.dispatchEvent(new CustomEvent(REACH_EVENT, { detail: { state, prev: prev || 'unknown', at: Date.now() } })); } catch { /* yok */ }
+}
+
+/** Şeritteki "Tekrar dene" — main.jsx yoklamayı hemen yeniler. */
+export function requestServerRecheck() {
+  if (typeof window === 'undefined') return;
+  try { window.dispatchEvent(new CustomEvent(RECHECK_EVENT)); } catch { /* yok */ }
+}
