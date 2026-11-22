@@ -614,7 +614,7 @@ Son bar: ${dayTxt}${forming ? ' (seans suruyor)' : ' (kapanis)'}`}>
                   <span className="tr-v">%{Math.round(nsFc.pGreen * 100)} <span style={{ color: 'var(--t3)', fontWeight: 400 }}>(taban %{NEXT_SESSION_EVIDENCE.baseGreenPct})</span></span>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 6, lineHeight: 1.5 }}>
-                  237 bin hisse-günden ölçüldü. Hareket tahmini güçlü, yön tahmini zayıftır: en iyi seçimde bile yeşil kapanış %{NEXT_SESSION_EVIDENCE.bestGreenPct}'yi geçmedi.
+                  525 bin hisse-günden ölçüldü (586 hisse). Hareket tahmini güçlü, yön tahmini zayıftır: en iyi seçimde bile yeşil kapanış %{NEXT_SESSION_EVIDENCE.bestGreenPct}'yi geçmedi.
                   {nsFc.limitUpClose ? ' Son seans tavanda kapandı — açılış tavandan gelirse emir dolmayabilir.' : ''}
                 </div>
               </div>

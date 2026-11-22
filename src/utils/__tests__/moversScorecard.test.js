@@ -85,6 +85,23 @@ describe('settleMovers', () => {
     expect(d[0].settled).toBe(true);                      // vazgecildi: sonsuza dek bar istemez
   });
 
+  it('acilis kar-ali tavanin ustune ittiyse secim atlanir, ozet onu islem saymaz', () => {
+    const d0 = recordMovers([], [mover('AAA', 0.8), mover('BBB', 0.7)]);
+    const bars = {
+      AAA: [bar('2026-11-12', 9.5, 10.2, 9.4, 10), bar('2026-11-13', 10.8, 11, 10.5, 10.6)],   // açılış +%8
+      BBB: [bar('2026-11-12', 20, 20, 19, 20), bar('2026-11-13', 20.2, 21.2, 20, 20.5)],      // açılış +%1, +%4 doldu
+    };
+    const { days } = settleMovers(d0, bars, dayKey, { today: '2026-11-14' });
+    const [a, b] = days[0].picks;
+    expect(a.result.skipped).toBe(true);
+    expect(a.result.gapPct).toBe(8);
+    expect(b.result.hit).toBe(true);
+    const s = summarizeMovers(days);
+    expect(s.top.n).toBe(1);
+    expect(s.top.skipped).toBe(1);
+    expect(s.top.avgNet).toBeCloseTo(3.7, 6);
+  });
+
   it('yerlesmis gune dokunmaz', () => {
     const bars = { AAA: [bar('2026-11-13', 10, 11, 10, 10.5)], BBB: [bar('2026-11-13', 10, 11, 10, 10.5)] };
     const once = settleMovers(days0, bars, dayKey, { today: '2026-11-14' });
@@ -115,6 +132,7 @@ describe('summarizeMovers', () => {
     const days = [day('2026-11-12', [res(0, { locked: true }), res(3.7), null])];
     const s = summarizeMovers(days);
     expect(s.top.n).toBe(1);
+    expect(s.top.locked).toBe(1);
     expect(s.top.winPct).toBe(100);
     expect(summarizeMovers([])).toEqual({ top: null, shown: null });
     expect(summarizeMovers(null)).toEqual({ top: null, shown: null });

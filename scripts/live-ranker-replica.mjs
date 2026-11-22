@@ -23,36 +23,49 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+
+const espree = createRequire(import.meta.url)('espree');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
-const U = (f) => pathToFileURL(path.join(ROOT, 'src', f)).href;
 
 const MIN_DAILY_VOLUME_TL = 2_000_000;
 const MICRO_CAP_MIN_VOLUME_TL = 100_000;
 /** normalizeStopTarget: BULL/RANGE varsayilani (adaptif ±0,2 ve rejim tablosu notr). */
 export const LIVE_STOP_ATR_MULT = 1.8;
 
-function sliceFn(src, name, nextName) {
-  const a = src.indexOf(`function ${name}(`);
-  const b = src.indexOf(`function ${nextName}(`, a + 1);
-  if (a < 0 || b < 0) throw new Error(`useAIAdvisor.js icinde ${name} bulunamadi — kopya guncellenmeli`);
-  return src.slice(a, b);
+/**
+ * useAIAdvisor.js'ten ust duzey bir fonksiyonu ADIYLA al (sozdizim agaci, espree).
+ * v31.57: eskiden "sonraki fonksiyonun adi"na kadar kesiyordu; v31.55'te o komsu
+ * (calcSellPotential) olu kod diye silinince kopya — ve onunla feature-edge-study ile
+ * scan-window-review — sessizce calismaz oldu. Artik komsuya bagli degil.
+ */
+let _ast = null;
+function sliceFn(src, name) {
+  if (!_ast || _ast.src !== src) {
+    _ast = { src, tree: espree.parse(src, { ecmaVersion: 'latest', sourceType: 'module', range: true, ecmaFeatures: { jsx: true } }) };
+  }
+  for (const n of _ast.tree.body) {
+    const d = n.type === 'ExportNamedDeclaration' ? n.declaration : n;
+    if (d && d.type === 'FunctionDeclaration' && d.id?.name === name) return src.slice(d.range[0], d.range[1]);
+  }
+  throw new Error(`useAIAdvisor.js icinde ${name} bulunamadi — kopya guncellenmeli`);
 }
 
 export async function makeLiveReplica() {
-  const { isUnsafeForTomorrow, calcContinuationProbability } = await import(U('utils/pumpGuard.js'));
-  const { netRR, TOTAL_COST_PCT } = await import(U('utils/tradingCosts.js'));
-  const { computeRelativeStrength } = await import(U('utils/relativeStrength.js'));
-  const { computeTopGainerPotential, topGainerConfidenceAdjust } = await import(U('utils/topGainerPotential.js'));
-  const { SECTORS } = await import(U('utils/constants.js'));
-  const { entryQualityOf } = await import(U('utils/candidateRank.js'));
+  const { isUnsafeForTomorrow, calcContinuationProbability } = await import('../src/utils/pumpGuard.js');
+  const { netRR, TOTAL_COST_PCT } = await import('../src/utils/tradingCosts.js');
+  const { computeRelativeStrength } = await import('../src/utils/relativeStrength.js');
+  const { computeTopGainerPotential, topGainerConfidenceAdjust } = await import('../src/utils/topGainerPotential.js');
+  const { SECTORS } = await import('../src/utils/constants.js');
+  const { entryQualityOf } = await import('../src/utils/candidateRank.js');
 
   const src = fs.readFileSync(path.join(ROOT, 'src', 'hooks', 'useAIAdvisor.js'), 'utf8');
   const body = [
-    sliceFn(src, '_deriveHTFContext', '_scoreEntryTiming'),
-    sliceFn(src, '_scoreEntryTiming', 'calcTomorrowPotential'),
-    sliceFn(src, 'calcTomorrowPotential', 'calcSellPotential'),
+    sliceFn(src, '_deriveHTFContext'),
+    sliceFn(src, '_scoreEntryTiming'),
+    sliceFn(src, 'calcTomorrowPotential'),
     'return { _deriveHTFContext, _scoreEntryTiming, calcTomorrowPotential };',
   ].join('\n');
   // eslint-disable-next-line no-new-func

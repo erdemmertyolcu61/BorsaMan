@@ -16,7 +16,8 @@
 //   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT (mailto:...)
 //   PROXY_BASE_URL (opsiyonel — fiyat icin kendi Vercel proxy'n)
 
-import webpush from 'web-push';
+// web-push yalniz yapilandirilmis calismada yuklenir (asagida) — yapilandirma denetimi paketsiz de calissin.
+let webpush = null;
 import { buildTrackingAlerts, formatAlert } from '../src/utils/trackingAlerts.js';
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -95,8 +96,21 @@ const istanbulDay = (d = new Date()) =>
 // ── Ana akis ───────────────────────────────────────────────────────────────
 async function main() {
   const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT } = process.env;
+  // v31.57: depolama hic kurulmadiysa (Upstash / VAPID gizlileri yok) bu bir HATA degil,
+  // "ozellik kapali" demektir. Eskiden exit 1 → 31.08'den beri 170 kirmizi calisma ve her
+  // birinde e-posta; gercek bir arizayi bu gurultunun icinde gormek imkansizdi. Simdi
+  // acikca yazip temiz cikar; yapilandirildiktan sonraki gercek hatalar yine kirmizi olur.
+  const missing = [
+    !REDIS_URL && 'UPSTASH_REDIS_REST_URL', !REDIS_TOKEN && 'UPSTASH_REDIS_REST_TOKEN',
+    !DRY_RUN && !VAPID_PUBLIC_KEY && 'VAPID_PUBLIC_KEY', !DRY_RUN && !VAPID_PRIVATE_KEY && 'VAPID_PRIVATE_KEY',
+  ].filter(Boolean);
+  if (missing.length) {
+    console.log(`::notice title=Arka plan takibi kapali::Yapilandirilmamis (${missing.join(', ')}). Vercel → Storage → Upstash Redis ekleyip ayni degerleri GitHub Secrets'a yazinca calisir.`);
+    log(`yapilandirilmamis, atlandi: ${missing.join(', ')}`);
+    return;
+  }
   if (!DRY_RUN) {
-    if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) throw new Error('VAPID anahtarlari eksik');
+    webpush = (await import('web-push')).default;
     webpush.setVapidDetails(VAPID_SUBJECT || 'mailto:noreply@example.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
   }
 

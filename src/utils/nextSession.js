@@ -211,16 +211,26 @@ export const MODEL_FEATURES = FEATURE_KEYS;
  * dolmazsa kapanista satis. Dar stop (%3–4) sonucu eksiye ceviriyor; genis stop
  * (%5) getiriyi azaltip en kotu islemi sinirliyor.
  */
-export const DAYTRADE_RULE = Object.freeze({
-  topN: 3,            // kuralin olculdugu derinlik (ilk 10'da avantaj yok)
+const RULE_BASE = {
+  topN: 3,            // kuralin olculdugu derinlik
   shownN: 5,          // ekranda gosterilen
   movePct: 3,         // "hareket" = zirve >= acilis + %3
   takeProfitPct: 4,
   wideStopPct: 5,
   fillEpsPct: 0.1,    // limit emrin dolmasi icin zirve seviyeyi bu kadar gecmeli
   costPct: 0.3,
+  limitPct: 10,       // BIST gunluk fiyat marji (taban fiyat = onceki kapanis)
   minTurnoverLog: Math.log10(2e6),
-});
+};
+/**
+ * v31.57: acilis onceki kapanisin bu kadar ustundeyse +%4 kar-al seviyesi tavanin (+%10)
+ * ustunde kalir ve DOLAMAZ — o gun kural "acilista al, kapanista sat"a doner. Sinir
+ * kuraldan turetilir (eşik avi degil): (1 + tavan) / (1 + kar-al + dolum payi) − 1 = %5,67.
+ * Olculdu (586 hisse, gormedigi veri): bu islemler tek basina −%1,66 (t −4,4); atlanmalari
+ * ilk 3'u +0,71'den +0,95'e (t 9,2) cikardi, dort donemin dordunde.
+ */
+export const maxGapPctOf = (rule) => ((1 + rule.limitPct / 100) / (1 + (rule.takeProfitPct + rule.fillEpsPct) / 100) - 1) * 100;
+export const DAYTRADE_RULE = Object.freeze({ ...RULE_BASE, maxGapPct: Math.round(maxGapPctOf(RULE_BASE) * 100) / 100 });
 
 function linear(part, feat) {
   let z = part.intercept;
@@ -305,31 +315,38 @@ export function rankMovers(rows, n = DAYTRADE_RULE.shownN) {
  * @param {{open:number,high:number,low:number,close:number}} bar
  * @returns {{moved:boolean,hit:boolean,grossPct:number,netPct:number,highPct:number,lowPct:number,closePct:number,locked:boolean}|null}
  */
-export function settleDayTrade(bar, rule = DAYTRADE_RULE) {
+export function settleDayTrade(bar, rule = DAYTRADE_RULE, prevClose = null) {
   const o = Number(bar?.open), h = Number(bar?.high), l = Number(bar?.low), c = Number(bar?.close);
   if (!(o > 0 && h > 0 && l > 0 && c > 0)) return null;
   const highPct = (h / o - 1) * 100, closePct = (c / o - 1) * 100;
   const locked = h === l;                              // tek fiyatli seans: alinamaz
-  const hit = !locked && highPct >= rule.takeProfitPct + rule.fillEpsPct;
+  const pc = Number(prevClose);
+  const gapPct = pc > 0 ? (o / pc - 1) * 100 : null;
+  // Acilis kar-ali tavanin ustune itti: kural bu hisseyi ALMAZ (sonuc yazilir ama islem sayilmaz).
+  const skipped = !locked && isNum(gapPct) && isNum(rule.maxGapPct) && gapPct >= rule.maxGapPct;
+  const taken = !locked && !skipped;
+  const hit = taken && highPct >= rule.takeProfitPct + rule.fillEpsPct;
   const grossPct = hit ? rule.takeProfitPct : closePct;
   return {
-    moved: highPct >= rule.movePct, hit, locked,
-    grossPct: r(grossPct, 2), netPct: locked ? 0 : r(grossPct - rule.costPct, 2),
+    moved: highPct >= rule.movePct, hit, locked, skipped, taken,
+    gapPct: r(gapPct, 2),
+    grossPct: r(grossPct, 2), netPct: taken ? r(grossPct - rule.costPct, 2) : 0,
     highPct: r(highPct, 2), lowPct: r((l / o - 1) * 100, 2), closePct: r(closePct, 2),
   };
 }
 
 /**
- * Ekranda alintilanan olcum (tek yerden). Kaynak: scripts/next-session-report.mjs, 14.11.2026:
- * 257 hisse, ileri-yuruyus (model A kumesinin gecmisiyle egitilir, B kumesinin sonraki yilinda sinanir).
- * Rakamlari degistirmeden once raporu yeniden kos.
+ * Ekranda alintilanan olcum (tek yerden). Kaynak: scripts/next-session-report.mjs, 22.11.2026:
+ * 586 hisse (taramanin evreni), ileri-yuruyus (model A kumesinin gecmisiyle egitilir, B kumesinin
+ * sonraki yilinda sinanir). Rakamlari degistirmeden once raporu yeniden kos.
  */
 export const NEXT_SESSION_EVIDENCE = Object.freeze({
   period: '2024–2026',
-  baseMovePct: 27,          // likit evrende zirve >= acilis + %3 olan hisse-gun orani
+  baseMovePct: 28,          // likit evrende zirve >= acilis + %3 olan hisse-gun orani
   baseGreenPct: 47,         // likit evrende yesil kapatan hisse-gun orani
-  top5MovedPct: [62, 68],   // hareket listesi ilk 5: gercekten hareket eden oran (yil yil)
-  bestGreenPct: 52,         // yesil modeli ilk 5: ulasilan en iyi yesil orani
-  daily: { avgNet: 0.44, t: 4.3, openToClose: -0.09 },                     // ilk 3, gunluk bar, 715 gun
-  hourly: { avgNet: 0.62, t: 5.5, winPct: 64, posDayPct: 61, halves: 6, halvesPositive: 6, p5: -7.8, worstDay: -12.1, withWideStop: 0.41, tightStop: -0.19 },
+  top5MovedPct: [66, 76],   // hareket listesi ilk 5: gercekten hareket eden oran (yil yil)
+  bestGreenPct: 55,         // yesil modeli ilk 5: ulasilan en iyi yesil orani
+  // ilk 3, gunluk bar, acilis sinirli kural; openToClose = kar-al olmadan (acilista al, kapanista sat)
+  daily: { avgNet: 0.95, t: 9.2, winPct: 70, p5: -8.3, withoutGapRule: 0.71, skippedAvg: -1.66, openToClose: 0.24 },
+  hourly: { avgNet: 1.35, t: 6.6, winPct: 72, posDayPct: 72, halves: 6, halvesPositive: 6, p5: -7.9, worstDay: -12.1, withWideStop: 0.79, tightStop: 0.12 },
 });

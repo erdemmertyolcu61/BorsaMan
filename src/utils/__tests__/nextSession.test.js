@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   nextSessionFeatures, indexFeatures, scoreNextSession, forecastNextSession, forecastFromScanBars,
-  rankMovers, settleDayTrade, FEATURE_KEYS, MODEL_FEATURES, DAYTRADE_RULE, MIN_BARS, NEXT_SESSION_EVIDENCE,
+  rankMovers, settleDayTrade, FEATURE_KEYS, MODEL_FEATURES, DAYTRADE_RULE, MIN_BARS, NEXT_SESSION_EVIDENCE, maxGapPctOf,
 } from '../nextSession.js';
 import { NEXT_SESSION_MODEL } from '../nextSessionModel.js';
 
@@ -168,9 +168,12 @@ describe('uretilmis model', () => {
   });
 
   it('alintilanan olcum kuralin sabitleriyle tutarli', () => {
-    expect(NEXT_SESSION_EVIDENCE.hourly.halvesPositive).toBeLessThanOrEqual(NEXT_SESSION_EVIDENCE.hourly.halves);
-    expect(NEXT_SESSION_EVIDENCE.hourly.tightStop).toBeLessThan(0);
-    expect(NEXT_SESSION_EVIDENCE.daily.openToClose).toBeLessThan(0);
+    const E = NEXT_SESSION_EVIDENCE;
+    expect(E.hourly.halvesPositive).toBeLessThanOrEqual(E.hourly.halves);
+    expect(E.hourly.tightStop).toBeLessThan(E.hourly.withWideStop);   // dar stop getiriyi götürür
+    expect(E.daily.skippedAvg).toBeLessThan(0);                          // atlanan işlemler zararlı
+    expect(E.daily.withoutGapRule).toBeLessThan(E.daily.avgNet);         // sınır kuralı iyileştirir
+    expect(E.daily.openToClose).toBeLessThan(E.daily.avgNet);            // kâr-al olmadan daha kötü
   });
 });
 
@@ -231,6 +234,34 @@ describe('rankMovers', () => {
   it('bos ya da gecersiz girdide bos liste', () => {
     expect(rankMovers(null)).toEqual([]);
     expect(rankMovers([null, {}])).toEqual([]);
+  });
+});
+
+describe('acilis siniri (kar-al tavanin ustunde)', () => {
+  it('sinir kuraldan turetilir: tavan %10, kar-al %4 + %0,1 → %5,67', () => {
+    expect(DAYTRADE_RULE.maxGapPct).toBeCloseTo(5.67, 2);
+    expect(maxGapPctOf({ limitPct: 10, takeProfitPct: 4, fillEpsPct: 0.1 })).toBeCloseTo((1.10 / 1.041 - 1) * 100, 6);
+    // sınırdaki açılışın +%4,1'i tam tavana denk gelir
+    expect(100 * (1 + DAYTRADE_RULE.maxGapPct / 100) * 1.041).toBeCloseTo(110, 1);
+  });
+
+  it('acilis sinirin ustundeyse islem alinmaz; altindaysa normal', () => {
+    const over = settleDayTrade({ open: 106, high: 110, low: 103, close: 104 }, DAYTRADE_RULE, 100);
+    expect(over.skipped).toBe(true);
+    expect(over.taken).toBe(false);
+    expect(over.netPct).toBe(0);
+    expect(over.gapPct).toBe(6);
+    const under = settleDayTrade({ open: 105, high: 109.4, low: 103, close: 104 }, DAYTRADE_RULE, 100);
+    expect(under.skipped).toBe(false);
+    expect(under.hit).toBe(true);
+    expect(under.netPct).toBeCloseTo(3.7, 6);
+  });
+
+  it('onceki kapanis bilinmiyorsa sinir uygulanmaz (eski davranis)', () => {
+    const r = settleDayTrade({ open: 106, high: 110.5, low: 103, close: 104 });
+    expect(r.skipped).toBe(false);
+    expect(r.taken).toBe(true);
+    expect(r.gapPct).toBeNull();
   });
 });
 

@@ -89,10 +89,11 @@ export function settleMovers(days, barsBySymbol, dayKeyFn, { today = '', session
         return !today || k < today || (k === today && sessionOver);
       });
       if (!bar) return p;
-      const res = settleDayTrade(bar);
+      const prevClose = Number(prev?.close);
+      // v31.57: önceki kapanış kurala girer — açılış kâr-alı tavanın üstüne ittiyse işlem alınmaz.
+      const res = settleDayTrade(bar, DAYTRADE_RULE, prevClose > 0 ? prevClose : null);
       if (!res) return p;
       touched = true;
-      const prevClose = Number(prev?.close);
       return { ...p, result: { ...res, day: dayKeyFn(bar.date), green: prevClose > 0 ? Number(bar.close) > prevClose : null } };
     });
     // Deneme yalniz bar GELDIGI halde yargilayan seans bulunamadiysa sayilir (ag hatasi sayilmaz).
@@ -109,11 +110,18 @@ export function settleMovers(days, barsBySymbol, dayKeyFn, { today = '', session
  * Ozet: kuralin olculdugu derinlik (ilk `topN`) ve gosterilen liste ayri.
  * Kilitli (tek fiyatli) seanslar alinamaz sayilir, ozete girmez.
  */
+/** Kural bu seçimi gerçekten aldı mı? (Eski kayıtlarda `taken` yok: kilitli değilse alınmış sayılır.) */
+export const wasTaken = (res) => !!res && !res.locked && !res.skipped && res.taken !== false;
+
 export function summarizeMovers(days, rule = DAYTRADE_RULE) {
-  const bucket = () => ({ n: 0, moved: 0, hit: 0, win: 0, green: 0, greenN: 0, net: 0, expMoved: 0, dayNets: [] });
+  const bucket = () => ({ n: 0, moved: 0, hit: 0, win: 0, green: 0, greenN: 0, net: 0, expMoved: 0, dayNets: [], locked: 0, skipped: 0 });
   const top = bucket(), shown = bucket();
   for (const d of Array.isArray(days) ? days : []) {
-    const done = (d.picks || []).filter((p) => p.result && !p.result.locked);
+    const settled = (d.picks || []).filter((p) => p.result);
+    for (const [b, set] of [[top, settled.filter((p) => p.rank <= rule.topN)], [shown, settled]]) {
+      for (const p of set) { if (p.result.locked) b.locked++; else if (p.result.skipped) b.skipped++; }
+    }
+    const done = settled.filter((p) => wasTaken(p.result));
     for (const [b, set] of [[top, done.filter((p) => p.rank <= rule.topN)], [shown, done]]) {
       if (!set.length) continue;
       let s = 0;
@@ -128,13 +136,14 @@ export function summarizeMovers(days, rule = DAYTRADE_RULE) {
       b.dayNets.push(s / set.length);
     }
   }
-  const fin = (b) => (b.n ? {
-    n: b.n, days: b.dayNets.length,
-    movedPct: (b.moved / b.n) * 100, expMovedPct: (b.expMoved / b.n) * 100,
-    hitPct: (b.hit / b.n) * 100, winPct: (b.win / b.n) * 100,
+  const fin = (b) => (b.n || b.locked || b.skipped ? {
+    n: b.n, days: b.dayNets.length, locked: b.locked, skipped: b.skipped,
+    movedPct: b.n ? (b.moved / b.n) * 100 : null, expMovedPct: b.n ? (b.expMoved / b.n) * 100 : null,
+    hitPct: b.n ? (b.hit / b.n) * 100 : null, winPct: b.n ? (b.win / b.n) * 100 : null,
+    wins: b.win,
     greenPct: b.greenN ? (b.green / b.greenN) * 100 : null,
-    avgNet: b.net / b.n,
-    posDayPct: (b.dayNets.filter((x) => x > 0).length / b.dayNets.length) * 100,
+    avgNet: b.n ? b.net / b.n : null,
+    posDayPct: b.dayNets.length ? (b.dayNets.filter((x) => x > 0).length / b.dayNets.length) * 100 : null,
   } : null);
   return { top: fin(top), shown: fin(shown) };
 }

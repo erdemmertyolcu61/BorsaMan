@@ -196,16 +196,22 @@ function report(label, series, extra = '') {
   console.log(`${label.padEnd(30)} net ${f2(mean(eq)).padStart(6)} (t ${f2(tstat(eq), 1).padStart(5)})  kazanan %${f2(mean(tr.map((x) => (x > 0 ? 100 : 0))), 0)}  arti-gun %${f2(mean(eq.map((x) => (x > 0 ? 100 : 0))), 0)}  en kotu gun ${f2(Math.min(...eq), 1)}  p5 islem ${f2(tr[Math.floor(tr.length * 0.05)], 1)}  maxDD ${f2(dd, 0)} | ${series.map((s) => `${s.key} ${f2(mean(s.day))}`).join('  ')}${extra}`);
 }
 function collect(sel, rule, keyOf, from = '') {
-  const g = new Map(); let miss = 0;
+  const g = new Map(); let miss = 0, skipped = 0;
   for (const [, ix] of days) {
     if (D.nd[ix[0]] < from) continue;
     const v = [];
-    for (const i of sel(ix)) { if (D.lock1[i]) continue; const r = rule(i); if (r == null) { miss++; continue; } v.push(r - COST); }
+    for (const i of sel(ix)) {
+      if (D.lock1[i]) continue;
+      const r = rule(i);
+      if (r === undefined) { skipped++; continue; }          // kural "alma" dedi (ör. açılış tavana yakın)
+      if (r == null) { miss++; continue; }
+      v.push(r - COST);
+    }
     if (!v.length) continue;
     const k = keyOf(ix[0]); if (!g.has(k)) g.set(k, { key: k, day: [], tr: [] });
     g.get(k).day.push(mean(v)); g.get(k).tr.push(...v);
   }
-  return { series: [...g.values()], miss };
+  return { series: [...g.values()], miss, skipped };
 }
 
 if (ONLY.includes('kural')) {
@@ -214,6 +220,17 @@ if (ONLY.includes('kural')) {
   for (const k of [3, 5, 10]) {
     report(`hareket ilk${k}  ac-kapa`, collect(pickBy.hareket(k), (i) => D.oc1[i], (i) => foldOf[i]).series);
     for (const T of [3, 4, 5]) report(`hareket ilk${k}  kar-al +%${T}`, collect(pickBy.hareket(k), tp(T), (i) => foldOf[i]).series);
+  }
+  // v31.57: açılış önceki kapanışın +%GAP_CAP üstündeyse +%T kâr-al tavanın (+%10) üstünde kalır → dolamaz.
+  // O gün kural "açılışta al, kapanışta sat"a döner (beklentisi eksi). Sınır kuraldan türetilir.
+  const capOf = (T) => ((1 + 10 / 100) / (1 + (T + FILL_EPS) / 100) - 1) * 100;
+  for (const k of [3, 5]) {
+    for (const [lab, cap] of [['tavan (+%9,5)', 9.5], [`kar-al tavanin ustu (+%${capOf(4).toFixed(2)})`, capOf(4)], ['+%4', 4], ['+%3', 3]]) {
+      const c = collect(pickBy.hareket(k), (i) => (D.gap1[i] >= cap ? undefined : tp(4)(i)), (i) => foldOf[i]);
+      report(`hareket ilk${k}  +%4, bosluk>=${lab} alma`, c.series, `  (atlanan ${c.skipped})`);
+    }
+    const only = collect(pickBy.hareket(k), (i) => (D.gap1[i] >= capOf(4) ? tp(4)(i) : undefined), (i) => foldOf[i]);
+    report(`hareket ilk${k}  YALNIZ bosluk>=${capOf(4).toFixed(2)}`, only.series, `  (n ${only.series.reduce((a, x) => a + x.tr.length, 0)})`);
   }
   report('yesil ilk5    ac-kapa', collect(pickBy.yesil(5), (i) => D.oc1[i], (i) => foldOf[i]).series);
   report('yesil ilk5    kar-al +%4', collect(pickBy.yesil(5), tp(4), (i) => foldOf[i]).series);
@@ -245,6 +262,12 @@ if (ONLY.includes('saatlik')) {
       run('kar-al +%3', { tp: 3 }); run('kar-al +%4', { tp: 4 }); run('kar-al +%5', { tp: 5 });
       run('kar-al +%4, stop -%3', { tp: 4, sl: 3 }); run('kar-al +%4, stop -%5', { tp: 4, sl: 5 }); run('kar-al +%4, stop -%7', { tp: 4, sl: 7 });
       run('kar-al +%4, 3. saatte cik', { tp: 4, exitBar: 2 });
+      {
+        const cap = ((1.10) / (1 + (4 + FILL_EPS) / 100) - 1) * 100;
+        const w = walk({ tp: 4 });
+        const c = collect(pickBy.hareket(k), (i) => (D.gap1[i] >= cap ? undefined : w(i)), half, first);
+        report(`ilk${k}  kar-al +%4, bosluk>=${cap.toFixed(2)} alma`, c.series, `  (atlanan ${c.skipped})`);
+      }
       run('yalniz stop -%4 (hedefsiz)', { sl: 4 });
     }
   }
