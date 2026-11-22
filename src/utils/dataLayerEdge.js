@@ -26,6 +26,16 @@ export const KAP_TRACKED_EVENTS = Object.freeze(['buyback', 'new_business']);
 const FOREIGN_BUCKETS = ['inflow', 'flat', 'outflow'];
 const KAP_BUCKETS = ['event', 'other', 'none', 'risk'];
 const CALM_BUCKETS = ['top', 'mid', 'bottom'];
+const FUND_BUCKETS = ['red', 'ceza', 'temiz'];
+
+/**
+ * Bilanço kapısının sinyal anındaki kararı (v31.58: kapı elemiyor, ölçülüyor).
+ * Kapı yalnız en iyi ~18 adaya bakar; bakılmamış ya da eski sinyal → 'unknown'.
+ */
+export function fundBucket(signal) {
+  const v = signal?.fundGate;
+  return FUND_BUCKETS.includes(v) ? v : 'unknown';
+}
 
 /** Sakinlik sirasi (0-100) kova sinirlari: ust / alt ucte bir (v31.53). */
 export const CALM_TOP_MIN = 67;
@@ -97,11 +107,13 @@ export function computeDataLayerEdge(signals, { minSample = MIN_SAMPLE } = {}) {
   const kap = Object.fromEntries(KAP_BUCKETS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
   const kapEvents = Object.fromEntries(KAP_TRACKED_EVENTS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
   const calm = Object.fromEntries(CALM_BUCKETS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
+  const fund = Object.fromEntries(FUND_BUCKETS.map((k) => [k, { n: 0, wins: 0, sum: 0 }]));
   const add = (cell, ret) => { cell.n++; cell.sum += ret; if (ret > 0) cell.wins++; };
   let settled = 0;
   let withForeign = 0;
   let withKap = 0;
   let withCalm = 0;
+  let withFund = 0;
 
   for (const s of Array.isArray(signals) ? signals : []) {
     if (!s || s.cls !== 'buy') continue;
@@ -121,11 +133,14 @@ export function computeDataLayerEdge(signals, { minSample = MIN_SAMPLE } = {}) {
     }
     const cb = calmBucket(s);
     if (cb !== 'unknown') { withCalm++; add(calm[cb], ret); }
+    const ub = fundBucket(s);
+    if (ub !== 'unknown') { withFund++; add(fund[ub], ret); }
   }
 
   return {
-    settled, withForeign, withKap, withCalm, minSample,
+    settled, withForeign, withKap, withCalm, withFund, minSample,
     calm: Object.fromEntries(CALM_BUCKETS.map((k) => [k, finalize(calm[k], minSample)])),
+    fund: Object.fromEntries(FUND_BUCKETS.map((k) => [k, finalize(fund[k], minSample)])),
     foreign: Object.fromEntries(FOREIGN_BUCKETS.map((k) => [k, finalize(foreign[k], minSample)])),
     kap: Object.fromEntries(KAP_BUCKETS.map((k) => [k, finalize(kap[k], minSample)])),
     kapEvents: Object.fromEntries(KAP_TRACKED_EVENTS.map((k) => [k, finalize(kapEvents[k], minSample)])),

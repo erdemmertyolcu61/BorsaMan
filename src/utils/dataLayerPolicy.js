@@ -28,6 +28,15 @@
 // planla degil. Yani "calisiyor" demek icin ileri veri gerekiyor: sinyale `calmRank`
 // yazilir, Sinyal sekmesinde ucte birlik kovalarla olculur, bayrak o tabloya bakilarak acilir.
 //
+// BILANCO KAPISI (KULLANICI KARARI 2026-11-22, v31.58) — ayni politika: goster + olc.
+// fundamentalQualityGate en iyi ~18 AL adayini Yahoo bilancosuyla eliyor (D/O>5, cari<0,4,
+// net marj<-%25) ya da guvenini dusuruyordu (D/O>2, cari<0,8, zarar, dusen kar). Olculdu
+// (scripts/fundamentals-study.mjs, 586 hisse, Is Yatirim tablolari noktasal): elenenler
+// temizlerden KOTU DEGIL (kesif +1,49 / +0,81, dogrulama +0,97 / +1,02, 2022-2026 her yil
+// elenenler onde), kotu uc ayni (p1 -9,5, p5 -7,2 / -7,3). Kullanici "cevir" dedi: veri yine
+// cekilir ve kartta gorunur, karar (`_fundGate`) sinyale yazilip Sinyal sekmesinde olculur,
+// ama eleme ve guven cezasi KAPALI.
+//
 // NEDEN BAYRAK: kodda yabanci akis icin HIC OLCULMEMIS kurallar hazir
 // bekliyordu (confidence ±8, tomorrowPotential ±18, iki sert eleme). Kaynak
 // olu oldugu icin uyuyorlardi; veri geri gelince SESSIZCE devreye girerlerdi.
@@ -39,9 +48,11 @@ export const DATA_LAYER_POLICY = Object.freeze({
   kapRiskGuard: true,
   kapBuybackBoost: true,
   calmRankSelection: false,
+  fundamentalGate: false,
   decidedAt: '2026-09-12',
   buybackBoostDecidedAt: '2026-09-13',
   calmRankDecidedAt: '2026-11-11',
+  fundamentalGateDecidedAt: '2026-11-22',
 });
 
 /** Yabanci akis skoru confidence / potansiyel / elemeye girsin mi? */
@@ -62,6 +73,11 @@ export function isKapRiskGuardEnabled() {
 /** Sakinlik sirasi adaylarin SIRASINI / secimini belirlesin mi? (v31.53: hayir — olculuyor) */
 export function isCalmRankSelectionEnabled() {
   return DATA_LAYER_POLICY.calmRankSelection === true;
+}
+
+/** Bilanco kapisi adayi elesin / guvenini dusursun mu? (v31.58: hayir — gosterilir ve olculur) */
+export function isFundamentalGateEnabled() {
+  return DATA_LAYER_POLICY.fundamentalGate === true;
 }
 
 /** Olculmus pay geri alimi bildirimi AL adayina sinirli guven artisi versin mi? (v31.41) */

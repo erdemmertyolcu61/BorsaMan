@@ -219,6 +219,13 @@ const FUND_GATE = {
  * @returns {{ reject: boolean, penalty: number, reasons: string[], reason: string|null }}
  *   reject → drop from buy candidates; penalty → confidence points to subtract (0..15).
  */
+/** Kapının kararı tek kelimeyle — sinyal kaydı ve ölçüm kovası için (v31.58). */
+export function fundGateVerdict(gate) {
+  if (!gate || typeof gate !== 'object') return null;
+  if (gate.reject) return 'red';
+  return gate.penalty > 0 ? 'ceza' : 'temiz';
+}
+
 export function fundamentalQualityGate(fund) {
   if (!fund || typeof fund !== 'object') {
     return { reject: false, penalty: 0, reasons: [], reason: null };

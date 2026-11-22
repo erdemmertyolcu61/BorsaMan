@@ -70,3 +70,22 @@ describe('buildPickChips', () => {
     expect(visible.length + hidden.length).toBe(chips.length);
   });
 });
+
+describe('bilanco rozeti (v31.58)', () => {
+  it('kapinin karari bilgi olarak gorunur, uyari tonu yok', () => {
+    const red = buildPickChips({ cls: 'buy', score: 60, _fundGate: 'red', _fundReasons: ['Asiri borc (D/O 7.0)'] }).find((c) => c.key === 'fund');
+    expect(red.label).toBe('Bilanço zayıf');
+    expect(red.tone).toBe('neutral');
+    expect(red.title).toContain('Asiri borc');
+    expect(red.title).toContain('Seçimi ve lot önerisini etkilemez');
+    const ceza = buildPickChips({ cls: 'buy', score: 60, _fundGate: 'ceza' }).find((c) => c.key === 'fund');
+    expect(ceza.label).toBe('Bilanço: dikkat');
+    expect(buildPickChips({ cls: 'buy', score: 60, _fundGate: 'temiz' }).find((c) => c.key === 'fund')).toBeUndefined();
+  });
+
+  it('v31.58 oncesi kayitli kart (ceza gercekten uygulanmis) eski rozetiyle kalir', () => {
+    const old = buildPickChips({ cls: 'buy', score: 60, _fundPenalty: 4 }).find((c) => c.key === 'fund');
+    expect(old.label).toBe('Temel zayıf');
+    expect(old.tone).toBe('warn');
+  });
+});

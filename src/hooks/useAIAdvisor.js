@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchSingle, fetchBigParaBatchPrices, fetchBigParaQuote, fetchFundamentals, clearCache as clearFetchCache } from '../utils/fetchEngine.js';
-import { analyzeComprehensiveFinancials, fundamentalQualityGate } from '../utils/fundamentalEngine.js';
+import { analyzeComprehensiveFinancials, fundamentalQualityGate, fundGateVerdict } from '../utils/fundamentalEngine.js';
 import { genSignal, extractFiredSignals } from '../utils/signals.js';
 import { calcAll } from '../utils/indicators.js';
 import { getStockList, SECTORS } from '../utils/constants.js';
@@ -14,7 +14,7 @@ import {
   fetchKapFeed, buildKapIndex, attachKapFields, isKapBuyBlocked, KAP_SCAN_DAYS,
   kapBuybackBoost, KAP_BUYBACK_CONFIDENCE_BOOST,
 } from '../utils/kapFeed.js';
-import { isForeignFlowScoringEnabled } from '../utils/dataLayerPolicy.js';
+import { isForeignFlowScoringEnabled, isFundamentalGateEnabled } from '../utils/dataLayerPolicy.js';
 import { createSourceHealth, formatSilentWarning } from '../utils/sourceHealth.js';
 import { isUnsafeForTomorrow, calcContinuationProbability } from '../utils/pumpGuard.js';
 import { mergeLiveQuote } from '../utils/liveSession.js';
@@ -2734,6 +2734,10 @@ export function useAIAdvisor(portfolio) {
               p.fundProfitTrend = comp.profitTrend;
               const gate = fundamentalQualityGate(comp);
               p._fundReasons = gate.reasons;
+              // v31.58 (kullanici karari): kapinin karari kayda yazilir ve olculur; eleme ve
+              // guven cezasi yalniz politika acarsa (olculdu: elenenler kalanlardan kotu degildi).
+              p._fundGate = fundGateVerdict(gate);
+              if (!isFundamentalGateEnabled()) return;
               if (gate.reject) {
                 p._fundReject = true;
                 p._fundReason = gate.reason;
@@ -2750,6 +2754,10 @@ export function useAIAdvisor(portfolio) {
           if (rejectSet.size) {
             picks = picks.filter(p => !rejectSet.has(p.symbol));
             pushLog({ type: 'warn', msg: `Temel kalite kapisi: ${rejectSet.size} cop bilanco elendi (${[...rejectSet].join(', ')})` });
+          }
+          if (!isFundamentalGateEnabled()) {
+            const wouldReject = fundCandidates.filter(p => p._fundGate === 'red').map(p => p.symbol);
+            if (wouldReject.length) pushLog({ type: 'info', msg: `Bilanco kapisi (olculuyor, elemiyor): ${wouldReject.length} aday eski kurala gore elenirdi (${wouldReject.join(', ')})` });
           }
           const _fh = _sourceHealth.record('temel-analiz', _fundOk);
           if (_fh.shouldWarn) pushLog({ type: 'warn', msg: formatSilentWarning('temel-analiz', _fh.streak) });
@@ -3106,6 +3114,7 @@ export function useAIAdvisor(portfolio) {
               fundGrade: p.fundGrade, fundDebtToEquity: p.fundDebtToEquity, fundCurrentRatio: p.fundCurrentRatio,
               fundNetMargin: p.fundNetMargin, fundProfitTrend: p.fundProfitTrend,
               _fundPenalty: p._fundPenalty, _fundReasons: p._fundReasons, // v31.10 temel kalite kapisi
+              _fundGate: p._fundGate, // v31.58: kapinin karari (olculur, elemez)
               recentPump: p.recentPump, cumulativePump: p.cumulativePump,
               prevDayChange: p.prevDayChange, // v26 FIX 3: 2-day exhaustion icin
               todayPumpReal: p.todayPumpReal,

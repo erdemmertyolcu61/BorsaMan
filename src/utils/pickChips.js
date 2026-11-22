@@ -88,7 +88,16 @@ export function buildPickChips(p = {}) {
   } else if (pump >= 7 && cp != null) {
     add('pump', `%${cp} devam`, 'warn', 6, `Yüksek hareket +%${fx(p.recentPump, 1)} — devam tahmini %${cp}.`);
   }
-  if (isBuy && (p._fundPenalty || 0) > 0) {
+  if (isBuy && (p._fundGate === 'red' || p._fundGate === 'ceza')) {
+    // v31.58: kapı elemiyor ve güveni düşürmüyor (ölçüldü: elenenler kalanlardan kötü değildi).
+    // Rozet bilgi verir; uyarı tonu yok, öncelik düşük.
+    add('fund', p._fundGate === 'red' ? 'Bilanço zayıf' : 'Bilanço: dikkat', 'neutral', 10,
+      [p._fundGate === 'red' ? 'Eski kapı bu hisseyi elerdi' : 'Eski kapı güveni düşürürdü',
+        ...(p._fundReasons || []), p.fundGrade ? `Temel not: ${p.fundGrade}` : '',
+        'Ölçüldü (586 hisse, 2022–2026): bu hisseler kalanlardan kötü sonuç vermedi; büyük kayıp oranı aynı.',
+        'Seçimi ve lot önerisini etkilemez; sonucu Sinyal sekmesinde ölçülür.'].filter(Boolean).join('\n'));
+  } else if (isBuy && (p._fundPenalty || 0) > 0) {
+    // v31.58 öncesi kayıtlı kart: o tarama cezayı gerçekten uygulamıştı.
     add('fund', 'Temel zayıf', 'warn', 5,
       ['Bilanço kalitesi düşük', ...(p._fundReasons || []), p.fundGrade ? `Temel not: ${p.fundGrade}` : '',
         `Güven −${p._fundPenalty}`].filter(Boolean).join('\n'));

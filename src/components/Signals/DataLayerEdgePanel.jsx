@@ -49,7 +49,7 @@ export default function DataLayerEdgePanel({ signals = [] }) {
       <div role="button" tabIndex={0} onClick={() => setOpen(o => !o)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); } }}
         style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-        <span className="trade-title" style={{ margin: 0 }}>Veri katmanı ölçümü — yabancı akış, KAP, sakinlik</span>
+        <span className="trade-title" style={{ margin: 0 }}>Veri katmanı ölçümü — yabancı akış, KAP, sakinlik, bilanço</span>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: 'var(--t3)' }}>{edge.settled} sonuçlanan AL · {open ? 'gizle' : 'göster'}</span>
       </div>
@@ -78,6 +78,15 @@ export default function DataLayerEdgePanel({ signals = [] }) {
           <div style={{ fontSize: 11, color: 'var(--t3)', lineHeight: 1.5, marginTop: 6 }}>
             Sakinlik sırası: düşük oynaklık, düşük ADX, MA50'ye yakınlık ve giriş kalitesi. Geçmiş veride adayları ayırıyor,
             ama son dönemde trailing çıkışla avantajı kayboldu; bu yüzden sıralamayı etkilemiyor, {edge.withCalm} kayıtla ölçülüyor.
+          </div>
+          <EdgeTable
+            title="Bilanço kapısı (eleme kapalı, ölçülüyor)"
+            rows={[['Elenecekti', edge.fund.red], ['Güven cezası alacaktı', edge.fund.ceza], ['Temiz', edge.fund.temiz]]}
+          />
+          <div style={{ fontSize: 11, color: 'var(--t3)', lineHeight: 1.5, marginTop: 6 }}>
+            Kapı aşırı borçlu, likiditesi zayıf ya da ağır zararda olan adayı eliyordu. 586 hissede geçmiş ölçüm: elediği hisseler
+            kalanlardan kötü değildi, büyük kayıp oranı da aynıydı. Kararınızla (22.11) artık elemiyor; karar her sinyale yazılıyor,
+            {' '}{edge.withFund} kayıtla burada ölçülüyor.
           </div>
         </>
       )}

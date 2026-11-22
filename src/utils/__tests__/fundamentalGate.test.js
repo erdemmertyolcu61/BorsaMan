@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fundamentalQualityGate } from '../fundamentalEngine.js';
+import { fundamentalQualityGate, fundGateVerdict } from '../fundamentalEngine.js';
 
 describe('fundamentalQualityGate', () => {
   it('passes cleanly when fundamentals are missing (data gap is not punished)', () => {
@@ -52,5 +52,17 @@ describe('fundamentalQualityGate', () => {
   it('a boundary-healthy stock passes with zero penalty', () => {
     const r = fundamentalQualityGate({ debtToEquity: 1.0, currentRatio: 1.5, netMargin: 12, profitTrend: 'IMPROVING' });
     expect(r).toEqual({ reject: false, penalty: 0, reasons: [], reason: null });
+  });
+});
+
+describe('fundGateVerdict (v31.58)', () => {
+  it('kapinin kararini tek kelimeye indirir', () => {
+    expect(fundGateVerdict({ reject: true, penalty: 0 })).toBe('red');
+    expect(fundGateVerdict({ reject: false, penalty: 6 })).toBe('ceza');
+    expect(fundGateVerdict({ reject: false, penalty: 0 })).toBe('temiz');
+    expect(fundGateVerdict(null)).toBeNull();
+    expect(fundGateVerdict(fundamentalQualityGate({ debtToEquity: 7 }))).toBe('red');
+    expect(fundGateVerdict(fundamentalQualityGate({ debtToEquity: 3 }))).toBe('ceza');
+    expect(fundGateVerdict(fundamentalQualityGate({ debtToEquity: 0.5, currentRatio: 2, netMargin: 10 }))).toBe('temiz');
   });
 });

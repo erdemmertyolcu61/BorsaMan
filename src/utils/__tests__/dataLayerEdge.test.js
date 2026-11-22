@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  computeDataLayerEdge, foreignBucket, kapBucket, calmBucket, FOREIGN_FLOW_BAND_PP, CALM_TOP_MIN, CALM_BOTTOM_MAX,
+  computeDataLayerEdge, foreignBucket, kapBucket, calmBucket, fundBucket, FOREIGN_FLOW_BAND_PP, CALM_TOP_MIN, CALM_BOTTOM_MAX,
 } from '../dataLayerEdge.js';
-import { DATA_LAYER_POLICY, isCalmRankSelectionEnabled } from '../dataLayerPolicy.js';
+import { DATA_LAYER_POLICY, isCalmRankSelectionEnabled, isFundamentalGateEnabled } from '../dataLayerPolicy.js';
 
 // A settled BUY signal: planReturn makes it settled and is the return learned.
 const sig = (o = {}) => ({ cls: 'buy', planReturn: 1, ...o });
@@ -111,5 +111,36 @@ describe('dataLayerEdge — calm rank thirds', () => {
   it('the policy keeps it out of selection until the table says otherwise', () => {
     expect(DATA_LAYER_POLICY.calmRankSelection).toBe(false);
     expect(isCalmRankSelectionEnabled()).toBe(false);
+  });
+});
+
+describe('bilanco kapisi katmani (v31.58)', () => {
+  const sig = (o) => ({ cls: 'buy', status: 'closed', ...o });
+  it('kovalar yalniz bilinen kararlari tanir', () => {
+    expect(fundBucket({ fundGate: 'red' })).toBe('red');
+    expect(fundBucket({ fundGate: 'ceza' })).toBe('ceza');
+    expect(fundBucket({ fundGate: 'temiz' })).toBe('temiz');
+    expect(fundBucket({})).toBe('unknown');
+    expect(fundBucket({ fundGate: null })).toBe('unknown');
+    expect(fundBucket({ fundGate: 'baska' })).toBe('unknown');
+  });
+
+  it('her kovanin sonucunu verir, karari olmayan kaydi saymaz', () => {
+    const edge = computeDataLayerEdge([
+      sig({ planReturn: 4, fundGate: 'red' }),
+      sig({ planReturn: -1, fundGate: 'red' }),
+      sig({ planReturn: 2, fundGate: 'temiz' }),
+      sig({ planReturn: 1 }),
+    ], { minSample: 2 });
+    expect(edge.fund.red).toEqual({ n: 2, winRate: 50, avgReturn: 1.5, reliable: true });
+    expect(edge.fund.temiz.n).toBe(1);
+    expect(edge.fund.ceza.n).toBe(0);
+    expect(edge.withFund).toBe(3);
+  });
+
+  it('kullanici karari: kapi elemez, olculur', () => {
+    expect(DATA_LAYER_POLICY.fundamentalGate).toBe(false);
+    expect(isFundamentalGateEnabled()).toBe(false);
+    expect(DATA_LAYER_POLICY.fundamentalGateDecidedAt).toBe('2026-11-22');
   });
 });
