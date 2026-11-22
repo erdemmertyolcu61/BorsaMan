@@ -704,8 +704,8 @@ export function AIAdvisorDetailPanel({ advisor = {}, onAnalyze, scorecard = null
             </button>
           )}
           {/* v29.3: REJIM + EDGE BANNER — "trend yok = islem yok" urun merkezinde.
-              Olcum: AL pick'leri SADECE YUKSELIS'te pozitif (+1.14%); YATAY -1.7%,
-              DUSUS -3.4%. Banner her zaman gorunur (mobil dahil), dogru beklenti kurar. */}
+              Olcum (v31.53, sinyal gunu rejimi): YUKSELIS +1,06 / YATAY +0,54 / DUSUS +0,14,
+              son iki yilda +0,20 / +0,03 / −0,19. Banner dogru beklenti kurar. */}
           {/* v31.47: yalniz bu oturumda tarama yapildiysa — kayitli kartlarda state'in
               varsayilan NEUTRAL'i "Yatay rejim · BIST100 +0.0%" diye yanlis bir bant basiyordu. */}
           {hasPicks && lastUpdate !== null && marketRegime?.regime && (() => {
@@ -727,14 +727,14 @@ export function AIAdvisorDetailPanel({ advisor = {}, onAnalyze, scorecard = null
                       fg: 'var(--red)',
                       title: 'Düşüş rejimi — AL önerilmez',
                       sub: cr > 0
-                        ? `Ölçüm: düşüşte AL'lar tarihsel −%3,4 (%18,8 kazanma). En güçlü ${cr} isim izlemek için gösteriliyor.`
-                        : "Ölçüm: düşüşte AL'lar tarihsel −%3,4 (%18,8 kazanma). Nakitte kalmak en iyi işlem.",
+                        ? `Ölçüm: düşüş günlerinde AL adayları maliyet sonrası ≈0 getirdi (son iki yılda −%0,2). En güçlü ${cr} isim yalnız izlemek için gösteriliyor.`
+                        : 'Ölçüm: düşüş günlerinde AL adayları maliyet sonrası ≈0 getirdi (son iki yılda −%0,2). Yeni alım önerilmez.',
                     };
                   })()
                 : {
                     fg: 'var(--t1)',
                     title: "Yatay rejim — yalnız en güçlü setup'lar",
-                    sub: "Ölçüm: yatayda zayıf AL'lar ort. −%1,7. Yalnız skor ≥75, en fazla 4 öneri ve yarım pozisyon.",
+                    sub: 'Yalnız skor ≥70, en fazla 4 öneri ve yarım pozisyon. Ölçüm: yatay günlerde AL adayları ort. +%0,5, son iki yılda ≈0.',
                   };
             return (
               <div style={{
@@ -803,9 +803,9 @@ export function AIAdvisorDetailPanel({ advisor = {}, onAnalyze, scorecard = null
                   </span>
                   <span style={{ fontSize: 11, color: '#a8b3c7', maxWidth: 480, lineHeight: 1.5 }}>
                     {marketRegime?.regime === 'BEAR'
-                      ? 'BIST100 düşüş trendinde. Ölçüm: düşüş rejiminde AL pick\'leri tarihsel olarak ortalama -3.4% getirmiş (%18.8 kazanma). Sistem düşen bıçağı tutmuyor — bugün nakitte kalmak en iyi "işlem". Rejim dönünce AL önerileri geri gelir.'
+                      ? 'BIST100 düşüş trendinde. Ölçümde düşüş günlerinin AL adayları maliyet sonrası ≈0 getirdi (son iki yılda −%0,2); bu yüzden AL\'lar yalnız izlemek için gösterilir. Rejim dönünce alım önerileri geri gelir.'
                       : marketRegime?.regime === 'NEUTRAL'
-                        ? 'BIST100 yatay. Yatay piyasada zayıf kademe AL\'lar ortalama -1.7% getirmiş — bu yüzden sadece score≥75 nokta-atışı setup\'lar gösterilir. Bugün o barı geçen yok.'
+                        ? 'BIST100 yatay. Yatay piyasada yalnız skor ≥70 olan AL\'lar gösterilir (en fazla 4, yarım pozisyon). Bugün o barı geçen yok.'
                         : 'Tavan yapan hisseler ertesi gün ~%55-60 ihtimalle geri çekilir. Sistem BUGÜN tavan yapanları değil, YARIN tavan yapacakları arıyor.'}
                   </span>
                   {advisor.manualScan && (

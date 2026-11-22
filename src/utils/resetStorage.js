@@ -54,6 +54,7 @@ export const TRACKING_KEYS = [
   'bist_forward_journal_v1',  // forwardTestJournal — forward-test accuracy record
   'bist_scan_scorecard_v1',   // v31.47: tahmin karnesi — gosterilen oneriler × kapanis
   'bist_movers_scorecard_v1', // v31.54: gun ici hareket listesinin ileri olcumu
+  'bist_al_list_scorecard_v1', // v31.59: AL listesinin ileri olcumu (ilk 3, yalniz trailing)
   'bist_last_ai_picks',       // AIAdvisorPanel   — cached scan output
   'bist_scan_coverage',       // v31.40: son taramanin kapsama ozeti (taranan/evren/veri gunu)
   'bist_ai_pick_memory',      // useAIAdvisor     — stagnant-pick memory

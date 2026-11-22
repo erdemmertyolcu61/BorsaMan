@@ -1936,17 +1936,16 @@ export function useAIAdvisor(portfolio) {
       }
 
       // ── v29.2 REGIME BUY-GATE (early, on buyPicks) — pure applyRegimeGate ──
-      // Olcum: AL pick'leri SADECE YUKSELIS'te pozitif; YATAY -1.7%, DUSUS -3.4%.
-      // (Nihai/authoritative kapi asagida picks + finalPicks uzerinde; bu erken
-      // katman sektor-diversifikasyon gurultusunu azaltir.) buyPicks buy-only oldugu
-      // icin BEAR → bosalir, NEUTRAL → score>=75.
+      // Olcum (v31.53, sinyal gunu rejimi): YUKSELIS +1,06 / YATAY +0,54 / DUSUS +0,14; son iki
+      // yilda +0,20 / +0,03 / −0,19. (Nihai kapi asagida picks + finalPicks uzerinde; bu erken
+      // katman sektor-diversifikasyon gurultusunu azaltir.) YATAY taban 70, DUSUS 58 + izle-only.
       {
         const before = buyPicks.length;
         buyPicks = applyRegimeGate(buyPicks, marketRegime);
         if (before !== buyPicks.length) {
           pushLog({ type: 'warn', msg: marketRegime === 'BEAR'
-            ? `REJIM KAPISI (DUSUS): ${before} AL pick susturuldu — tarihsel dusus AL beklentisi -3.4% (%18.8 WR). Bugun kaliteli long yok.`
-            : `REJIM KAPISI (YATAY): sadece score>=75 — ${before} → ${buyPicks.length} pick (YATAY'da zayif kademe -1.7% beklenti)` });
+            ? `REJIM KAPISI (DUSUS): ${before} → ${buyPicks.length} AL, kalanlar yalniz izle (dusus gunlerinde AL adaylari maliyet sonrasi ≈0, son iki yil −0,19)`
+            : `REJIM KAPISI (YATAY): yalniz skor>=70, en fazla 4 — ${before} → ${buyPicks.length} AL` });
         }
       }
 
@@ -3025,8 +3024,8 @@ export function useAIAdvisor(portfolio) {
 
       // ── v29.2 REGIME BUY-GATE (panel/state picks) — pure applyRegimeGate ─────
       // picks buy-odakli liste (setTopPicks → panel "AI FIRSATLAR"). BEAR'da
-      // buy'lari cikar → panel DUSUS bos-state gosterir. NEUTRAL'da sadece
-      // score>=75. Ayrica asagida finalPicks (dispatch) ayni kapiden gecer.
+      // AL'lar izle-only (gorunur, paper acmaz). NEUTRAL'da yalniz skor>=70, en fazla 4.
+      // Ayrica asagida finalPicks (dispatch) ayni kapiden gecer.
       // ── v31.38 KAP ISLEM TEDBIRI — panel listesi ─────────────────────────────
       // buyPicks filtresi tedbirli hisseyi zaten eliyor; fallbackBuys / lastResort
       // yollari results'tan yeniden cekebilir. Panel/state listesine girmeden cikar.
@@ -3043,8 +3042,8 @@ export function useAIAdvisor(portfolio) {
         picks = applyRegimeGate(picks, marketRegime);
         if (before !== picks.length) {
           pushLog({ type: 'warn', msg: marketRegime === 'BEAR'
-            ? `REJIM KAPISI (DUSUS): ${before - picks.length} AL pick susturuldu — dusus rejiminde AL tarihsel -3.4% (%18.8 WR). Bugun kaliteli long yok.`
-            : `REJIM KAPISI (YATAY): sadece score>=75 — ${before} → ${picks.length} pick (yatayda zayif AL -1.7% beklenti)` });
+            ? `REJIM KAPISI (DUSUS): ${before} → ${picks.length} oneri, AL'lar yalniz izle (dusus gunlerinde AL adaylari maliyet sonrasi ≈0, son iki yil −0,19)`
+            : `REJIM KAPISI (YATAY): yalniz skor>=70, en fazla 4 AL — ${before} → ${picks.length} oneri` });
         }
       }
 
@@ -3240,7 +3239,7 @@ export function useAIAdvisor(portfolio) {
       // ── v29.2 REGIME BUY-GATE — TEK CIKIS KAPISI (pure applyRegimeGate) ──
       // buyPicks'teki erken gate lastResort/emergency/fallback ile bypass ediliyordu.
       // Burasi finalPicks'in TUM kaynaklardan birlestigi tek nokta — dispatch oncesi.
-      // Olcum: AL pick'leri SADECE YUKSELIS'te pozitif; YATAY -1.7%, DUSUS -3.4%.
+      // Olcum (v31.53): YUKSELIS +1,06 / YATAY +0,54 / DUSUS +0,14 — sira ayni, fark dar.
       {
         // v31.38: KAP islem tedbiri — tek cikis kapisi. finalPicks yedek dallardan
         // (buyPicks+sellPicks, ham results) da dolabilir; tedbirli AL buradan gecmez.

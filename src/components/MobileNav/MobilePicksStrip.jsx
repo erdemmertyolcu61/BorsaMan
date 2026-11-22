@@ -1,4 +1,5 @@
 import { isMarketOpen } from '../../hooks/useAIAdvisor.js';
+import { deriveDisplayPicks } from '../../utils/displayPicks.js';
 
 /**
  * MobilePicksStrip — Compact AI Advisor status bar for mobile.
@@ -18,23 +19,11 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
   const sentiment = marketSentiment?.sentiment || '';
   const sentimentColor = marketSentiment?.color || 'var(--t3)';
 
-  // AL pick'leri DAİMA gösterilir — kullanıcı talebi: ayı rejiminde bile AL
-  // gorunmeli. Ham topPicks'i score'la sortlamak sell'lerin AL'lari ilk-4'ten
-  // itmesine yol aciyordu. Cozum: (1) once AL'lar, (2) topPicks'te AL yoksa
-  // (regime-gate hepsini elemis olabilir) scanResults'tan en guclu AL'lari cek,
-  // (3) kalan slotlari sell'lerle doldur.
-  const byScore = (a, b) => (b.score || 0) - (a.score || 0);
-  const heldSyms = new Set(topPicks.map(p => p.symbol));
-  let buyPicks = topPicks.filter(p => p.cls === 'buy').sort(byScore);
-  if (buyPicks.length === 0) {
-    buyPicks = (scanResults || [])
-      .filter(r => r?.symbol && r.cls === 'buy' && (r.score || 0) >= 45 && !heldSyms.has(r.symbol))
-      .sort(byScore)
-      .slice(0, 3)
-      .map(r => ({ ...r, _counterRegime: true })); // ayı/yatayda gate disi -> uyari rozeti
-  }
-  const sellPicks = topPicks.filter(p => p.cls === 'sell').sort(byScore);
-  const sortedPicks = [...buyPicks, ...sellPicks].slice(0, 4);
+  // v31.59: masaustu panel, AL listesi (Sinyal sekmesi) ve tahmin karnesiyle AYNI sira —
+  // deriveDisplayPicks (tek kaynak). Eskiden burada AL'lar skora gore yeniden siralaniyordu:
+  // telefonun "En Iyi"si listeden farkli hisseleri one cikarabiliyordu.
+  const regime = advisor.marketRegime?.regime || null;
+  const sortedPicks = deriveDisplayPicks(topPicks, scanResults, !!(regime && regime !== 'BULL'), regime).slice(0, 4);
 
   return (
     <div className="m-advisor-bar">
@@ -128,7 +117,9 @@ export default function MobilePicksStrip({ advisor = {}, onAnalyze }) {
                   className={`m-advisor-chip ${isSell ? 'sell' : 'buy'}`}
                   onClick={() => onAnalyze?.(p.symbol)}
                   title={watchOnly
-                    ? 'İZLE — ALIM DEĞİL: piyasa düşüşte (ölçüm -%3,4 / %18,8 WR). İzleme amaçlı, bugün yeni uzun önerilmez.'
+                    ? ((p._regime || regime) === 'BEAR'
+                      ? 'İzle, alım değil: piyasa düşüş rejiminde. Ölçümde bu rejimde AL adayları maliyet sonrası ≈0 getirdi (son iki yılda −%0,2). Paper açmaz.'
+                      : 'İzle, alım değil: listeyi tamamlamak için gösterilir. Paper açmaz.')
                     : bestOfDay
                     ? 'Günün en iyisi — rejim kapısı boş bıraktı, pre-pump havuzundan garanti pick (yüksek risk, küçük pozisyon)'
                     : counter ? 'Rejime karşı AL — düşüş/yatay piyasada yüksek risk, küçük pozisyon' : undefined}

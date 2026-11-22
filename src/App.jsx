@@ -10,6 +10,7 @@ import { usePaperTradeML } from './hooks/usePaperTradeML.js';
 import { useForwardTestJournal } from './hooks/useForwardTestJournal.js';
 import { useScanScorecard } from './hooks/useScanScorecard.js';
 import { useMoversScorecard } from './hooks/useMoversScorecard.js';
+import { useAlListScorecard } from './hooks/useAlListScorecard.js';
 import { useIsMobile } from './hooks/useIsMobile.js';
 import { runFreshRegimeReset } from './utils/resetStorage.js';
 import PremiumHeader from './components/Layout/PremiumHeader.jsx';
@@ -24,6 +25,7 @@ import MobilePicksStrip from './components/MobileNav/MobilePicksStrip.jsx';
 import ScanScorecardPanel from './components/Signals/ScanScorecardPanel.jsx';
 import DataLayerEdgePanel from './components/Signals/DataLayerEdgePanel.jsx';
 import DayMoversPanel from './components/Signals/DayMoversPanel.jsx';
+import AlListPanel from './components/Signals/AlListPanel.jsx';
 import StockDetailTab from './components/StockDetail/StockDetailTab.jsx';
 import { VirtualPositionsPanel } from './components/Portfolio/PortfolioExtras.jsx';
 import UpdateBanner from './components/Common/UpdateBanner.jsx';
@@ -54,6 +56,7 @@ export default function App() {
   // v31.47: tahmin karnesi — gosterilen AL onerileri, yargilayan seansin kapanisiyla.
   const scorecard = useScanScorecard(signalTracker.signals);
   const moversCard = useMoversScorecard();   // v31.54: gun ici hareket listesinin ileri olcumu
+  const alCard = useAlListScorecard();       // v31.59: AL listesinin ileri olcumu (acilista al, yalniz trailing)
   const isMobile = useIsMobile();
   const { activeTab, setActiveTab } = state;
   // A rotation / resize (or an old link to a removed tab) can leave the app on a
@@ -392,6 +395,7 @@ export default function App() {
 
       <div className={`tab-content ${state.activeTab === 'signals' ? 'active' : ''}`}>
         <DayMoversPanel card={moversCard} onAnalyze={handleAIAnalyze} />
+        <AlListPanel card={alCard} onAnalyze={handleAIAnalyze} />
         <ScanScorecardPanel scorecard={scorecard} onAnalyze={handleAIAnalyze} />
         <DataLayerEdgePanel signals={signalTracker.signals} />
         <SignalsTab
