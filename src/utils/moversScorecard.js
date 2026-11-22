@@ -113,6 +113,15 @@ export function settleMovers(days, barsBySymbol, dayKeyFn, { today = '', session
 /** Kural bu seçimi gerçekten aldı mı? (Eski kayıtlarda `taken` yok: kilitli değilse alınmış sayılır.) */
 export const wasTaken = (res) => !!res && !res.locked && !res.skipped && res.taken !== false;
 
+/** Gun ortalamalarinin t istatistigi (en az 3 gun; sapma yoksa null). */
+export function dayT(xs) {
+  const a = (Array.isArray(xs) ? xs : []).filter(isNum);
+  if (a.length < 3) return null;
+  const m = a.reduce((s, x) => s + x, 0) / a.length;
+  const sd = Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1));
+  return sd > 0 ? m / (sd / Math.sqrt(a.length)) : null;
+}
+
 export function summarizeMovers(days, rule = DAYTRADE_RULE) {
   const bucket = () => ({ n: 0, moved: 0, hit: 0, win: 0, green: 0, greenN: 0, net: 0, expMoved: 0, dayNets: [], locked: 0, skipped: 0 });
   const top = bucket(), shown = bucket();
@@ -144,6 +153,8 @@ export function summarizeMovers(days, rule = DAYTRADE_RULE) {
     greenPct: b.greenN ? (b.green / b.greenN) * 100 : null,
     avgNet: b.n ? b.net / b.n : null,
     posDayPct: b.dayNets.length ? (b.dayNets.filter((x) => x > 0).length / b.dayNets.length) * 100 : null,
+    // v31.60: gun bazinda t — ileri olcum planinin karar olcutu (forwardVerdict.js)
+    dayT: dayT(b.dayNets),
   } : null);
   return { top: fin(top), shown: fin(shown) };
 }

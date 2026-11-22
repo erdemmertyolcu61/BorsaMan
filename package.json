@@ -21,6 +21,7 @@
     "check:proxy": "node scripts/check-proxy.mjs",
     "build:engine": "node scripts/build-engine.mjs",
     "parity:engine": "node scripts/engine-parity.mjs",
+    "forward": "node --max-old-space-size=6000 scripts/forward-ledger.mjs --fetch",
     "postinstall": "electron-builder install-app-deps",
     "electron:dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
     "electron:prod": "cross-env BUILD_TARGET=electron vite build && electron .",

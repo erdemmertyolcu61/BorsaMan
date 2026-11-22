@@ -11,7 +11,8 @@
  */
 import { useEffect, useState } from 'react';
 import { DAYTRADE_RULE as R, NEXT_SESSION_EVIDENCE as EV } from '../../utils/nextSession.js';
-import { wasTaken } from '../../utils/moversScorecard.js';
+import { wasTaken, summarizeMovers } from '../../utils/moversScorecard.js';
+import { MOVERS_FORWARD_PLAN as PLAN, moversVerdict, verdictText } from '../../utils/forwardVerdict.js';
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const pct0 = (p) => (isNum(p) ? `%${Math.round(p * 100)}` : '—');
@@ -55,6 +56,10 @@ export default function DayMoversPanel({ card, onAnalyze }) {
   const s = card?.summary?.top || null;
   const settledDays = (card?.days || []).filter((d) => d.picks?.some((p) => p.result)).slice(0, 7);
   const gapTxt = num1(R.maxGapPct);
+  // v31.60: onceden yazilmis ileri olcum plani — yalniz dondurulmus modelin gormedigi seanslar
+  const planS = summarizeMovers((card?.days || []).filter((d) => d.basisDay >= PLAN.firstBasisDay)).top;
+  const planV = moversVerdict({ sessions: planS?.days || 0, avgNet: planS?.avgNet ?? null, dayT: planS?.dayT ?? null });
+  const planTone = planV.stage === 'belowBand' || planV.stage === 'failing' ? 'var(--red)' : planV.stage === 'consistent' ? 'var(--green)' : 'var(--t3)';
 
   return (
     <div style={{ margin: '12px 12px 0', padding: 14, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
@@ -124,13 +129,15 @@ export default function DayMoversPanel({ card, onAnalyze }) {
                 {' '}({[s.locked > 0 ? `${s.locked} tavanda kilitli` : null, s.skipped > 0 ? `${s.skipped} açılış sınırı yüzünden alınmadı` : null].filter(Boolean).join(', ')})
               </span>
             )}
-            {s.n < 30 && <div style={{ fontSize: 11.5, color: 'var(--t3)' }}>Henüz az veri — 30 işlemden önce bir şey söylemez.</div>}
           </div>
         ) : (
           <div style={{ fontSize: 12, color: 'var(--t3)', marginTop: 3 }}>
             İlk sonuç, listenin yargılandığı seansın kapanışından sonra yazılır (uygulama o akşam açılmalı).
           </div>
         )}
+        <div style={{ fontSize: 11.5, color: planTone, marginTop: 4, lineHeight: 1.5 }}>
+          Ölçüm planı ({dayTxt(PLAN.firstSession)} seansından beri{planS?.n ? `, ${planS.n} işlem, ortalama ${signed(planS.avgNet, 2)}` : ''}): {verdictText(planV, planS?.days || 0)}
+        </div>
         {settledDays.length > 0 && (
           <button type="button" onClick={() => setShowDays((v) => !v)}
             style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, color: 'var(--blue)' }}>
